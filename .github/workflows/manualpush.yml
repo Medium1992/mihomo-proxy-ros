@@ -1,0 +1,259 @@
+name: Manual Build and Publish Multi-Arch Docker Images
+
+on:
+  workflow_dispatch: # Ручной запуск
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # Для GHCR
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Для gh api
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Замени на ${{ secrets.PACKAGE_TOKEN }} для PAT
+      PACKAGE_OWNER: medium1992
+      PACKAGE_NAME: mihomo-proxy-ros # Имя пакета с / для action
+      PACKAGE_NAME_ENCODED: mihomo-proxy-ros # Экранированное имя для API
+      DELETE_UNTAGGED: "true" # "true" для удаления, "false" для dry-run
+
+    steps:
+      # 1. Установка jq для парсинга JSON и crane
+      - name: Install jq and crane
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          curl -sL https://github.com/google/go-containerregistry/releases/download/v0.20.2/go-containerregistry_Linux_x86_64.tar.gz | sudo tar -C /usr/local/bin -xz crane
+          chmod +x /usr/local/bin/crane
+          crane version || { echo "Crane failed to install"; exit 1; }
+
+      # 2. Получаем последний стабильный тег из MetaCubeX/mihomo
+      - name: Get latest stable mihomo tag
+        id: mihomo_tag
+        run: |
+          # Фильтруем только стабильные теги (vX.Y.Z, без -rc, -alpha, -beta)
+          MIHOMO_TAG=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases | \
+            jq -r '[.[] | select(.prerelease == false and .draft == false and (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")))][0].tag_name')
+          if [ -z "$MIHOMO_TAG" ]; then
+            echo "No stable tag found in MetaCubeX/mihomo"
+            exit 1
+          fi
+          echo "Latest stable mihomo tag: $MIHOMO_TAG"
+          echo "VERSION=$MIHOMO_TAG" >> $GITHUB_ENV
+          
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 3. Устанавливаем Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 4. Логинимся в GHCR
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 5. Логинимся в Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 6. Устанавливаем переменные
+      - name: Set variables
+        id: vars
+        run: |
+          echo "BUILDTIME=$(date)" >> $GITHUB_ENV
+
+      # 7. Сборка и пуш AMD64_v1
+      - name: Build and push mihomo AMD64_v1
+        uses: docker/build-push-action@v4
+        with:
+          context: ./
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            TAG=${{ env.VERSION }}
+            BUILDTIME=${{ env.BUILDTIME }}
+            AMD64VERSION=v1
+          tags: |
+            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64_v1
+            medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64_v1
+
+      # 8. Сборка и пуш AMD64_v2
+      - name: Build and push mihomo AMD64_v2
+        uses: docker/build-push-action@v4
+        with:
+          context: ./
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            TAG=${{ env.VERSION }}
+            BUILDTIME=${{ env.BUILDTIME }}
+            AMD64VERSION=v2
+          tags: |
+            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64_v2
+            medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64_v2
+
+      # 9. Сборка и пуш multi-arch (AMD64_v3) + latest
+      - name: Build and push mihomo multi-arch
+        uses: docker/build-push-action@v4
+        with:
+          context: ./
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          build-args: |
+            TAG=${{ env.VERSION }}
+            BUILDTIME=${{ env.BUILDTIME }}
+            AMD64VERSION=v3
+          tags: |
+            ghcr.io/medium1992/mihomo-proxy-ros:latest
+            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.VERSION }}
+            medium1992/mihomo-proxy-ros:latest
+            medium1992/mihomo-proxy-ros:${{ env.VERSION }}
+
+      - name: Log in to GHCR with crane
+        run: echo "${GITHUB_TOKEN}" | crane auth login ghcr.io -u ${PACKAGE_OWNER} --password-stdin
+
+      - name: Analyze GHCR packages (dry-run)
+        id: analyze
+        run: |
+          set -e
+
+          echo "Fetching package versions for ${PACKAGE_OWNER}/${PACKAGE_NAME}..."
+          page=1
+          packages_json="[]"
+          last_first_id=""
+          while true; do
+            echo "Fetching page $page..."
+            chunk=$(timeout 30s gh api -H "Accept: application/vnd.github+json" \
+              /users/${PACKAGE_OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions?per_page=100&page=$page || echo "TIMEOUT")
+            if [[ "$chunk" == "TIMEOUT" ]]; then
+              echo "Error: gh api timed out on page $page"
+              exit 1
+            fi
+            echo "Page $page raw chunk: ${chunk:0:50}..."
+            chunk_count=$(echo "$chunk" | jq length)
+            echo "Page $page: $chunk_count versions"
+            if [[ "$chunk_count" -eq 0 ]]; then
+              echo "No more versions on page $page (empty response)"
+              break
+            fi
+            first_id=$(echo "$chunk" | jq -r '.[0].id // ""')
+            if [[ -n "$last_first_id" && "$first_id" == "$last_first_id" ]]; then
+              echo "Page $page has same data as previous (ID: $first_id), stopping"
+              break
+            fi
+            last_first_id="$first_id"
+            if [[ "$packages_json" == "[]" ]]; then
+              packages_json="$chunk"
+            else
+              packages_json=$(jq -s '.[0] + .[1]' <(echo "$packages_json") <(echo "$chunk"))
+            fi
+            ((page++))
+            if [[ $page -gt 10 ]]; then
+              echo "Reached max page limit (10)"
+              break
+            fi
+          done
+
+          total=$(echo "$packages_json" | jq length)
+          echo "Total versions found: $total (pages processed: $((page-1)))"
+          echo ""
+
+          declare -A protected_digests
+          declare -A child_digests
+          declare -A manifest_ids
+
+          echo "=== 🏷️ Tagged manifests ==="
+          for row in $(echo "$packages_json" | jq -r '.[] | select(.metadata.container.tags | length > 0) | @base64'); do
+            _jq() { echo "$row" | base64 --decode | jq -r "$1"; }
+            id=$(_jq '.id')
+            digest=$(_jq '.name')
+            tags=$(_jq '.metadata.container.tags | join(", ")')
+            created=$(_jq '.created_at')
+            mediaType=$(_jq '.metadata.container.manifest.mediaType // "unknown"')
+            manifest_ids[$id]=1
+            protected_digests[$digest]=1
+            echo "  📦 Inspecting manifest for tags: [$tags]"
+            for tag in $(_jq '.metadata.container.tags[]' | sort -u); do
+              manifest_json=$(timeout 10s crane manifest ghcr.io/${PACKAGE_OWNER}/${PACKAGE_NAME}:${tag} 2>/dev/null || echo "{}")
+              sub_digests=$(echo "$manifest_json" | jq -r '.manifests[].digest // empty')
+              for sd in $sub_digests; do
+                if [[ -n "$sd" ]]; then
+                  child_digests[$sd]=1
+                  protected_digests[$sd]=1
+                  echo "    → Protected child digest: $sd"
+                fi
+              done
+            done
+            echo "- ID: $id | Digest: $digest | Tags: [$tags] | Created: $created | Type: manifest ($mediaType)"
+          done
+
+          echo ""
+          echo "Protected child digests count: ${#child_digests[@]}"
+          echo ""
+
+          echo "=== 🧩 Untagged images ==="
+          untagged_ids=()
+          for id in $(echo "$packages_json" | jq -r '.[] | select(.metadata.container.tags | length == 0) | .id'); do
+            untagged_ids+=("$id")
+          done
+          safe_untagged_ids=()
+
+          for id in "${untagged_ids[@]}"; do
+            data=$(timeout 10s gh api -H "Accept: application/vnd.github+json" \
+              /users/${PACKAGE_OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions/$id || echo "{}")
+            digest=$(echo "$data" | jq -r '.name // "unknown"')
+            created=$(echo "$data" | jq -r '.created_at // "unknown"')
+            mediaType=$(echo "$data" | jq -r '.metadata.container.manifest.mediaType // "unknown"')
+            if [[ "$digest" == "unknown" ]]; then
+              echo "Error: Failed to fetch data for ID $id (possibly already deleted)"
+              continue
+            fi
+            if [[ -n "${child_digests[$digest]}" || -n "${protected_digests[$digest]}" ]]; then
+              echo "- ID: $id | Digest: $digest | Created: $created | Type: $mediaType → 🛡 пропущен (child or referenced)"
+            else
+              echo "- ID: $id | Digest: $digest | Created: $created | Type: $mediaType → 🧹 кандидат на удаление"
+              safe_untagged_ids+=("$id")
+            fi
+          done
+
+          echo ""
+          echo "Safe untagged IDs (before validation): ${safe_untagged_ids[*]}"
+          validated_ids=()
+          for id in "${safe_untagged_ids[@]}"; do
+            if gh api -H "Accept: application/vnd.github+json" \
+              /users/${PACKAGE_OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions/$id >/dev/null 2>&1; then
+              validated_ids+=("$id")
+              echo "Version $id exists, added to deletion list"
+            else
+              echo "Version $id not found, skipping"
+            fi
+          done
+
+          echo ""
+          echo "Validated untagged IDs: ${validated_ids[*]}"
+          if [ ${#validated_ids[@]} -eq 0 ]; then
+            echo "No valid untagged IDs to delete"
+            echo "safe_untagged_ids_comma=" >> $GITHUB_OUTPUT
+          else
+            safe_untagged_ids_comma=$(echo "${validated_ids[*]}" | tr ' ' ', ')
+            echo "safe_untagged_ids_comma=$safe_untagged_ids_comma" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Cleanup untagged GHCR versions
+        if: env.DELETE_UNTAGGED == 'true' && steps.analyze.outputs.safe_untagged_ids_comma != ''
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: '${{ env.PACKAGE_NAME }}'
+          package-type: 'container'
+          package-version-ids: '${{ steps.analyze.outputs.safe_untagged_ids_comma }}'
+          token: ${{ env.GITHUB_TOKEN }}
