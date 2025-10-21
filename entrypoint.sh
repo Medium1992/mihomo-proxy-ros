@@ -8,6 +8,7 @@ AWG_YAML="$CONFIG_DIR/awg.yaml"
 LINKS_YAML="$CONFIG_DIR/links.yaml"
 CONFIG_YAML="$CONFIG_DIR/config.yaml"
 DIRECT_YAML="$CONFIG_DIR/direct.yaml"
+UI_URL_CHECK="$CONFIG_DIR/.ui_url"
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
@@ -88,7 +89,6 @@ parse_awg_config() {
   local server=$(echo "$endpoint" | cut -d':' -f1)
   local port=$(echo "$endpoint" | cut -d':' -f2)
 
-
   cat <<EOF
   - name: "$awg_name"
     type: wireguard
@@ -145,11 +145,22 @@ link_file_mihomo() {
   done
 }
 
-# ------------------- CONFIG_TUN -------------------
+# ------------------- CONFIG -------------------
 
-config_file_mihomo_tun() {
+config_file_mihomo() {
   log "Generating $CONFIG_YAML"
   mkdir -p "$CONFIG_DIR"
+
+  # Проверка и обновление UI_URL
+  LAST_UI_URL=$(cat "$UI_URL_CHECK" 2>/dev/null || true)
+  log "EXTERNAL_UI_URL: '$EXTERNAL_UI_URL', LAST_UI_URL: '$LAST_UI_URL'"
+  if [ "$EXTERNAL_UI_URL" != "$LAST_UI_URL" ]; then
+    log "UI URL changed, removing $CONFIG_DIR/ui and updating $UI_URL_CHECK"
+    rm -rf "$CONFIG_DIR/ui"
+    echo "$EXTERNAL_UI_URL" > "$UI_URL_CHECK"
+  else
+    log "UI URL unchanged, skipping update"
+  fi
 
   cat > "$CONFIG_YAML" <<EOF
 log-level: ${LOG_LEVEL:-warning}
@@ -183,6 +194,20 @@ hosts:
   cloudflare-dns.com: [104.16.248.249, 104.16.249.249]
 
 listeners:
+EOF
+
+  if lsmod | grep -q '^nft_tproxy'; then
+    log "nft_tproxy module loaded, configuring TPROXY listener"
+    cat >> "$CONFIG_YAML" <<EOF
+  - name: tproxy-in
+    type: tproxy
+    port: 12345
+    listen: 0.0.0.0
+    udp: true
+EOF
+  else
+    log "nft_tproxy not loaded, configuring TUN listener with TCP redirect"
+    cat >> "$CONFIG_YAML" <<EOF
   - name: tun-in
     type: tun
     stack: system
@@ -195,6 +220,10 @@ listeners:
       - 198.19.0.1/30
     udp-timeout: 30
     mtu: 1500
+EOF
+  fi
+
+  cat >> "$CONFIG_YAML" <<EOF
   - name: mixed-in
     type: mixed
     port: 1080
@@ -269,137 +298,20 @@ EOF
 
     echo
     echo "rules:"
-    echo "  - AND,((NETWORK,udp),(DST-PORT,443)),REJECT"
-    echo "  - MATCH,GLOBAL"
-  } >> "$CONFIG_YAML"
-}
-
-# ------------------- CONFIG TPROXY-------------------
-
-config_file_mihomo_tpoxy() {
-  log "Generating $CONFIG_YAML"
-  mkdir -p "$CONFIG_DIR"
-
-  cat > "$CONFIG_YAML" <<EOF
-log-level: ${LOG_LEVEL:-warning}
-external-controller: 0.0.0.0:9090
-external-ui: ui
-external-ui-url: "$EXTERNAL_UI_URL"
-unified-delay: true
-ipv6: false
-geodata-mode: true
-dns:
-  enable: true
-  cache-algorithm: arc
-  prefer-h3: false
-  use-system-hosts: false
-  respect-rules: false
-  listen: 0.0.0.0:53
-  ipv6: false
-  default-nameserver:
-    - 8.8.8.8
-    - 9.9.9.9
-    - 1.1.1.1
-  enhanced-mode: fake-ip
-  fake-ip-range: ${FAKE_IP_RANGE}
-  nameserver:
-    - https://dns.google/dns-query
-    - https://cloudflare-dns.com/dns-query
-    - https://dns.quad9.net/dns-query
-hosts:
-  dns.google: [8.8.8.8, 8.8.4.4]
-  dns.quad9.net: [9.9.9.9, 149.112.112.112]
-  cloudflare-dns.com: [104.16.248.249, 104.16.249.249]
-
-listeners:
-  - name: tproxy-in
-    type: tproxy
-    port: 12345
-    listen: 0.0.0.0
-    udp: true
-  - name: mixed-in
-    type: mixed
-    port: 1080
-    listen: 0.0.0.0
-    udp: true
-
-proxy-providers:
-EOF
-
-  providers=""
-
-  # провайдер links, если есть LINKi
-  if env | grep -qE '^LINK[0-9]*='; then
-    cat >> "$CONFIG_YAML" <<EOF
-  LINKS:
-    type: file
-    path: $(basename "$LINKS_YAML")
-$(health_check_block)
-EOF
-    providers="$providers LINKS"
-  fi
-
-  # провайдеры SUB_LINKi
-  for var in $(env | grep -E '^SUB_LINK[0-9]*=' | sort -t '=' -k1); do
-    name=$(echo "$var" | cut -d '=' -f1)
-    value=$(echo "$var" | cut -d '=' -f2-)
-    cat >> "$CONFIG_YAML" <<EOF
-  $name:
-    url: "$value"
-    type: http
-    interval: 86400
-    proxy: DIRECT
-$(health_check_block)
-EOF
-    providers="$providers $name"
-  done
-
-  # провайдер AWG
-  if find "$AWG_DIR" -name "*.conf" | grep -q . 2>/dev/null; then
-    cat >> "$CONFIG_YAML" <<EOF
-  AWG:
-    type: file
-    path: $(basename "$AWG_YAML")
-$(health_check_block)
-EOF
-    providers="$providers AWG"
-  fi
-
-  # Всегда добавляем DIRECT
-  cat >> "$CONFIG_YAML" <<EOF
-  DIRECT:
-    type: file
-    path: $(basename "$DIRECT_YAML")
-$(health_check_block)
-EOF
-  providers="$providers DIRECT"
-
-  # Группы
-  {
-    echo
-    echo "proxy-groups:"
-    echo "  - name: GLOBAL"
-    echo "    type: ${GLOBAL_TYPE:-select}"
-    echo "    use:"
-    if [ -n "${GLOBAL_USE:-}" ]; then
-      echo "$GLOBAL_USE" | tr ',' '\n' | sed 's/^/      - /'
+    if lsmod | grep -q '^nft_tproxy'; then
+      echo "  - MATCH,GLOBAL"
     else
-      for p in $providers; do
-        echo "      - $p"
-      done
+      echo "  - AND,((NETWORK,udp),(DST-PORT,443)),REJECT"
+      echo "  - MATCH,GLOBAL"
     fi
-
-    echo
-    echo "rules:"
-    echo "  - MATCH,GLOBAL"
   } >> "$CONFIG_YAML"
 }
 
 # ------------------- TPROXY_RULES -------------------
 
-nft_rules () {
-nft flush ruleset
-nft -f - <<EOF
+nft_rules() {
+  nft flush ruleset
+  nft -f - <<EOF
 table inet mihomo_tproxy {
     chain prerouting {
         type filter hook prerouting priority filter; policy accept;
@@ -414,8 +326,8 @@ table inet mihomo_tproxy {
     }
 }
 EOF
-ip rule show | grep -q 'fwmark 0x00000001 lookup 100' || ip rule add fwmark 1 table 100
-ip route replace local 0.0.0.0/0 dev lo table 100 table 100
+  ip rule show | grep -q 'fwmark 0x00000001 lookup 100' || ip rule add fwmark 1 table 100
+  ip route replace local 0.0.0.0/0 dev lo table 100 table 100
 }
 
 # ------------------- Orchestrator -------------------
@@ -423,25 +335,16 @@ ip route replace local 0.0.0.0/0 dev lo table 100 table 100
 run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR"
 
-UI_URL_CHECK="$CONFIG_DIR/.ui_url"
-LAST_UI_URL=$(cat "$UI_URL_CHECK" 2>/dev/null)
-if [[ "$EXTERNAL_UI_URL" != "$LAST_UI_URL" ]]; then
-  rm -rf "$CONFIG_DIR/ui"
-  echo "$EXTERNAL_UI_URL" > "$UI_URL_CHECK"
-fi
-
   generate_direct_yaml
   generate_awg_yaml
   link_file_mihomo
-
-if lsmod | grep -q '^nft_tproxy'; then
-   echo "nft_tproxy module loaded, use inbound TPROXY"
-   nft_rules
-   config_file_mihomo_tproxy
-else
-   echo "nft_tproxy not loaded, use inbound TUN with TCP redirect"
-   config_file_mihomo_tun
-fi
+  if lsmod | grep -q '^nft_tproxy'; then
+    log "nft_tproxy module loaded, use inbound TPROXY"
+    nft_rules
+  else
+    log "nft_tproxy not loaded, use inbound TUN with TCP redirect"
+  fi
+  config_file_mihomo
 
   log "Starting mihomo..."
   exec ./mihomo
