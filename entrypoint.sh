@@ -276,7 +276,7 @@ EOF
 
 # ------------------- CONFIG TPROXY-------------------
 
-config_file_mihomo_tun() {
+config_file_mihomo_tpoxy() {
   log "Generating $CONFIG_YAML"
   mkdir -p "$CONFIG_DIR"
 
