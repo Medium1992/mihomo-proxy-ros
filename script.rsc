@@ -1,5 +1,5 @@
 :local freespace [/system/resource/get free-hdd-space]
-:if ($freespace<62914560) do={
+:if ($freespace<62914560 and ([:len [/container/find comment="MihomoProxyRoS"]] = 0)) do={
     :put "Low free space on storage, script exit"
 } else={
 
@@ -298,6 +298,11 @@ add name=FWD_update source="# Define global variables\r\
     \n    \"meta\";\r\
     \n    \"netflix\";\r\
     \n    \"discord\";\r\
+    \n    \"torrent\";\r\
+    \n    \"rutracker\";\r\
+    \n    \"adguard\";\r\
+    \n    \"anime\";\r\
+    \n    \"rutracker\";\r\
     \n    \"openai\";\r\
     \n    \"x\";\r\
     \n    \"pornhub\";\r\
@@ -398,7 +403,7 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :put "Container MihomoProxyRoS started"
 :set $flagContainer true
 }
-:if ([:len [/container/find comment="MihomoProxyRoS" and (downloading/extracting or extracting)]] > 0) do={
+:if ([:len [/container/find comment="MihomoProxyRoS" and downloading/extracting]] > 0) do={
 :delay 5
 }
 :if ([:len [/container/find comment="MihomoProxyRoS" and download/extract failed]] > 0) do={
