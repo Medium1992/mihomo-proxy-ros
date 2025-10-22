@@ -46,8 +46,6 @@
 #}
 
 :do {
-/certificate/settings/set builtin-trust-anchors=trusted
-/ip/dns/set allow-remote-requests=yes cache-max-ttl=1d cache-size=15000KiB doh-max-concurrent-queries=500 doh-max-server-connections=10 servers=8.8.8.8 use-doh-server=https://dns.google/dns-query verify-doh-cert=yes
 /ip dns forwarders
 add doh-servers=https://dns.google/dns-query name=Google
 add doh-servers=https://cloudflare-dns.com/dns-query name=CloudFlare
@@ -55,6 +53,8 @@ add doh-servers=https://dns.quad9.net/dns-query name=Quad9
 add dns-servers=176.99.11.77,80.78.247.254 name=XBOX
 add dns-servers=77.88.8.8,77.88.8.1 name=Yandex verify-doh-cert=no
 add dns-servers=8.8.8.8 name=Google8 verify-doh-cert=no
+/certificate/settings/set builtin-trust-anchors=trusted
+/ip/dns/set allow-remote-requests=yes cache-max-ttl=1d cache-size=15000KiB doh-max-concurrent-queries=500 doh-max-server-connections=10 servers=8.8.8.8 use-doh-server=https://dns.google/dns-query verify-doh-cert=yes
 /ip dns static
 add forward-to=Google8 match-subdomain=yes name=pool.ntp.org type=FWD
 add address=8.8.8.8 comment="DNS Google" name=dns.google type=A
@@ -91,6 +91,7 @@ add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0
 :put "Add BlackHole route into routing table main"
 :put "delay 10s for NTP sync"
 :delay 10
+/ip firewall filter set [find where action=fasttrack-connection] connection-mark=no-mark
 } on-error {}
 
 :if ([:len [/routing/table/find comment="MihomoProxyRoS"]] = 0) do={
@@ -153,8 +154,6 @@ add address=8.8.8.8 list=DNS
 add address=8.8.4.4 list=DNS
 :put "Add address list DNS"
 } on-error {}
-
-/ip firewall filter set [find where action=fasttrack-connection] connection-mark=no-mark
 
 /ip firewall mangle
 :if ([:len [find comment="MihomoProxyRoS1"]] = 0) do={add action=change-mss chain=postrouting new-mss=clamp-to-pmtu protocol=tcp tcp-flags=syn comment="MihomoProxyRoS1"; :put "Add mangle rules 1"}
@@ -398,7 +397,7 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :delay 30
 }
 } on-error {
-:if ([:len [/container/find comment="MihomoProxyRoS" and stopped]] > 0) do={
+:if ([:len [/container/find comment="MihomoProxyRoS" and (stopped or running)]] > 0) do={
 /container/start [find where comment="MihomoProxyRoS" and stopped]
 :put "Container MihomoProxyRoS started"
 :set $flagContainer true
