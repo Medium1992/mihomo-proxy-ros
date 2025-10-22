@@ -387,16 +387,9 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :local flagContainer false
 :while ($flagContainer = false) do={
 :do {
-:local targetVersion "7.21"
-:local currentVersion [/system resource get version];
-:local currentMinor [:pick $currentVersion ([:find $currentVersion "."] + 1) ([:find $currentVersion "."] + 3)];
-:local targetMinor [:pick $targetVersion ([:find $targetVersion "."] + 1) ([:find $targetVersion "."] + 3)];
-:if ($currentMinor < $targetMinor) do={
-:local mount_env "name" 
-} else={
-:local mount_env "list"
-}
-/container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ $mount_env=awg_conf 
+:do {/container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ name=awg_conf} on-error {}
+:do {/container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ list=awg_conf} on-error {}
+/container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ name=awg_conf 
 /container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mount=awg_conf interface=MihomoProxyRoS root-dir=Containers/MihomoProxyRoS dns=192.168.255.1 start-on-boot=yes comment="MihomoProxyRoS"
 :put "Start pull container, pls wait when container starting, delay 30s"
 :delay 30
