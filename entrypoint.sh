@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 FAKE_IP_RANGE="${FAKE_IP_RANGE:-198.18.0.0/15}"
-EXTERNAL_UI_URL="${EXTERNAL_UI_URL:-https://github.com/Zephyruso/zashboard/releases/latest/download/dist-cdn-fonts.zip}"
+EXTERNAL_UI_URL="${EXTERNAL_UI_URL:-https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip}"
 CONFIG_DIR="/root/.config/mihomo"
 AWG_DIR="$CONFIG_DIR/awg"
 AWG_YAML="$CONFIG_DIR/awg.yaml"
@@ -299,10 +299,14 @@ EOF
     echo
     echo "rules:"
     if lsmod | grep -q '^nft_tproxy'; then
-      echo "  - MATCH,GLOBAL"
+      echo "  - IN-NAME,tproxy-in,GLOBAL"
+      echo "  - IN-NAME,mixed-in,GLOBAL"
+      echo "  - MATCH,DIRECT"
     else
       echo "  - AND,((NETWORK,udp),(DST-PORT,443)),REJECT"
-      echo "  - MATCH,GLOBAL"
+      echo "  - IN-NAME,tun-in,GLOBAL"
+      echo "  - IN-NAME,mixed-in,GLOBAL"
+      echo "  - MATCH,DIRECT"
     fi
   } >> "$CONFIG_YAML"
 }
