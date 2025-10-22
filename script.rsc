@@ -387,10 +387,10 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :local flagContainer false
 :while ($flagContainer = false) do={
 :do {
-:global targetVersion "7.21"
-:global currentVersion [/system resource get version];
-:global currentMinor [:pick $currentVersion ([:find $currentVersion "."] + 1) ([:find $currentVersion "."] + 3)];
-:global targetMinor [:pick $targetVersion ([:find $targetVersion "."] + 1) ([:find $targetVersion "."] + 3)];
+:local targetVersion "7.21"
+:local currentVersion [/system resource get version];
+:local currentMinor [:pick $currentVersion ([:find $currentVersion "."] + 1) ([:find $currentVersion "."] + 3)];
+:local targetMinor [:pick $targetVersion ([:find $targetVersion "."] + 1) ([:find $targetVersion "."] + 3)];
 :if ($currentMinor < $targetMinor) do={
 /container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ name=awg_conf  
 } else={
