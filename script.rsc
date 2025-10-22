@@ -128,15 +128,19 @@ add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0
 add key=LINK1 list=MihomoProxyRoS value=$inputLINK
 :put "Add env LINK1 value: $inputLINK"
 } on-error {
+:if ($inputLINK != [/container/envs/get [find key=LINK1 list=MihomoProxyRoS] value]) do={
 set [find where key=LINK1 list=MihomoProxyRoS] value=$inputLINK
-:put "Set env LINK1 value: $inputLINK"
+:put "Set env LINK1 new value: $inputLINK"
+}
 }
 :do {
 add key=SUB_LINK1 list=MihomoProxyRoS value=$inputSUBLINK
 :put "Add env SUBLINK1 value: $inputSUBLINK"
 } on-error {
-set [find where key=SUB_LINK1 list=MihomoProxyRoS] value=$inputSUBLINK 
-:put "Set env SUBLINK1 value: $inputSUBLINK"
+:if ($inputSUBLINK != [/container/envs/get [find key=SUB_LINK1 list=MihomoProxyRoS] value]) do={
+set [find where key=SUB_LINK1 list=MihomoProxyRoS] value=$inputSUBLINK
+:put "Set env SUBLINK1 new value: $inputLINK"
+}
 }
 
 :if ([:len [/ip/route/find comment="MihomoProxyRoS1"]] = 0) do={
