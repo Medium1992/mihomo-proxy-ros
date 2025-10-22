@@ -305,10 +305,20 @@ add name=FWD_update source="# Define global variables\r\
     \n    \"rutracker\";\r\
     \n    \"adguard\";\r\
     \n    \"anime\";\r\
-    \n    \"rutracker\";\r\
+    \n    \"deepl\";\r\
     \n    \"openai\";\r\
+    \n    \"google-gemini\";\r\
+    \n    \"canva\";\r\
+    \n    \"art\";\r\
+    \n    \"tidal\";\r\
+    \n    \"spotify\";\r\
+    \n    \"tiktok\";\r\
+    \n    \"music\";\r\
     \n    \"x\";\r\
     \n    \"pornhub\";\r\
+    \n    \"xhamster\";\r\
+    \n    \"porn\";\r\
+    \n    \"video\";\r\
     \n    \"tmdb\"\r\ 
     \n}\r\
     \n\r\
