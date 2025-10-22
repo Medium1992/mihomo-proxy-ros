@@ -1,5 +1,5 @@
 :local freespace [/system/resource/get free-hdd-space]
-:if ($freespace<52428800) do={
+:if ($freespace<62914560) do={
     :put "Low free space on storage, script exit"
 } else={
 
