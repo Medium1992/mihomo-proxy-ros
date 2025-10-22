@@ -382,12 +382,17 @@ add name=FWD_update source="# Define global variables\r\
 /system scheduler
 add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment="MihomoProxyRoS"
 :put "Add shedule FWD_update on 06:30 am every day"
-} on-error {}
+} on-error {} 
 
 :local flagContainer false
 :while ($flagContainer = false) do={
 :do {
+:local targetVersion "7.21"
+:if ([/system/resource/get version] < $targetVersion) do={
+/container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ name=awg_conf   
+} else={
 /container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ list=awg_conf   
+}  
 /container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mount=awg_conf interface=MihomoProxyRoS root-dir=Containers/MihomoProxyRoS dns=192.168.255.1 start-on-boot=yes comment="MihomoProxyRoS"
 :put "Start pull container, pls wait when container starting, delay 30s"
 :delay 30
