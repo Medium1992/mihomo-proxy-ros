@@ -3,29 +3,35 @@
     :put "Low free space on storage, script exit"
 } else={
 
-:do {/interface/veth/add name=MihomoProxyRoS address=192.168.255.2/30 gateway=192.168.255.1
-:put "Create VETH MihomoProxyRoS"} on-error {}
-:do {/interface/list/add name=InAccept include=WAN
-:put "Create interfacelist InAccept"} on-error {}
-:do {/interface/list/member/add interface=MihomoProxyRoS list=InAccept
-:put "Add in interfacelist InAccept interface MihomoProxyRoS"} on-error {}
-:do {/ip/address/add address=192.168.255.1/30 interface=MihomoProxyRoS
-:put "Add address Mikrotik for interface MihomoProxyRoS"} on-error {}
-
-:do {/ip/dns/forwarders/add name=MihomoProxyRoS dns-servers=192.168.255.2 verify-doh-cert=no
-:put "Add DNS Forwarders MihomoProxyRoS"} on-error {}
-
 :local inputLINK
-:local defaultLINK " "
-:put "Enter link vless://... URL (or press Enter for skip):"
+:local defaultLINK
+:do {
+:if (:len [/container/envs/get [find key=LINK1 list=MihomoProxyRoS] value] = 0) do={
+:set defaultLINK " "
+} else={
+:set defaultLINK [/container/envs/get [find key=LINK1 list=MihomoProxyRoS] value]
+}
+} on-error {
+:set defaultLINK " "    
+}
+:put "Please enter a valid vless:// URL (e.g., vless://user@host:port?params). Press Enter to skip and hold current value: $defaultLINK"
 :set inputLINK [/terminal ask]
 :if ([:len $inputLINK] = 0) do={
     :set inputLINK $defaultLINK
 }
 
 :local inputSUBLINK
-:local defaultSUBLINK " "
-:put "Enter sublink https://... URL (or press Enter for skip):"
+:local defaultSUBLINK
+:do {
+:if (:len [/container/envs/get [find key=SUB_LINK1 list=MihomoProxyRoS] value] = 0) do={
+:set defaultSUBLINK " "
+} else={
+:set defaultSUBLINK [/container/envs/get [find key=SUB_LINK1 list=MihomoProxyRoS] value]
+}
+} on-error {
+:set defaultSUBLINK " "    
+}
+:put "Enter sublink https://... URL. Press Enter to skip and hold current value: $defaultSUBLINK"
 :set inputSUBLINK [/terminal ask]
 :if ([:len $inputSUBLINK] = 0) do={
     :set inputSUBLINK $defaultSUBLINK
@@ -39,6 +45,77 @@
 #    :set inputFakeIPrange $defaultFakeIPrange
 #}
 
+:do {
+/certificate/settings/set builtin-trust-anchors=trusted
+/ip/dns/set allow-remote-requests=yes cache-max-ttl=1d cache-size=15000KiB doh-max-concurrent-queries=500 doh-max-server-connections=10 servers=8.8.8.8 use-doh-server=https://dns.google/dns-query verify-doh-cert=yes
+/ip dns forwarders
+add doh-servers=https://dns.google/dns-query name=Google
+add doh-servers=https://cloudflare-dns.com/dns-query name=CloudFlare
+add doh-servers=https://dns.quad9.net/dns-query name=Quad9
+add dns-servers=176.99.11.77,80.78.247.254 name=XBOX
+add dns-servers=77.88.8.8,77.88.8.1 name=Yandex verify-doh-cert=no
+add dns-servers=8.8.8.8 name=Google8 verify-doh-cert=no
+/ip dns static
+add forward-to=Google8 match-subdomain=yes name=pool.ntp.org type=FWD
+add address=8.8.8.8 comment="DNS Google" name=dns.google type=A
+add address=8.8.4.4 comment="DNS Google" name=dns.google type=A
+add address=104.16.248.249 comment="DNS CloudFlare" name=cloudflare-dns.com type=A
+add address=104.16.249.249 comment="DNS CloudFlare" name=cloudflare-dns.com type=A
+add address=9.9.9.9 comment="DNS Quad9" name=dns.quad9.net type=A
+add address=149.112.112.112 comment="DNS Quad9" name=dns.quad9.net type=A
+add address=176.99.11.77 comment="XBOX DNS" name=xbox-dns.ru type=A
+add address=185.46.11.181 comment="XBOX DNS" name=xbox-dns.ru type=A
+/system ntp client
+set enabled=yes
+/system ntp client servers
+add address=0.ru.pool.ntp.org
+add address=1.ru.pool.ntp.org
+add address=2.ru.pool.ntp.org
+add address=3.ru.pool.ntp.org
+:put "DNS and NTP client configuration complete"
+/ipv6 nd set [ find default=yes ] advertise-dns=yes disabled=yes
+/ipv6 settings set accept-redirects=no accept-router-advertisements=no allow-fast-path=no disable-ipv6=yes disable-link-local-address=yes forward=no
+:put "Disable ipv6"
+/ip service
+set ftp disabled=yes
+set ssh disabled=yes
+set telnet disabled=yes
+set www disabled=yes
+set api disabled=yes
+set api-ssl disabled=yes
+:put "Disable services ftp, ssh, telnet, www, api, api-ssl"
+/ip route
+add blackhole comment=BlackHole disabled=no distance=254 dst-address=10.0.0.0/8 gateway="" routing-table=main scope=30 suppress-hw-offload=no
+add blackhole comment=BlackHole disabled=no distance=254 dst-address=172.16.0.0/12 gateway="" routing-table=main scope=30 suppress-hw-offload=no
+add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0/16 gateway="" routing-table=main scope=30 suppress-hw-offload=no
+:put "Add BlackHole route into routing table main"
+:put "delay 10s for NTP sync"
+:delay 10
+} on-error {}
+
+:if ([:len [/routing/table/find comment="MihomoProxyRoS"]] = 0) do={
+/routing/table/add name=MihomoProxyRoS fib comment="MihomoProxyRoS"
+:put "Add routing table MihomoProxyRoS"
+}
+:if ([:len [/ip/route/find comment="MihomoProxyRoS0"]] = 0) do={
+/ip route 
+add dst-address=0.0.0.0/0 gateway=192.168.255.2 routing-table=MihomoProxyRoS comment="MihomoProxyRoS0"
+add blackhole comment=BlackHole disabled=no distance=254 dst-address=10.0.0.0/8 gateway="" routing-table=MihomoProxyRoS scope=30 suppress-hw-offload=no
+add blackhole comment=BlackHole disabled=no distance=254 dst-address=172.16.0.0/12 gateway="" routing-table=MihomoProxyRoS scope=30 suppress-hw-offload=no
+add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0/16 gateway="" routing-table=MihomoProxyRoS scope=30 suppress-hw-offload=no
+:put "Add default route 0.0.0.0/0 into routing table MihomoProxyRoS & BlackHole route"}
+
+:do {/interface/veth/add name=MihomoProxyRoS address=192.168.255.2/30 gateway=192.168.255.1
+:put "Create VETH MihomoProxyRoS"} on-error {}
+:do {/interface/list/add name=InAccept include=WAN
+:put "Create interfacelist InAccept"} on-error {}
+:do {/interface/list/member/add interface=MihomoProxyRoS list=InAccept
+:put "Add in interfacelist InAccept interface MihomoProxyRoS"} on-error {}
+:do {/ip/address/add address=192.168.255.1/30 interface=MihomoProxyRoS
+:put "Add address Mikrotik for interface MihomoProxyRoS"} on-error {}
+:do {/ip/dns/forwarders/add name=MihomoProxyRoS dns-servers=192.168.255.2 verify-doh-cert=no
+:put "Add DNS Forwarders MihomoProxyRoS"} on-error {}
+
 /container/envs
 :do {add key=FAKE_IP_RANGE list=MihomoProxyRoS value=198.18.0.0/15
 :put "Add env FAKE_IP_RANGE value: 198.18.0.0/15"} on-error {}
@@ -46,22 +123,24 @@
 :put "Add env LOG_LEVEL value: error"} on-error {}
 :do {add key=TTL_FAKEIP list=MihomoProxyRoS value=10
 :put "Add env TTL_FAKEIP value: 10"} on-error {}
-:do {add key=LINK1 list=MihomoProxyRoS value=$inputLINK
-:put "Add env LINK1 value: $inputLINK"} on-error {}
-:do {add key=SUB_LINK1 list=MihomoProxyRoS value=$inputSUBLINK
-:put "Add env SUBLINK1 value: $inputSUBLINK"} on-error {}
+:do {
+add key=LINK1 list=MihomoProxyRoS value=$inputLINK
+:put "Add env LINK1 value: $inputLINK"
+} on-error {
+set [find where key=LINK1 list=MihomoProxyRoS] value=$inputLINK
+:put "Set env LINK1 value: $inputLINK"
+}
+:do {
+add key=SUB_LINK1 list=MihomoProxyRoS value=$inputSUBLINK
+:put "Add env SUBLINK1 value: $inputSUBLINK"
+} on-error {
+set [find where key=SUB_LINK1 list=MihomoProxyRoS] value=$inputSUBLINK 
+:put "Set env SUBLINK1 value: $inputSUBLINK"
+}
 
-:do {/container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS interface=MihomoProxyRoS root-dir=Containers/MihomoProxyRoS dns=192.168.255.1 start-on-boot=yes
-:put "Add containers MihomoProxyRoS, pls manually start when on state status stopped"} on-error {}
-
-/certificate/settings/set builtin-trust-anchors=trusted
-/ip/dns/set allow-remote-requests=yes cache-max-ttl=1d cache-size=10000KiB doh-max-concurrent-queries=500 doh-max-server-connections=10 servers=8.8.8.8 use-doh-server=https://dns.google/dns-query verify-doh-cert=yes
-:put "Configurated DNS"
-
-:if ([:len [/ip/route/add dst-address=198.18.0.0/15 gateway=192.168.255.2]] = 0) do={
-/ip/route/add dst-address=198.18.0.0/15 gateway=192.168.255.2
+:if ([:len [/ip/route/find comment="MihomoProxyRoS1"]] = 0) do={
+/ip/route/add dst-address=198.18.0.0/15 gateway=192.168.255.2 comment="MihomoProxyRoS1"
 :put "Add ip route FakeIP"}
-
 
 /ip/firewall/address-list
 :do {
@@ -74,14 +153,6 @@ add address=8.8.8.8 list=DNS
 add address=8.8.4.4 list=DNS
 :put "Add address list DNS"
 } on-error {}
-
-:if ([:len [/routing/table/find name=MihomoProxyRoS]] = 0) do={
-/routing/table/add name=MihomoProxyRoS fib
-:put "Add routing table MihomoProxyRoS"
-}
-:if ([:len [/ip/route/find dst-address=0.0.0.0/0 gateway=192.168.255.2 routing-table=MihomoProxyRoS]] = 0) do={
-/ip route add dst-address=0.0.0.0/0 gateway=192.168.255.2 routing-table=MihomoProxyRoS
-:put "Add default route 0.0.0.0/0 into routing table MihomoProxyRoS"}
 
 /ip firewall filter set [find where action=fasttrack-connection] connection-mark=no-mark
 
@@ -97,13 +168,13 @@ add address=8.8.4.4 list=DNS
 :if ([:len [find comment="MihomoProxyRoS9"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="MihomoProxyRoS9"; :put "Add mangle rules 9"}
 
 /ip firewall address-list
-:put "Add address-list"
 :do {add list=VoiceTelegram comment=Telegram address=91.105.192.0/23} on-error {}
 :do {add list=VoiceTelegram comment=Telegram address=91.108.4.0/22} on-error {}
 :do {add list=VoiceTelegram comment=Telegram address=91.108.8.0/21} on-error {}
 :do {add list=VoiceTelegram comment=Telegram address=91.108.16.0/21} on-error {}
 :do {add list=VoiceTelegram comment=Telegram address=91.108.56.0/22} on-error {}
 :do {add list=VoiceTelegram comment=Telegram address=95.161.64.0/20} on-error {}
+:do {add list=VoiceTelegram comment=Telegram address=109.239.140.0/24} on-error {}
 :do {add list=VoiceTelegram comment=Telegram address=149.154.160.0/20} on-error {}
 :do {add list=VoiceTelegram comment=Telegram address=185.76.151.0/24} on-error {}
 :do {add list=MihomoProxyRoS comment=KinoPUB address=95.216.223.137} on-error {}
@@ -293,9 +364,49 @@ add name=FWD_update source="# Define global variables\r\
     \n    }\r\
     \n}"
 :put "Add script FWD_update for pull resources to DNS static FWD"}
+:if ([:len [/system/scheduler/find comment="MihomoProxyRoS"]] = 0) do={
 :do {
 :put "Run script FWD_update"
 /system/script/run FWD_update
 } on-error {}
+}
+:do {
+/system scheduler
+add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment="MihomoProxyRoS"
+:put "Add shedule FWD_update on 06:30 am every day"
+} on-error {}
+
+:local flagContainer false
+:while ($flagContainer = false) do={
+:do {
+/container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS interface=MihomoProxyRoS root-dir=Containers/MihomoProxyRoS dns=192.168.255.1 start-on-boot=yes comment="MihomoProxyRoS"
+:put "Start pull container, pls wait when container starting, delay 30s"
+:delay 30
+:if ([:len [/container/find comment="MihomoProxyRoS" and stopped]] > 0) do={
+/container/start [find where comment="MihomoProxyRoS" and stopped]
+:put "Container MihomoProxyRoS started"
+:set $flagContainer true
+}
+:if ([:len [/container/find comment="MihomoProxyRoS" and download/extract failed]] > 0) do={
+/container/repull [find where comment="MihomoProxyRoS"]
+:put "Container MihomoProxyRoS extract failed, repull, delay 30s"
+:delay 30
+}
+} on-error {
+:if ([:len [/container/find comment="MihomoProxyRoS" and stopped]] > 0) do={
+/container/start [find where comment="MihomoProxyRoS" and stopped]
+:put "Container MihomoProxyRoS started"
+:set $flagContainer true
+}
+:if ([:len [/container/find comment="MihomoProxyRoS" and (downloading/extracting or extracting)]] > 0) do={
+:delay 5
+}
+:if ([:len [/container/find comment="MihomoProxyRoS" and download/extract failed]] > 0) do={
+/container/repull [find where comment="MihomoProxyRoS"]
+:put "Container MihomoProxyRoS extract failed, repull, delay 30s"
+:delay 30
+}
+}
+}
 
 }
