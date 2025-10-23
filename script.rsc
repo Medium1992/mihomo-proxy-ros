@@ -6,11 +6,7 @@
 :local inputLINK
 :local defaultLINK
 :do {
-:if (:len [/container/envs/get [find key=LINK1 list=MihomoProxyRoS] value] = 0) do={
-:set defaultLINK " "
-} else={
 :set defaultLINK [/container/envs/get [find key=LINK1 list=MihomoProxyRoS] value]
-}
 } on-error {
 :set defaultLINK " "    
 }
@@ -23,11 +19,7 @@
 :local inputSUBLINK
 :local defaultSUBLINK
 :do {
-:if (:len [/container/envs/get [find key=SUB_LINK1 list=MihomoProxyRoS] value] = 0) do={
-:set defaultSUBLINK " "
-} else={
 :set defaultSUBLINK [/container/envs/get [find key=SUB_LINK1 list=MihomoProxyRoS] value]
-}
 } on-error {
 :set defaultSUBLINK " "    
 }
@@ -44,6 +36,17 @@
 #:if ([:len $inputFakeIPrange] = 0) do={
 #    :set inputFakeIPrange $defaultFakeIPrange
 #}
+
+:do {/interface/veth/add name=MihomoProxyRoS address=192.168.255.2/30 gateway=192.168.255.1
+:put "Create VETH MihomoProxyRoS"} on-error {}
+:do {/interface/list/add name=InAccept include=WAN
+:put "Create interfacelist InAccept"} on-error {}
+:do {/interface/list/member/add interface=MihomoProxyRoS list=InAccept
+:put "Add in interfacelist InAccept interface MihomoProxyRoS"} on-error {}
+:do {/ip/address/add address=192.168.255.1/30 interface=MihomoProxyRoS
+:put "Add address Mikrotik for interface MihomoProxyRoS"} on-error {}
+:do {/ip/dns/forwarders/add name=MihomoProxyRoS dns-servers=192.168.255.2 verify-doh-cert=no
+:put "Add DNS Forwarders MihomoProxyRoS"} on-error {}
 
 :do {
 /ip dns forwarders
@@ -106,17 +109,6 @@ add blackhole comment=BlackHole disabled=no distance=254 dst-address=172.16.0.0/
 add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0/16 gateway="" routing-table=MihomoProxyRoS scope=30 suppress-hw-offload=no
 :put "Add default route 0.0.0.0/0 into routing table MihomoProxyRoS & BlackHole route"}
 
-:do {/interface/veth/add name=MihomoProxyRoS address=192.168.255.2/30 gateway=192.168.255.1
-:put "Create VETH MihomoProxyRoS"} on-error {}
-:do {/interface/list/add name=InAccept include=WAN
-:put "Create interfacelist InAccept"} on-error {}
-:do {/interface/list/member/add interface=MihomoProxyRoS list=InAccept
-:put "Add in interfacelist InAccept interface MihomoProxyRoS"} on-error {}
-:do {/ip/address/add address=192.168.255.1/30 interface=MihomoProxyRoS
-:put "Add address Mikrotik for interface MihomoProxyRoS"} on-error {}
-:do {/ip/dns/forwarders/add name=MihomoProxyRoS dns-servers=192.168.255.2 verify-doh-cert=no
-:put "Add DNS Forwarders MihomoProxyRoS"} on-error {}
-
 /container/envs
 :do {add key=FAKE_IP_RANGE list=MihomoProxyRoS value=198.18.0.0/15
 :put "Add env FAKE_IP_RANGE value: 198.18.0.0/15"} on-error {}
@@ -169,6 +161,11 @@ add address=8.8.4.4 list=DNS
 :if ([:len [find comment="MihomoProxyRoS7"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=102 connection-state=new content="\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19000-20000,50000-50100 protocol=udp comment="MihomoProxyRoS7"; :put "Add mangle rules 7"}
 :if ([:len [find comment="MihomoProxyRoS8"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=128 connection-state=new content="\12\A4\42" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19000-20000,50000-50100 protocol=udp comment="MihomoProxyRoS8"; :put "Add mangle rules 8"}
 :if ([:len [find comment="MihomoProxyRoS9"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="MihomoProxyRoS9"; :put "Add mangle rules 9"}
+
+/ip firewall filter
+:if ([:len [find comment="MihomoProxyRoSDNS"]] = 0) do={
+add chain=input protocol=udp dst-port=53 in-interface=MihomoProxyRoS comment="MihomoProxyRoSDNS" place-before=3
+}
 
 /ip firewall address-list
 :do {add list=VoiceTelegram comment=Telegram address=91.105.192.0/23} on-error {}
@@ -397,7 +394,9 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :local flagContainer false
 :while ($flagContainer = false) do={
 :do {
-/container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ name=awg_conf 
+:if ([:len [/container/mounts/find comment="MihomoProxyRoSAWG"]] = 0) do={
+/container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ name=awg_conf comment="MihomoProxyRoSAWG"
+} on-error {}
 /container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mount=awg_conf interface=MihomoProxyRoS root-dir=Containers/MihomoProxyRoS dns=192.168.255.1 start-on-boot=yes comment="MihomoProxyRoS"
 :put "Start pull container, pls wait when container starting, delay 30s"
 :delay 30
