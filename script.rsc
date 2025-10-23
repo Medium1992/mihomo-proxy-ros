@@ -8,7 +8,7 @@
 :do {
 :set defaultLINK [/container/envs/get [find key=LINK1 list=MihomoProxyRoS] value]
 } on-error {
-:set defaultLINK " "    
+:set defaultLINK " "
 }
 :put "Please enter a valid vless:// URL (e.g., vless://user@host:port?params). Press Enter to skip and hold current value: $defaultLINK"
 :delay 100ms
@@ -22,7 +22,7 @@
 :do {
 :set defaultSUBLINK [/container/envs/get [find key=SUB_LINK1 list=MihomoProxyRoS] value]
 } on-error {
-:set defaultSUBLINK " "    
+:set defaultSUBLINK " "
 }
 :put "Enter sublink https://... URL. Press Enter to skip and hold current value: $defaultSUBLINK"
 :delay 100ms
