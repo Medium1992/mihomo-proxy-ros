@@ -386,7 +386,7 @@ add name=FWD_update source="# Define global variables\r\
 :put "Add script FWD_update for pull resources to DNS static FWD"}
 :if ([:len [/system/scheduler/find comment="MihomoProxyRoS"]] = 0) do={
 :do {
-:put "Run script FWD_update"
+:put "Run script FWD_update, pls wait for DNS static entries pulled"
 /system/script/run FWD_update
 } on-error {}
 }
@@ -431,5 +431,7 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 }
 }
 }
-
+:put "Script complete, for use AWG pls push AWG_conf file on Mikrotik to path /awg_conf/"
+:log warning "script complete"
+/system/script/environment/remove [find where ]
 }
