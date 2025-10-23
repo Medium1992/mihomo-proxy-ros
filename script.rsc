@@ -4,6 +4,7 @@
 } else={
 
 :local start
+:put "Script loaded, press Enter to start"
 :set start [/terminal ask]
 :put "Starting script"
 
