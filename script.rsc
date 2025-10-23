@@ -3,7 +3,8 @@
     :put "Low free space on storage, script exit"
 } else={
 
-:set [/terminal ask]
+:local start
+:set start [/terminal ask]
 :put "Starting script"
 
 :local inputLINK
