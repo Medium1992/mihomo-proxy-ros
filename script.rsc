@@ -11,6 +11,7 @@
 :set defaultLINK " "    
 }
 :put "Please enter a valid vless:// URL (e.g., vless://user@host:port?params). Press Enter to skip and hold current value: $defaultLINK"
+:delay 100ms
 :set inputLINK [/terminal ask]
 :if ([:len $inputLINK] = 0) do={
     :set inputLINK $defaultLINK
@@ -24,6 +25,7 @@
 :set defaultSUBLINK " "    
 }
 :put "Enter sublink https://... URL. Press Enter to skip and hold current value: $defaultSUBLINK"
+:delay 100ms
 :set inputSUBLINK [/terminal ask]
 :if ([:len $inputSUBLINK] = 0) do={
     :set inputSUBLINK $defaultSUBLINK
