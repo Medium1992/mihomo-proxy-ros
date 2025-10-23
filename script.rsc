@@ -3,6 +3,9 @@
     :put "Low free space on storage, script exit"
 } else={
 
+:set [/terminal ask]
+:put "Starting script"
+
 :local inputLINK
 :local defaultLINK
 :do {
@@ -12,7 +15,6 @@
 }
 :put "Please enter a valid vless:// URL (e.g., vless://user@host:port?params). Press Enter to skip and hold current value: $defaultLINK"
 :set inputLINK [/terminal ask]
-:delay 1
 :if ([:len $inputLINK] = 0) do={
     :set inputLINK $defaultLINK
 }
@@ -26,7 +28,6 @@
 }
 :put "Enter sublink https://... URL. Press Enter to skip and hold current value: $defaultSUBLINK"
 :set inputSUBLINK [/terminal ask]
-:delay 1
 :if ([:len $inputSUBLINK] = 0) do={
     :set inputSUBLINK $defaultSUBLINK
 }
