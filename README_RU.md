@@ -58,13 +58,13 @@
 :log warning "script loading completed and started"
 :put "script loading completed and started"
 $s
-/system/script/environment/remove [find where ]
 } else={
 :log warning "Invalid or empty content, script don't start"
 :put "Invalid or empty content, script don't start"
 /system/script/environment/remove [find where ]
 }
 }
+
 ```
 ## 💖 Поддержка проекта
 
