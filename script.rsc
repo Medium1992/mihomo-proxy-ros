@@ -583,6 +583,6 @@ add interval=10s name=DNSchange on-event=changeDNS
 /system/script/environment/remove [find where ]
 :put "Script complete, enjoy, for use AWG pls push AWG_conf file on Mikrotik to path /awg_conf/"
 :put "For donate USDT(TRC20):TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ"
-:log warning "script complete, enjoy"
+:log warning "script complete, enjoy=)"
 :log warning "For donate USDT(TRC20):TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ"
 }
