@@ -15,7 +15,7 @@
 } on-error {
 :set defaultLINK " "
 }
-:put "Please enter a valid link vless://... or vmess:// or ss://... or trojan://... Press Enter to skip and hold current value: $defaultLINK"
+:put "Please enter a valid link vless://... or vmess://... or ss://... or trojan://... Press Enter to skip and hold current value: $defaultLINK"
 :set inputLINK [/terminal ask]
 :if ([:len $inputLINK] = 0) do={
 :set inputLINK $defaultLINK
@@ -33,14 +33,6 @@
 :if ([:len $inputSUBLINK] = 0) do={
 :set inputSUBLINK $defaultSUBLINK
 }
-
-#:local inputFakeIPrange
-#:local defaultFakeIPrange " "
-#:put "Enter FakeIP range XXX.XXX.XXX.XXX/XX (or press Enter for default: 198.18.0.0/15):"
-#:set inputFakeIPrange [/terminal ask]
-#:if ([:len $inputFakeIPrange] = 0) do={
-#    :set inputFakeIPrange $defaultFakeIPrange
-#}
 
 :if ([:len [/interface/list/find name=WAN]] = 0) do={
 /interface/list/find add name=WAN
@@ -561,8 +553,9 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :delay 1
 }
 }
-
-:put "Script complete, for use AWG pls push AWG_conf file on Mikrotik to path /awg_conf/"
-:log warning "script complete"
 /system/script/environment/remove [find where ]
+:put "Script complete, enjoy, for use AWG pls push AWG_conf file on Mikrotik to path /awg_conf/"
+:put "For donate USDT(TRC20):TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ"
+:log warning "script complete, enjoy"
+:log warning "For donate USDT(TRC20):TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ"
 }
