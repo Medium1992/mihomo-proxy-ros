@@ -553,6 +553,31 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :delay 1
 }
 }
+
+:if ([:len [/system/script/find name="changeDNS"]] = 0) do={
+/system script
+add name=changeDNS source=":local DNSServer [/ip/dns/get servers]\r\
+    \n:if ([:len [/container/find comment=\"DNSProxy\" and running]] > 0 and \$DNSServer!=192.168.255.10) do={\r\
+    \n/ip dns set use-doh-server=\"\" verify-doh-cert=no\r\
+    \n/ip dns set servers=\"\"\r\
+    \n/ip dns set servers=192.168.255.10\r\
+    \n/ip dns set cache-max-ttl=10s\r\
+    \n:log warning \"change DNS server to DNSProxy\"\r\
+    \n} \r\
+    \n:if ([:len [/container/find comment=\"DNSProxy\" and stopped]] > 0 and \$DNSServer=192.168.255.10) do={\r\
+    \n/ip dns set servers=\"\"\r\
+    \n/ip dns set servers=8.8.8.8\r\
+    \n/ip dns set use-doh-server=https://dns.google/dns-query verify-doh-cert=yes\r\
+    \n/ip dns set cache-max-ttl=1d\r\
+    \n:log warning \"change DNS server to DoH Google\"\r\
+    \n}"
+:put "Add script changeDNS"}
+:do {
+/system scheduler
+add interval=10s name=DNSchange on-event=changeDNS
+:put "Add shedule DNSchange check every 10s"
+} on-error {} 
+
 /system/script/environment/remove [find where ]
 :put "Script complete, enjoy, for use AWG pls push AWG_conf file on Mikrotik to path /awg_conf/"
 :put "For donate USDT(TRC20):TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ"
