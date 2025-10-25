@@ -457,11 +457,11 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :if ([:len [/container/find comment="MihomoProxyRoS" and (stopped or running)]] > 0) do={
 /container/start [find where comment="MihomoProxyRoS" and stopped]
 :delay 3
-:if ([:len [/container/find comment="MihomoProxyRoS" and running)]] > 0) do={
+:if ([:len [/container/find comment="MihomoProxyRoS" and running]] > 0) do={
 :put "Container MihomoProxyRoS started"
 :set $flagContainer true
 }
-:if ([:len [/container/find comment="MihomoProxyRoS" and stopped)]] > 0) do={
+:if ([:len [/container/find comment="MihomoProxyRoS" and stopped]] > 0) do={
 /container/repull [find where comment="MihomoProxyRoS"]
 :put "Container MihomoProxyRoS extract failed, repull, pls wait"
 :delay 1
@@ -496,11 +496,11 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :if ([:len [/container/find comment="DNSProxy" and (stopped or running)]] > 0) do={
 /container/start [find where comment="DNSProxy" and stopped]
 :delay 3
-:if ([:len [/container/find comment="DNSProxy" and running)]] > 0) do={
+:if ([:len [/container/find comment="DNSProxy" and running]] > 0) do={
 :put "Container DNSProxy started"
 :set $flagContainer true
 }
-:if ([:len [/container/find comment="DNSProxy" and stopped)]] > 0) do={
+:if ([:len [/container/find comment="DNSProxy" and stopped]] > 0) do={
 /container/repull [find where comment="DNSProxy"]
 :put "Container DNSProxy extract failed, repull, pls wait"
 :delay 1
@@ -535,11 +535,11 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :if ([:len [/container/find comment="ByeDPI" and (stopped or running)]] > 0) do={
 /container/start [find where comment="ByeDPI" and stopped]
 :delay 3
-:if ([:len [/container/find comment="ByeDPI" and running)]] > 0) do={
+:if ([:len [/container/find comment="ByeDPI" and running]] > 0) do={
 :put "Container ByeDPI started"
 :set $flagContainer true
 }
-:if ([:len [/container/find comment="ByeDPI" and stopped)]] > 0) do={
+:if ([:len [/container/find comment="ByeDPI" and stopped]] > 0) do={
 /container/repull [find where comment="ByeDPI"]
 :put "Container ByeDPI extract failed, repull, pls wait"
 :delay 1
