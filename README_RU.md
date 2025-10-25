@@ -1,4 +1,4 @@
-# 🌐 mihomo-proxy-ros
+# 🇷🇺 mihomo-proxy-ros
 
 ## 🇷🇺 Описание на русском
 
