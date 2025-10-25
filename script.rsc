@@ -216,7 +216,7 @@ add chain=input protocol=udp dst-port=53 in-interface-list=Containers comment="M
 }
 
 /ip dns static
-:if ([:len [find name="www.youtube.com"]] = 0) do={forward-to=dnsproxy comment="www.youtube.com" type=FWD name="www.youtube.com" }
+:if ([:len [find name="www.youtube.com"]] = 0) do={add forward-to=dnsproxy comment="www.youtube.com" type=FWD name="www.youtube.com" }
 
 /ip firewall address-list
 :do {add list=YT comment=YT_MSS address=www.youtube.com} on-error {}
