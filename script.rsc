@@ -199,7 +199,7 @@ add address=8.8.4.4 list=DNS
 
 /ip firewall mangle
 :if ([:len [find comment="MihomoProxyRoS1"]] = 0) do={add action=change-mss chain=postrouting new-mss=clamp-to-pmtu protocol=tcp tcp-flags=syn connection-state=new comment="MihomoProxyRoS1"; :put "Add mangle rules 1"}
-:if ([:len [find comment="YT_MSS"]] = 0) do={add action=change-mss chain=postrouting in-interface=ByeDPI content=www.youtube.com new-mss=88 protocol=tcp tcp-flags=syn connection-state=new comment="YT_MSS"; :put "Add mangle rules YT_MSS"}
+#:if ([:len [find comment="YT_MSS"]] = 0) do={add action=change-mss chain=postrouting in-interface=ByeDPI content=www.youtube.com new-mss=88 protocol=tcp tcp-flags=syn connection-state=new comment="YT_MSS"; :put "Add mangle rules YT_MSS"}
 :if ([:len [find comment="MihomoProxyRoS2"]] = 0) do={add action=accept chain=prerouting connection-mark=no-mark connection-state=established,related,untracked comment="MihomoProxyRoS2"; :put "Add mangle rules 2"}
 :if ([:len [find comment="MihomoProxyRoS3"]] = 0) do={add action=accept chain=prerouting in-interface-list=InAccept comment="MihomoProxyRoS3"; :put "Add mangle rules 3"}
 :if ([:len [find comment="MihomoProxyRoS4"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="MihomoProxyRoS4"; :put "Add mangle rules 4"}
