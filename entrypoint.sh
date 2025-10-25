@@ -7,8 +7,9 @@ AWG_DIR="$CONFIG_DIR/awg"
 AWG_YAML="$CONFIG_DIR/awg.yaml"
 LINKS_YAML="$CONFIG_DIR/links.yaml"
 CONFIG_YAML="$CONFIG_DIR/config.yaml"
-DIRECT_YAML="$CONFIG_DIR/direct.yaml"
-UI_URL_CHECK="$CONFIG_DIR/.ui_url"
+DIRECT_YAML="$CONFIG_DIR/direct.yaml" 
+BYEDPI_YAML="$CONFIG_DIR/byedpi.yaml"
+UI_URL_CHECK="$CONFIG_DIR/.ui_url" 
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
@@ -42,6 +43,21 @@ proxies:
     udp: true
     ip-version: ipv4
     interface-name: "$iface"
+EOF
+}
+
+# ------------------- ByeDPI -------------------
+
+generate_byedpi_yaml() {
+  log "Generating $BYEDPI_YAML with socks5"
+
+  cat > "$BYEDPI_YAML" <<EOF
+proxies:
+- name: "ByeDPI"
+  type: socks5
+  server: 192.168.255.6
+  port: 1080
+  udp: true
 EOF
 }
 
@@ -151,19 +167,19 @@ config_file_mihomo() {
   log "Generating $CONFIG_YAML"
   mkdir -p "$CONFIG_DIR"
 
-  # Проверка и обновление UI_URL
-  LAST_UI_URL=$(cat "$UI_URL_CHECK" 2>/dev/null || true)
-  log "EXTERNAL_UI_URL: '$EXTERNAL_UI_URL', LAST_UI_URL: '$LAST_UI_URL'"
-  if [ "$EXTERNAL_UI_URL" != "$LAST_UI_URL" ]; then
-    log "UI URL changed, removing $CONFIG_DIR/ui and updating $UI_URL_CHECK"
-    rm -rf "$CONFIG_DIR/ui"
-    echo "$EXTERNAL_UI_URL" > "$UI_URL_CHECK"
-  else
-    log "UI URL unchanged, skipping update"
-  fi
+# Проверка и обновление UI_URL
+LAST_UI_URL=$(cat "$UI_URL_CHECK" 2>/dev/null || true)
+log "EXTERNAL_UI_URL: '$EXTERNAL_UI_URL', LAST_UI_URL: '$LAST_UI_URL'"
+if [ "$EXTERNAL_UI_URL" != "$LAST_UI_URL" ]; then
+  log "UI URL changed, removing $CONFIG_DIR/ui and updating $UI_URL_CHECK"
+  rm -rf "$CONFIG_DIR/ui"
+  echo "$EXTERNAL_UI_URL" > "$UI_URL_CHECK"
+else
+  log "UI URL unchanged, skipping update"
+fi
 
   cat > "$CONFIG_YAML" <<EOF
-log-level: ${LOG_LEVEL:-warning}
+log-level: ${LOG_LEVEL:-error}
 external-controller: 0.0.0.0:9090
 external-ui: ui
 external-ui-url: "$EXTERNAL_UI_URL"
@@ -186,7 +202,7 @@ dns:
   fake-ip-range: ${FAKE_IP_RANGE}
   nameserver:
     - https://dns.google/dns-query
-    - https://cloudflare-dns.com/dns-query
+    - https://1.1.1.1/dns-query
     - https://dns.quad9.net/dns-query
 hosts:
   dns.google: [8.8.8.8, 8.8.4.4]
@@ -235,6 +251,7 @@ EOF
 
   providers=""
 
+
   # провайдер links, если есть LINKi
   if env | grep -qE '^LINK[0-9]*='; then
     cat >> "$CONFIG_YAML" <<EOF
@@ -272,7 +289,16 @@ EOF
     providers="$providers AWG"
   fi
 
-  # Всегда добавляем DIRECT
+    # Всегда добавляем BYEDPI
+  cat >> "$CONFIG_YAML" <<EOF
+  BYEDPI:
+    type: file
+    path: $(basename "$BYEDPI_YAML")
+$(health_check_block)
+EOF
+  providers="$providers BYEDPI"
+  
+    # Всегда добавляем DIRECT
   cat >> "$CONFIG_YAML" <<EOF
   DIRECT:
     type: file
@@ -295,15 +321,103 @@ EOF
         echo "      - $p"
       done
     fi
+    [ -n "${GLOBAL_FILTER:-}" ] && echo "    filter: $GLOBAL_FILTER"
+    [ -n "${GLOBAL_EXCLUDE:-}" ] && echo "    exclude-filter: $GLOBAL_EXCLUDE"
 
+    # дополнительные группы из GROUP
+    if [ -n "${GROUP:-}" ]; then
+      echo "$GROUP" | tr ',' '\n' | while read -r grp; do
+        grp_trim=$(echo "$grp" | xargs)
+        [ -z "$grp_trim" ] && continue
+        grp_env_name=$(echo "$grp_trim" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
+
+        grp_type=$(printenv "${grp_env_name}_TYPE" || echo "select")
+        grp_filter=$(printenv "${grp_env_name}_FILTER" || true)
+        grp_exclude=$(printenv "${grp_env_name}_EXCLUDE" || true)
+        grp_use=$(printenv "${grp_env_name}_USE" || true)
+
+        echo
+        echo "  - name: $grp_trim"
+        echo "    type: $grp_type"
+        [ -n "$grp_filter" ] && echo "    filter: $grp_filter"
+        [ -n "$grp_exclude" ] && echo "    exclude-filter: $grp_exclude"
+
+        echo "    use:"
+        if [ -n "$grp_use" ]; then
+          echo "$grp_use" | tr ',' '\n' | sed 's/^/      - /'
+        else
+          for p in $providers; do
+            echo "      - $p"
+          done
+        fi
+      done
+    fi
+
+# Добавляем секцию rule-providers
+    echo
+    echo "rule-providers:"
+    if [ -n "${GROUP:-}" ]; then
+      echo "$GROUP" | tr ',' '\n' | while read -r grp; do
+        grp_trim=$(echo "$grp" | xargs)
+        [ -z "$grp_trim" ] && continue
+        grp_env_name=$(echo "$grp_trim" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
+        grp_geoip=$(printenv "${grp_env_name}_GEOIP" || true)
+
+        # Добавляем rule-provider для GEOSITE (замена на .mrs)
+        cat <<EOF
+  $grp_trim:
+    type: http
+    behavior: domain
+    format: mrs
+    url: "https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/$grp_trim.mrs"
+    interval: 86400
+EOF
+
+        # Добавляем rule-provider для GEOIP, если указано
+        if [ -n "$grp_geoip" ]; then
+          cat <<EOF
+  ${grp_trim}_geoip:
+    type: http
+    behavior: ipcidr
+    format: mrs
+    url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/meta/geo/geoip/$grp_geoip.mrs"
+    interval: 86400
+EOF
+        fi
+      done
+    fi
+
+    # Правила
     echo
     echo "rules:"
     if lsmod | grep -q '^nft_tproxy'; then
+      # Правила для групп: RULE-SET вместо GEOSITE и GEOIP
+      if [ -n "${GROUP:-}" ]; then
+        echo "$GROUP" | tr ',' '\n' | while read -r grp; do
+          grp_trim=$(echo "$grp" | xargs)
+          [ -z "$grp_trim" ] && continue
+          echo "  - RULE-SET,$grp_trim,$grp_trim"
+          grp_env_name=$(echo "$grp_trim" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
+          grp_geoip=$(printenv "${grp_env_name}_GEOIP" || true)
+          [ -n "$grp_geoip" ] && echo "  - RULE-SET,${grp_trim}_geoip,$grp_trim"
+        done
+      fi
       echo "  - IN-NAME,tproxy-in,GLOBAL"
       echo "  - IN-NAME,mixed-in,GLOBAL"
       echo "  - MATCH,DIRECT"
     else
       echo "  - AND,((NETWORK,udp),(DST-PORT,443)),REJECT"
+      # Правила для групп: RULE-SET вместо GEOSITE и GEOIP
+      if [ -n "${GROUP:-}" ]; then
+        echo "$GROUP" | tr ',' '\n' | while read -r grp; do
+          grp_trim=$(echo "$grp" | xargs)
+          [ -z "$grp_trim" ] && continue
+          echo "  - RULE-SET,$grp_trim,$grp_trim"
+          grp_env_name=$(echo "$grp_trim" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
+          grp_geoip=$(printenv "${grp_env_name}_GEOIP" || true)
+          [ -n "$grp_geoip" ] && echo "  - RULE-SET,${grp_trim}_geoip,$grp_trim"
+        done
+      fi
       echo "  - IN-NAME,tun-in,GLOBAL"
       echo "  - IN-NAME,mixed-in,GLOBAL"
       echo "  - MATCH,DIRECT"
@@ -311,25 +425,28 @@ EOF
   } >> "$CONFIG_YAML"
 }
 
-# ------------------- TPROXY_RULES -------------------
-
+# ------------------- NFT / TPROXY -------------------
 nft_rules() {
-  nft flush ruleset
+  log "Applying nftables rules for TPROXY..."
+  iface=$(first_iface)
+  iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
+
+  nft flush ruleset || true
   nft -f - <<EOF
 table inet mihomo_tproxy {
     chain prerouting {
         type filter hook prerouting priority filter; policy accept;
         ip daddr ${FAKE_IP_RANGE} meta l4proto { tcp, udp } meta mark set 0x00000001 tproxy ip to 127.0.0.1:12345 accept
-        ip daddr { $(ip -4 addr show $(ip -o link show | awk -F': ' '/link\/ether/ {print $2}' | cut -d'@' -f1 | head -n1) | grep inet | awk '{ print $2 }' | cut -d/ -f1), 0.0.0.0/8, 127.0.0.0/8, 224.0.0.0/4, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, 192.0.0.0/24, 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, 192.88.99.0/24, 198.18.0.0/15, 224.0.0.0/3 } return
+        ip daddr { $iface_ip, 0.0.0.0/8, 127.0.0.0/8, 224.0.0.0/4, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, 192.0.0.0/24, 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, 192.88.99.0/24, 198.18.0.0/15, 224.0.0.0/3 } return
         meta l4proto { tcp, udp } meta mark set 0x00000001 tproxy ip to 127.0.0.1:12345 accept
     }
-
     chain divert {
         type filter hook prerouting priority mangle; policy accept;
         meta l4proto tcp socket transparent 1 meta mark set 0x00000001 accept
     }
 }
 EOF
+
   ip rule show | grep -q 'fwmark 0x00000001 lookup 100' || ip rule add fwmark 1 table 100
   ip route replace local 0.0.0.0/0 dev lo table 100 table 100
 }
@@ -340,15 +457,17 @@ run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR"
 
   generate_direct_yaml
+  generate_byedpi_yaml
   generate_awg_yaml
   link_file_mihomo
-  if lsmod | grep -q '^nft_tproxy'; then
+   if lsmod | grep -q '^nft_tproxy'; then
     log "nft_tproxy module loaded, use inbound TPROXY"
     nft_rules
   else
     log "nft_tproxy not loaded, use inbound TUN with TCP redirect"
   fi
   config_file_mihomo
+
 
   log "Starting mihomo..."
   exec ./mihomo
