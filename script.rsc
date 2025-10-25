@@ -198,13 +198,12 @@ add address=8.8.4.4 list=DNS
 } on-error {}
 
 /ip firewall mangle
-:if ([:len [find comment="MihomoProxyRoS1"]] = 0) do={add action=change-mss chain=postrouting new-mss=clamp-to-pmtu protocol=tcp tcp-flags=syn comment="MihomoProxyRoS1"; :put "Add mangle rules 1"}
-:if ([:len [find comment="YT_MSS"]] = 0) do={add action=change-mss chain=postrouting in-interface=ByeDPI dst-address-list=YT new-mss=88 protocol=tcp tcp-flags=syn comment="YT_MSS"; :put "Add mangle rules YT_MSS"}
+:if ([:len [find comment="MihomoProxyRoS1"]] = 0) do={add action=change-mss chain=postrouting new-mss=clamp-to-pmtu protocol=tcp tcp-flags=syn connection-state=new comment="MihomoProxyRoS1"; :put "Add mangle rules 1"}
+:if ([:len [find comment="YT_MSS"]] = 0) do={add action=change-mss chain=postrouting in-interface=ByeDPI content=www.youtube.com new-mss=88 protocol=tcp tcp-flags=syn connection-state=new comment="YT_MSS"; :put "Add mangle rules YT_MSS"}
 :if ([:len [find comment="MihomoProxyRoS2"]] = 0) do={add action=accept chain=prerouting connection-mark=no-mark connection-state=established,related,untracked comment="MihomoProxyRoS2"; :put "Add mangle rules 2"}
 :if ([:len [find comment="MihomoProxyRoS3"]] = 0) do={add action=accept chain=prerouting in-interface-list=InAccept comment="MihomoProxyRoS3"; :put "Add mangle rules 3"}
 :if ([:len [find comment="MihomoProxyRoS4"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="MihomoProxyRoS4"; :put "Add mangle rules 4"}
 :if ([:len [find comment="MihomoProxyRoS5"]] = 0) do={add action=mark-connection chain=prerouting connection-state=new dst-address-list=MihomoProxyRoS new-connection-mark=MihomoProxyRoS comment="MihomoProxyRoS5"; :put "Add mangle rules 5"}
-:if ([:len [find comment="YT_route"]] = 0) do={add action=mark-connection chain=prerouting connection-state=new dst-address-list=YT new-connection-mark=MihomoProxyRoS comment="YT_route"; :put "Add mangle rules YT_route"}
 :if ([:len [find comment="MihomoProxyRoS6"]] = 0) do={add action=mark-connection chain=prerouting connection-state=new content="\12\A4\42" dst-address-list=VoiceTelegram in-interface-list=LAN new-connection-mark=MihomoProxyRoS protocol=udp comment="MihomoProxyRoS6"; :put "Add mangle rules 6"}
 :if ([:len [find comment="MihomoProxyRoS7"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=102 connection-state=new content="\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19000-20000,50000-50100 protocol=udp comment="MihomoProxyRoS7"; :put "Add mangle rules 7"}
 :if ([:len [find comment="MihomoProxyRoS8"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=128 connection-state=new content="\12\A4\42" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19000-20000,50000-50100 protocol=udp comment="MihomoProxyRoS8"; :put "Add mangle rules 8"}
@@ -215,11 +214,7 @@ add address=8.8.4.4 list=DNS
 add chain=input protocol=udp dst-port=53 in-interface-list=Containers comment="MihomoProxyRoSDNS" place-before=3
 }
 
-/ip dns static
-:if ([:len [find name="www.youtube.com"]] = 0) do={add forward-to=dnsproxy comment="www.youtube.com" type=FWD name="www.youtube.com" }
-
 /ip firewall address-list
-:do {add list=YT comment=YT_MSS address=www.youtube.com} on-error {}
 :do {add list=VoiceTelegram comment=Telegram address=91.105.192.0/23} on-error {}
 :do {add list=VoiceTelegram comment=Telegram address=91.108.4.0/22} on-error {}
 :do {add list=VoiceTelegram comment=Telegram address=91.108.8.0/21} on-error {}
