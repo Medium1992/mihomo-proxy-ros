@@ -556,19 +556,21 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 
 :if ([:len [/system/script/find name="changeDNS"]] = 0) do={
 /system script
-add name=changeDNS source=":local DNSServer [/ip/dns/get servers]\r\
-    \n:if ([:len [/container/find comment=\"DNSProxy\" and running]] > 0 and \$DNSServer!=192.168.255.10) do={\r\
+add name=changeDNS source=":if ([:len [/container/find comment=\"DNSProxy\" and running]] > 0 and [/ip/dns/get servers]!=192.168.255.10) d\
+    o={\r\
     \n/ip dns set use-doh-server=\"\" verify-doh-cert=no\r\
     \n/ip dns set servers=\"\"\r\
     \n/ip dns set servers=192.168.255.10\r\
     \n/ip dns set cache-max-ttl=10s\r\
+    \n/ip dns cache flush\r\
     \n:log warning \"change DNS server to DNSProxy\"\r\
     \n} \r\
-    \n:if ([:len [/container/find comment=\"DNSProxy\" and stopped]] > 0 and \$DNSServer=192.168.255.10) do={\r\
+    \n:if ([:len [/container/find comment=\"DNSProxy\" and stopped]] > 0 and [/ip/dns/get servers]=192.168.255.10) do={\r\
     \n/ip dns set servers=\"\"\r\
     \n/ip dns set servers=8.8.8.8\r\
     \n/ip dns set use-doh-server=https://dns.google/dns-query verify-doh-cert=yes\r\
     \n/ip dns set cache-max-ttl=1d\r\
+    \n/ip dns cache flush\r\
     \n:log warning \"change DNS server to DoH Google\"\r\
     \n}"
 :put "Add script changeDNS"}
