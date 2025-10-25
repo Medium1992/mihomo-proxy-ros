@@ -1,8 +1,3 @@
-## 🌐 Language / Язык
-
-- [English](README.md)
-- [Русский](README_RU.md)
-
 # 🌐 mihomo-proxy-ros
 
 ## 🇬🇧 English Description
