@@ -1,6 +1,6 @@
 :local freespace [/system/resource/get free-hdd-space]
 :if ($freespace<80914560 and ([:len [/container/find comment="MihomoProxyRoS"]] = 0)) do={
-    :put "Low free space on storage, script exit"
+:put "Low free space on storage, script exit"
 } else={
 
 :local start
@@ -15,10 +15,10 @@
 } on-error {
 :set defaultLINK " "
 }
-:put "Please enter a valid vless:// URL (e.g., vless://user@host:port?params). Press Enter to skip and hold current value: $defaultLINK"
+:put "Please enter a valid link vless://... or vmess:// or ss://... or trojan://... Press Enter to skip and hold current value: $defaultLINK"
 :set inputLINK [/terminal ask]
 :if ([:len $inputLINK] = 0) do={
-    :set inputLINK $defaultLINK
+:set inputLINK $defaultLINK
 }
 
 :local inputSUBLINK
@@ -28,10 +28,10 @@
 } on-error {
 :set defaultSUBLINK " "
 }
-:put "Enter sublink https://... URL. Press Enter to skip and hold current value: $defaultSUBLINK"
+:put "Enter sublink http(s)://... URL. Press Enter to skip and hold current value: $defaultSUBLINK"
 :set inputSUBLINK [/terminal ask]
 :if ([:len $inputSUBLINK] = 0) do={
-    :set inputSUBLINK $defaultSUBLINK
+:set inputSUBLINK $defaultSUBLINK
 }
 
 #:local inputFakeIPrange
@@ -52,7 +52,6 @@
 :put "interface list LAN added, pls add interface to interface list LAN and press Enter to continue"
 :set start [/terminal ask]
 }
-
 
 :do {/interface/veth/add name=MihomoProxyRoS address=192.168.255.2/30 gateway=192.168.255.1
 :put "Create VETH MihomoProxyRoS"} on-error {}
@@ -78,8 +77,8 @@
 :put "Add in interfacelist InAccept interface DNSProxy"} on-error {}
 :do {/ip/address/add address=192.168.255.9/30 interface=DNSProxy
 :put "Add address Mikrotik for interface DNSProxy"} on-error {}
-:do {/ip/dns/forwarders/add name=dnsproxy dns-servers=192.168.255.10 verify-doh-cert=no
-:put "Add DNS Forwarders dnsproxy"} on-error {}
+:do {/ip/dns/forwarders/add name=DNSProxy dns-servers=192.168.255.10 verify-doh-cert=no
+:put "Add DNS Forwarders DNSProxy"} on-error {}
 
 :do {/interface/list/add name=Containers
 :put "Create interfacelist Containers"} on-error {}
@@ -333,6 +332,11 @@ add chain=input protocol=udp dst-port=53 in-interface-list=Containers comment="M
 :do {add list=MihomoProxyRoS comment=Netflix address=207.45.72.0/22} on-error {}
 :do {add list=MihomoProxyRoS comment=Netflix address=208.75.76.0/22} on-error {}
 
+/ip dns static
+:if ([:len [find name="themoviedb.org"]] = 0) do={ add address-list=MihomoProxyRoS forward-to=Quad9 comment="tmdb" match-subdomain=yes type=FWD name="themoviedb.org" }
+:if ([:len [find name="tmdb.org"]] = 0) do={ add address-list=MihomoProxyRoS forward-to=Quad9 comment="tmdb" match-subdomain=yes type=FWD name="tmdb.org" }
+:if ([:len [find name="tmdb-image-prod.b-cdn.net"]] = 0) do={ add address-list=MihomoProxyRoS forward-to=Quad9 comment="tmdb" type=FWD name="tmdb-image-prod.b-cdn.net" }
+
 :if ([:len [/system/script/find name="FWD_update"]] = 0) do={
 /system script
 add name=FWD_update source="# Define global variables\r\
@@ -363,8 +367,7 @@ add name=FWD_update source="# Define global variables\r\
     \n    \"xhamster\";\r\
     \n    \"porn\";\r\
     \n    \"video\";\r\
-    \n    \"telegram\";\r\
-    \n    \"tmdb\"\r\ 
+    \n    \"telegram\"\r\
     \n}\r\
     \n\r\
     \n# Base URL for RSC files\r\
@@ -446,8 +449,8 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 /container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ name=awg_conf comment="MihomoProxyRoSAWG"
 }
 /container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mount=awg_conf interface=MihomoProxyRoS root-dir=Containers/MihomoProxyRoS dns=192.168.255.1 start-on-boot=yes comment="MihomoProxyRoS"
-:put "Start pull container, pls wait when container starting, delay 30s"
-:delay 30
+:put "Start pull MihomoProxyRoS container, pls wait when container starting, pls wait"
+:delay 1
 :if ([:len [/container/find comment="MihomoProxyRoS" and stopped]] > 0) do={
 /container/start [find where comment="MihomoProxyRoS" and stopped]
 :put "Container MihomoProxyRoS started"
@@ -455,22 +458,27 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 }
 :if ([:len [/container/find comment="MihomoProxyRoS" and download/extract failed]] > 0) do={
 /container/repull [find where comment="MihomoProxyRoS"]
-:put "Container MihomoProxyRoS extract failed, repull, delay 30s"
-:delay 30
+:put "Container MihomoProxyRoS extract failed, repull, pls wait"
+:delay 1
 }
 } on-error {
 :if ([:len [/container/find comment="MihomoProxyRoS" and (stopped or running)]] > 0) do={
 /container/start [find where comment="MihomoProxyRoS" and stopped]
+:delay 3
+:if ([:len [/container/find comment="MihomoProxyRoS" and running)]] > 0) do={
 :put "Container MihomoProxyRoS started"
 :set $flagContainer true
 }
-:if ([:len [/container/find comment="MihomoProxyRoS" and downloading/extracting]] > 0) do={
-:delay 5
+:if ([:len [/container/find comment="MihomoProxyRoS" and stopped)]] > 0) do={
+/container/repull [find where comment="MihomoProxyRoS"]
+:put "Container MihomoProxyRoS extract failed, repull, pls wait"
+:delay 1
+}
 }
 :if ([:len [/container/find comment="MihomoProxyRoS" and download/extract failed]] > 0) do={
 /container/repull [find where comment="MihomoProxyRoS"]
-:put "Container MihomoProxyRoS extract failed, repull, delay 30s"
-:delay 30
+:put "Container MihomoProxyRoS extract failed, repull, pls wait"
+:delay 1
 }
 :delay 1
 }
@@ -480,8 +488,8 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :while ($flagContainer = false) do={
 :do {
 /container/add remote-image="ghcr.io/medium1992/dns-proxy-ros" interface=DNSProxy cmd="--cache --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel" root-dir=Containers/DNSProxy dns=192.168.255.9 start-on-boot=yes comment="DNSProxy"
-:put "Start pull container, pls wait when container starting, delay 30s"
-:delay 15
+:put "Start pull DNSProxy container, pls wait when container starting, pls wait"
+:delay 1
 :if ([:len [/container/find comment="DNSProxy" and stopped]] > 0) do={
 /container/start [find where comment="DNSProxy" and stopped]
 :put "Container DNSProxy started"
@@ -489,22 +497,27 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 }
 :if ([:len [/container/find comment="DNSProxy" and download/extract failed]] > 0) do={
 /container/repull [find where comment="DNSProxy"]
-:put "Container DNSProxy extract failed, repull, delay 30s"
-:delay 15
+:put "Container DNSProxy extract failed, repull, pls wait"
+:delay 1
 }
 } on-error {
 :if ([:len [/container/find comment="DNSProxy" and (stopped or running)]] > 0) do={
 /container/start [find where comment="DNSProxy" and stopped]
+:delay 3
+:if ([:len [/container/find comment="DNSProxy" and running)]] > 0) do={
 :put "Container DNSProxy started"
 :set $flagContainer true
 }
-:if ([:len [/container/find comment="DNSProxy" and downloading/extracting]] > 0) do={
-:delay 2
+:if ([:len [/container/find comment="DNSProxy" and stopped)]] > 0) do={
+/container/repull [find where comment="DNSProxy"]
+:put "Container DNSProxy extract failed, repull, pls wait"
+:delay 1
+}
 }
 :if ([:len [/container/find comment="DNSProxy" and download/extract failed]] > 0) do={
 /container/repull [find where comment="DNSProxy"]
-:put "Container DNSProxy extract failed, repull, delay 30s"
-:delay 15
+:put "Container DNSProxy extract failed, repull, pls wait"
+:delay 1
 }
 :delay 1
 }
@@ -514,8 +527,8 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :while ($flagContainer = false) do={
 :do {
 /container/add remote-image="registry-1.docker.io/wiktorbgu/byedpi-mikrotik" interface=ByeDPI cmd="--tlsrec 41+s --udp-fake 1 --oob 1 --udp-fake 1 --auto=torst,redirect,ssl_err --fake -1 --udp-fake 1 --auto=torst,redirect,ssl_err --disorder 1:11+sm --md5sig --udp-fake 1 --auto=torst,redirect,ssl_err --fake-sni google.com --fake-tls-mod rand --fake 1 --disorder 1:11+sm --split 1:11+sm --md5sig --udp-fake 1 --auto=torst,redirect,ssl_err --oob 1 --disorder 1 --tlsrec 1+s --split 1+s --disorder 3+s --udp-fake 1 --auto=torst,redirect,ssl_err --split 5 --oob 2 --udp-fake 1 --auto=torst,redirect,ssl_err --split 1+s --disoob 1 --udp-fake 1 --auto=torst,redirect,ssl_err --oob 1 --disorder 1 --tlsrec 1+s --split 1+s --disorder 3+s --udp-fake 1" root-dir=Containers/ByeDPI dns=192.168.255.10 start-on-boot=yes comment="ByeDPI"
-:put "Start pull container, pls wait when container starting, delay 30s"
-:delay 10
+:put "Start pull ByeDPI container, pls wait when container starting, pls wait"
+:delay 1
 :if ([:len [/container/find comment="ByeDPI" and stopped]] > 0) do={
 /container/start [find where comment="ByeDPI" and stopped]
 :put "Container ByeDPI started"
@@ -523,22 +536,27 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 }
 :if ([:len [/container/find comment="ByeDPI" and download/extract failed]] > 0) do={
 /container/repull [find where comment="ByeDPI"]
-:put "Container ByeDPI extract failed, repull, delay 30s"
-:delay 10
+:put "Container ByeDPI extract failed, repull, pls wait"
+:delay 1
 }
 } on-error {
 :if ([:len [/container/find comment="ByeDPI" and (stopped or running)]] > 0) do={
 /container/start [find where comment="ByeDPI" and stopped]
+:delay 3
+:if ([:len [/container/find comment="ByeDPI" and running)]] > 0) do={
 :put "Container ByeDPI started"
 :set $flagContainer true
 }
-:if ([:len [/container/find comment="ByeDPI" and downloading/extracting]] > 0) do={
-:delay 2
+:if ([:len [/container/find comment="ByeDPI" and stopped)]] > 0) do={
+/container/repull [find where comment="ByeDPI"]
+:put "Container ByeDPI extract failed, repull, pls wait"
+:delay 1
+}
 }
 :if ([:len [/container/find comment="ByeDPI" and download/extract failed]] > 0) do={
 /container/repull [find where comment="ByeDPI"]
-:put "Container ByeDPI extract failed, repull, delay 30s"
-:delay 10
+:put "Container ByeDPI extract failed, repull, pls wait"
+:delay 1
 }
 :delay 1
 }
