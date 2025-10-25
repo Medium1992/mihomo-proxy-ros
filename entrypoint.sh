@@ -200,6 +200,8 @@ dns:
     - 1.1.1.1
   enhanced-mode: fake-ip
   fake-ip-range: ${FAKE_IP_RANGE}
+  fake-ip-filter:
+    - www.youtube.com
   nameserver:
     - https://dns.google/dns-query
     - https://1.1.1.1/dns-query
