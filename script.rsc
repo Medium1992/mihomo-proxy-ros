@@ -476,6 +476,40 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :set flagContainer false
 :while ($flagContainer = false) do={
 :do {
+/container/add remote-image="ghcr.io/medium1992/dns-proxy-ros" interface=DNSProxy cmd="--cache --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel" root-dir=Containers/DNSProxy dns=192.168.255.9 start-on-boot=yes comment="DNSProxy"
+:put "Start pull container, pls wait when container starting, delay 30s"
+:delay 15
+:if ([:len [/container/find comment="DNSProxy" and stopped]] > 0) do={
+/container/start [find where comment="DNSProxy" and stopped]
+:put "Container DNSProxy started"
+:set $flagContainer true
+}
+:if ([:len [/container/find comment="DNSProxy" and download/extract failed]] > 0) do={
+/container/repull [find where comment="DNSProxy"]
+:put "Container DNSProxy extract failed, repull, delay 30s"
+:delay 15
+}
+} on-error {
+:if ([:len [/container/find comment="DNSProxy" and (stopped or running)]] > 0) do={
+/container/start [find where comment="DNSProxy" and stopped]
+:put "Container DNSProxy started"
+:set $flagContainer true
+}
+:if ([:len [/container/find comment="DNSProxy" and downloading/extracting]] > 0) do={
+:delay 2
+}
+:if ([:len [/container/find comment="DNSProxy" and download/extract failed]] > 0) do={
+/container/repull [find where comment="DNSProxy"]
+:put "Container DNSProxy extract failed, repull, delay 30s"
+:delay 15
+}
+:delay 1
+}
+}
+
+:set flagContainer false
+:while ($flagContainer = false) do={
+:do {
 /container/add remote-image="registry-1.docker.io/wiktorbgu/byedpi-mikrotik" interface=ByeDPI cmd="--tlsrec 41+s --udp-fake 1 --oob 1 --udp-fake 1 --auto=torst,redirect,ssl_err --fake -1 --udp-fake 1 --auto=torst,redirect,ssl_err --disorder 1:11+sm --md5sig --udp-fake 1 --auto=torst,redirect,ssl_err --fake-sni google.com --fake-tls-mod rand --fake 1 --disorder 1:11+sm --split 1:11+sm --md5sig --udp-fake 1 --auto=torst,redirect,ssl_err --oob 1 --disorder 1 --tlsrec 1+s --split 1+s --disorder 3+s --udp-fake 1 --auto=torst,redirect,ssl_err --split 5 --oob 2 --udp-fake 1 --auto=torst,redirect,ssl_err --split 1+s --disoob 1 --udp-fake 1 --auto=torst,redirect,ssl_err --oob 1 --disorder 1 --tlsrec 1+s --split 1+s --disorder 3+s --udp-fake 1" root-dir=Containers/ByeDPI dns=192.168.255.10 start-on-boot=yes comment="ByeDPI"
 :put "Start pull container, pls wait when container starting, delay 30s"
 :delay 10
@@ -507,39 +541,6 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 }
 }
 
-:set flagContainer false
-:while ($flagContainer = false) do={
-:do {
-/container/add remote-image="ghcr.io/medium1992/dns-proxy-ros" interface=DNSProxy cmd="--cache --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel" root-dir=Containers/DNSProxy dns=192.168.255.9 start-on-boot=yes comment="DNSProxy"
-:put "Start pull container, pls wait when container starting, delay 30s"
-:delay 15
-:if ([:len [/container/find comment="DNSProxy" and stopped]] > 0) do={
-/container/start [find where comment="DNSProxy" and stopped]
-:put "Container DNSProxy started"
-:set $flagContainer true
-}
-:if ([:len [/container/find comment="DNSProxy" and download/extract failed]] > 0) do={
-/container/repull [find where comment="DNSProxy"]
-:put "Container DNSProxy extract failed, repull, delay 30s"
-:delay 15
-}
-} on-error {
-:if ([:len [/container/find comment="DNSProxy" and (stopped or running)]] > 0) do={
-/container/start [find where comment="DNSProxy" and stopped]
-:put "Container DNSProxy started"
-:set $flagContainer true
-}
-:if ([:len [/container/find comment="DNSProxy" and downloading/extracting]] > 0) do={
-:delay 2
-}
-:if ([:len [/container/find comment="DNSProxy" and download/extract failed]] > 0) do={
-/container/repull [find where comment="DNSProxy"]
-:put "Container DNSProxy extract failed, repull, delay 30s"
-:delay 15
-}
-:delay 1
-}
-}
 :put "Script complete, for use AWG pls push AWG_conf file on Mikrotik to path /awg_conf/"
 :log warning "script complete"
 /system/script/environment/remove [find where ]
