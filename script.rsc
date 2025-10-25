@@ -380,13 +380,16 @@ add name=FWD_update source="# Define global variables\r\
     \n                \$s\r\
     \n           \
     \n     :log warning \"\$resource.rsc loading completed\"\
+    \n     :put \"\$resource.rsc loading completed\"\
     \n\r\
     \n            } else={\r\
     \n                :log warning \"Invalid or empty content: \$url\"\r\
+    \n                :put \"Invalid or empty content: \$url\"\r\
     \n            }\r\
     \n        }\r\
     \n    } on-error={\r\
     \n        :log warning \"Error fetching single file \$resource.rsc, trying fetch parts file\"\r\
+    \n        :put \"Error fetching single file \$resource.rsc, trying fetch parts file\"\r\
     \n        # If single file fails, try fetching parts\r\
     \n        :local part 1\r\
     \n        :local continue true\r\
@@ -401,6 +404,7 @@ add name=FWD_update source="# Define global variables\r\
     \n                        \$s\r\
     \n                    } else={\r\
     \n                        :log warning \"Invalid or empty content \$resource.rsc\"\r\
+    \n                        :put \"Invalid or empty content \$resource.rsc\"\r\
     \n                        :set continue false\r\
     \n                    }\r\
     \n                } else={\r\
@@ -410,11 +414,13 @@ add name=FWD_update source="# Define global variables\r\
     \n                :if (\$part = 1) do={\r\
     \n\
     \n                   :log warning \"https://raw.githubusercontent.com is not available, check availability\"\
+    \n                   :put \"https://raw.githubusercontent.com is not available, check availability\"\
     \n\r\
     \n                } else={\r\
     \n                   :set part (\$part - 1)\r\
     \n           \
     \n        :log warning \"\$resource.rsc loading completed, number last part \$part\"\
+    \n        :put \"\$resource.rsc loading completed, number last part \$part\"\
     \n\r\
     \n                }\r\
     \n                :set continue false\r\
