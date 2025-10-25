@@ -190,7 +190,7 @@ add address=8.8.4.4 list=DNS
 
 /ip firewall mangle
 :if ([:len [find comment="MihomoProxyRoS1"]] = 0) do={add action=change-mss chain=postrouting new-mss=clamp-to-pmtu protocol=tcp tcp-flags=syn connection-state=new comment="MihomoProxyRoS1"; :put "Add mangle rules 1"}
-#:if ([:len [find comment="YT_MSS"]] = 0) do={add action=change-mss chain=postrouting in-interface=ByeDPI content=www.youtube.com new-mss=88 protocol=tcp tcp-flags=syn connection-state=new comment="YT_MSS"; :put "Add mangle rules YT_MSS"}
+:if ([:len [find comment="YT_MSS"]] = 0) do={add action=change-mss chain=postrouting dst-address-list=YT in-interface=ByeDPI new-mss=88 protocol=tcp tcp-flags=syn connection-state=new comment="YT_MSS"; :put "Add mangle rules YT_MSS"}
 :if ([:len [find comment="MihomoProxyRoS2"]] = 0) do={add action=accept chain=prerouting connection-mark=no-mark connection-state=established,related,untracked comment="MihomoProxyRoS2"; :put "Add mangle rules 2"}
 :if ([:len [find comment="MihomoProxyRoS3"]] = 0) do={add action=accept chain=prerouting in-interface-list=InAccept comment="MihomoProxyRoS3"; :put "Add mangle rules 3"}
 :if ([:len [find comment="MihomoProxyRoS4"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="MihomoProxyRoS4"; :put "Add mangle rules 4"}
@@ -215,6 +215,8 @@ add chain=input protocol=udp dst-port=53 in-interface-list=Containers comment="M
 :do {add list=VoiceTelegram comment=Telegram address=109.239.140.0/24} on-error {}
 :do {add list=VoiceTelegram comment=Telegram address=149.154.160.0/20} on-error {}
 :do {add list=VoiceTelegram comment=Telegram address=185.76.151.0/24} on-error {}
+:do {add list=YT comment=YT_MSS address=www.youtube.com} on-error {}
+:do {add list=MihomoProxyRoS comment=YT address=www.youtube.com} on-error {}
 :do {add list=MihomoProxyRoS comment=KinoPUB address=95.216.223.137} on-error {}
 :do {add list=MihomoProxyRoS comment=FaceBook address=31.13.24.0/21} on-error {}
 :do {add list=MihomoProxyRoS comment=FaceBook address=31.13.64.0/18} on-error {}
@@ -479,7 +481,7 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :set flagContainer false
 :while ($flagContainer = false) do={
 :do {
-/container/add remote-image="ghcr.io/medium1992/dns-proxy-ros" interface=DNSProxy cmd="--cache --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel" root-dir=Containers/DNSProxy dns=192.168.255.9 start-on-boot=yes comment="DNSProxy"
+/container/add remote-image="ghcr.io/medium1992/dns-proxy-ros" interface=DNSProxy cmd="--cache --upstream \"[/www.youtube.com/]192.168.255.2:53\" --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel" root-dir=Containers/DNSProxy dns=192.168.255.9 start-on-boot=yes comment="DNSProxy"
 :put "Start pull DNSProxy container, pls wait when container starting, pls wait"
 :delay 1
 :if ([:len [/container/find comment="DNSProxy" and stopped]] > 0) do={
@@ -561,7 +563,6 @@ add name=changeDNS source=":if ([:len [/container/find comment=\"DNSProxy\" and 
     \n/ip dns set use-doh-server=\"\" verify-doh-cert=no\r\
     \n/ip dns set servers=\"\"\r\
     \n/ip dns set servers=192.168.255.10\r\
-    \n/ip dns set cache-max-ttl=10s\r\
     \n/ip dns cache flush\r\
     \n:log warning \"change DNS server to DNSProxy\"\r\
     \n} \r\
@@ -569,7 +570,6 @@ add name=changeDNS source=":if ([:len [/container/find comment=\"DNSProxy\" and 
     \n/ip dns set servers=\"\"\r\
     \n/ip dns set servers=8.8.8.8\r\
     \n/ip dns set use-doh-server=https://dns.google/dns-query verify-doh-cert=yes\r\
-    \n/ip dns set cache-max-ttl=1d\r\
     \n/ip dns cache flush\r\
     \n:log warning \"change DNS server to DoH Google\"\r\
     \n}"
