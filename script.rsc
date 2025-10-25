@@ -1,5 +1,5 @@
 :local freespace [/system/resource/get free-hdd-space]
-:if ($freespace<62914560 and ([:len [/container/find comment="MihomoProxyRoS"]] = 0)) do={
+:if ($freespace<75914560 and ([:len [/container/find comment="MihomoProxyRoS"]] = 0)) do={
     :put "Low free space on storage, script exit"
 } else={
 
@@ -42,6 +42,18 @@
 #    :set inputFakeIPrange $defaultFakeIPrange
 #}
 
+:if ([:len [/interface/list/find name=WAN]] = 0) do={
+/interface/list/find add name=WAN
+:put "interface list WAN added, pls add interface to interface list WAN and press Enter to continue"
+:set start [/terminal ask]
+}
+:if ([:len [/interface/list/find name=LAN]] = 0) do={
+/interface/list/find add name=LAN
+:put "interface list LAN added, pls add interface to interface list LAN and press Enter to continue"
+:set start [/terminal ask]
+}
+
+
 :do {/interface/veth/add name=MihomoProxyRoS address=192.168.255.2/30 gateway=192.168.255.1
 :put "Create VETH MihomoProxyRoS"} on-error {}
 :do {/interface/list/add name=InAccept include=WAN
@@ -52,6 +64,29 @@
 :put "Add address Mikrotik for interface MihomoProxyRoS"} on-error {}
 :do {/ip/dns/forwarders/add name=MihomoProxyRoS dns-servers=192.168.255.2 verify-doh-cert=no
 :put "Add DNS Forwarders MihomoProxyRoS"} on-error {}
+
+:do {/interface/veth/add name=ByeDPI address=192.168.255.6/30 gateway=192.168.255.5
+:put "Create VETH ByeDPI"} on-error {}
+:do {/interface/list/member/add interface=ByeDPI list=InAccept
+:put "Add in interfacelist InAccept interface ByeDPI"} on-error {}
+:do {/ip/address/add address=192.168.255.5/30 interface=ByeDPI
+:put "Add address Mikrotik for interface ByeDPI"} on-error {}
+
+:do {/interface/veth/add name=DNSProxy address=192.168.255.10/30 gateway=192.168.255.9
+:put "Create VETH DNSProxy"} on-error {}
+:do {/interface/list/member/add interface=DNSProxy list=InAccept
+:put "Add in interfacelist InAccept interface DNSProxy"} on-error {}
+:do {/ip/address/add address=192.168.255.9/30 interface=DNSProxy
+:put "Add address Mikrotik for interface DNSProxy"} on-error {}
+
+:do {/interface/list/add name=Containers
+:put "Create interfacelist Containers"} on-error {}
+:do {/interface/list/member/add interface=MihomoProxyRoS list=Containers
+:put "Add in interfacelist Containers interface MihomoProxyRoS"} on-error {}
+:do {/interface/list/member/add interface=ByeDPI list=Containers
+:put "Add in interfacelist Containers interface ByeDPI"} on-error {}
+:do {/interface/list/member/add interface=DNSProxy list=Containers
+:put "Add in interfacelist Containers interface DNSProxy"} on-error {}
 
 :do {
 /ip dns forwarders
@@ -121,6 +156,10 @@ add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0
 :put "Add env LOG_LEVEL value: error"} on-error {}
 :do {add key=TTL_FAKEIP list=MihomoProxyRoS value=10
 :put "Add env TTL_FAKEIP value: 10"} on-error {}
+:do { add key=GROUP list=MihomoProxyRoS value=youtube,telegram
+:put "Add env GROUP value: youtube,telegram"} on-error {}
+:do { add key=TELEGRAM_GEOIP list=MihomoProxyRoS value=telegram
+:put "Add env TELEGRAM_GEOIP value: telegram"} on-error {}
 :do {
 add key=LINK1 list=MihomoProxyRoS value=$inputLINK
 :put "Add env LINK1 value: $inputLINK"
@@ -169,7 +208,7 @@ add address=8.8.4.4 list=DNS
 
 /ip firewall filter
 :if ([:len [find comment="MihomoProxyRoSDNS"]] = 0) do={
-add chain=input protocol=udp dst-port=53 in-interface=MihomoProxyRoS comment="MihomoProxyRoSDNS" place-before=3
+add chain=input protocol=udp dst-port=53 in-interface-list=Containers comment="MihomoProxyRoSDNS" place-before=3
 }
 
 /ip firewall address-list
@@ -321,6 +360,7 @@ add name=FWD_update source="# Define global variables\r\
     \n    \"xhamster\";\r\
     \n    \"porn\";\r\
     \n    \"video\";\r\
+    \n    \"telegram\";\r\
     \n    \"tmdb\"\r\ 
     \n}\r\
     \n\r\
@@ -429,6 +469,77 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :put "Container MihomoProxyRoS extract failed, repull, delay 30s"
 :delay 30
 }
+:delay 1
+}
+
+}
+:set flagContainer false
+:while ($flagContainer = false) do={
+:if ([:len [/container/mounts/find comment="ByeDPI"]] = 0) do={
+}
+/container/add remote-image="registry-1.docker.io/wiktorbgu/byedpi-mikrotik" interface=ByeDPI cmd="--tlsrec 41+s --udp-fake 1 --oob 1 --udp-fake 1 --auto=torst,redirect,ssl_err --fake -1 --udp-fake 1 --auto=torst,redirect,ssl_err --disorder 1:11+sm --md5sig --udp-fake 1 --auto=torst,redirect,ssl_err --fake-sni google.com --fake-tls-mod rand --fake 1 --disorder 1:11+sm --split 1:11+sm --md5sig --udp-fake 1 --auto=torst,redirect,ssl_err --oob 1 --disorder 1 --tlsrec 1+s --split 1+s --disorder 3+s --udp-fake 1 --auto=torst,redirect,ssl_err --split 5 --oob 2 --udp-fake 1 --auto=torst,redirect,ssl_err --split 1+s --disoob 1 --udp-fake 1 --auto=torst,redirect,ssl_err --oob 1 --disorder 1 --tlsrec 1+s --split 1+s --disorder 3+s --udp-fake 1" root-dir=Containers/ByeDPI dns=192.168.255.10 start-on-boot=yes comment="ByeDPI"
+:put "Start pull container, pls wait when container starting, delay 30s"
+:delay 10
+:if ([:len [/container/find comment="ByeDPI" and stopped]] > 0) do={
+/container/start [find where comment="ByeDPI" and stopped]
+:put "Container ByeDPI started"
+:set $flagContainer true
+}
+:if ([:len [/container/find comment="ByeDPI" and download/extract failed]] > 0) do={
+/container/repull [find where comment="ByeDPI"]
+:put "Container ByeDPI extract failed, repull, delay 30s"
+:delay 10
+}
+} on-error {
+:if ([:len [/container/find comment="ByeDPI" and (stopped or running)]] > 0) do={
+/container/start [find where comment="ByeDPI" and stopped]
+:put "Container ByeDPI started"
+:set $flagContainer true
+}
+:if ([:len [/container/find comment="ByeDPI" and downloading/extracting]] > 0) do={
+:delay 2
+}
+:if ([:len [/container/find comment="ByeDPI" and download/extract failed]] > 0) do={
+/container/repull [find where comment="ByeDPI"]
+:put "Container ByeDPI extract failed, repull, delay 30s"
+:delay 10
+}
+:delay 1
+}
+}
+
+:set flagContainer false
+:while ($flagContainer = false) do={
+:if ([:len [/container/mounts/find comment="DNSProxy"]] = 0) do={
+}
+/container/add remote-image="ghcr.io/medium1992/dns-proxy-ros" interface=DNSProxy cmd="--cache --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel" root-dir=Containers/DNSProxy dns=192.168.255.9 start-on-boot=yes comment="DNSProxy"
+:put "Start pull container, pls wait when container starting, delay 30s"
+:delay 15
+:if ([:len [/container/find comment="DNSProxy" and stopped]] > 0) do={
+/container/start [find where comment="DNSProxy" and stopped]
+:put "Container DNSProxy started"
+:set $flagContainer true
+}
+:if ([:len [/container/find comment="DNSProxy" and download/extract failed]] > 0) do={
+/container/repull [find where comment="DNSProxy"]
+:put "Container DNSProxy extract failed, repull, delay 30s"
+:delay 15
+}
+} on-error {
+:if ([:len [/container/find comment="DNSProxy" and (stopped or running)]] > 0) do={
+/container/start [find where comment="DNSProxy" and stopped]
+:put "Container DNSProxy started"
+:set $flagContainer true
+}
+:if ([:len [/container/find comment="DNSProxy" and downloading/extracting]] > 0) do={
+:delay 2
+}
+:if ([:len [/container/find comment="DNSProxy" and download/extract failed]] > 0) do={
+/container/repull [find where comment="DNSProxy"]
+:put "Container DNSProxy extract failed, repull, delay 30s"
+:delay 15
+}
+:delay 1
 }
 }
 :put "Script complete, for use AWG pls push AWG_conf file on Mikrotik to path /awg_conf/"
