@@ -265,40 +265,57 @@ EOF
     providers="$providers LINKS"
   fi
 
-  # провайдеры SUB_LINKi
+# провайдер sub_links
 for var in $(env | grep -E '^SUB_LINK[0-9]*=' | sort -t '=' -k1); do
   name=$(echo "$var" | cut -d '=' -f1)
   value=$(echo "$var" | cut -d '=' -f2-)
   value=$(echo "$value" | tr '+' ' ')
   url=$(echo "$value" | cut -d '#' -f1)
-  headers=$(echo "$value" | cut -d '#' -f2-)
+  headers_raw=$(echo "$value" | cut -d '#' -f2-)
 
+  # Очистка: убираем пробелы, пустые #
+  headers_clean=$(echo "$headers_raw" | sed 's/^[[:space:]]*#*[[:space:]]*//; s/[[:space:]]*$//' | tr -d ' \t\n\r')
+
+  # Дефолты
+  def_hwid="${HWID:-}"
+  def_device_os="${DEVICE_OS:-}"
+  def_ver_os="${VER_OS:-}"
+  def_device_model="${DEVICE_MODEL:-}"
+  def_user_agent="${USER_AGENT:-}"
+
+  # Итоговые значения (по умолчанию — пустые)
   x_hwid=""
   x_device_os=""
   x_ver_os=""
   x_device_model=""
-  user_agent=""
+  x_user_agent=""
 
-  if [ -n "$headers" ]; then
-    OLDIFS=$IFS
-    IFS='#'
-    for header in $headers; do
-      IFS=$OLDIFS
-
-      key=${header%%=*}
-      val=${header#*=}
-      val=$(echo "$val" | tr '+' ' ')
-
+  # === ПАРСИМ SUB_LINK ЗАГОЛОВКИ (если есть) ===
+  if [ -n "$headers_clean" ]; then
+    OLDIFS=$IFS; IFS='#'
+    for pair in $headers_clean; do
+      [ -z "$pair" ] && continue
+      key=$(echo "$pair" | cut -d'=' -f1)
+      val=$(echo "$pair" | cut -d'=' -f2- | tr '+' ' ')
       case "$key" in
-        x-hwid) x_hwid="$val" ;;
-        x-device-os) x_device_os="$val" ;;
-        x-ver-os) x_ver_os="$val" ;;
+        x-hwid)         x_hwid="$val" ;;
+        x-device-os)    x_device_os="$val" ;;
+        x-ver-os)       x_ver_os="$val" ;;
         x-device-model) x_device_model="$val" ;;
-        user-agent) user_agent="$val" ;;
+        user-agent)     x_user_agent="$val" ;;
       esac
     done
+    IFS=$OLDIFS
   fi
 
+  # === ПРИМЕНЯЕМ ДЕФОЛТЫ ТОЛЬКО ДЛЯ ПУСТЫХ ===
+  [ -z "$x_hwid" ]         && [ -n "$def_hwid" ]         && x_hwid="$def_hwid"
+  [ -z "$x_device_os" ]    && [ -n "$def_device_os" ]    && x_device_os="$def_device_os"
+  [ -z "$x_ver_os" ]       && [ -n "$def_ver_os" ]       && x_ver_os="$def_ver_os"
+  [ -z "$x_device_model" ] && [ -n "$def_device_model" ] && x_device_model="$def_device_model"
+  [ -z "$x_user_agent" ]   && [ -n "$def_user_agent" ]   && x_user_agent="$def_user_agent"
+
+  # === ПРОВАЙДЕР ===
   cat >> "$CONFIG_YAML" <<EOF
   $name:
     type: http
@@ -307,16 +324,17 @@ for var in $(env | grep -E '^SUB_LINK[0-9]*=' | sort -t '=' -k1); do
     proxy: DIRECT
 EOF
 
-  if [ -n "$x_hwid" ] || [ -n "$x_device_os" ] || [ -n "$x_ver_os" ] || [ -n "$x_device_model" ] || [ -n "$user_agent" ]; then
+  # === HEADER — ТОЛЬКО ЕСЛИ ЕСТЬ ХОТЬ ОДИН ===
+  if [ -n "$x_hwid" ] || [ -n "$x_device_os" ] || [ -n "$x_ver_os" ] || [ -n "$x_device_model" ] || [ -n "$x_user_agent" ]; then
     echo "    header:" >> "$CONFIG_YAML"
-
-    [ -n "$x_hwid" ] && echo "      x-hwid:" >> "$CONFIG_YAML" && echo "      - \"$x_hwid\"" >> "$CONFIG_YAML"
-    [ -n "$x_device_os" ] && echo "      x-device-os:" >> "$CONFIG_YAML" && echo "      - \"$x_device_os\"" >> "$CONFIG_YAML"
-    [ -n "$x_ver_os" ] && echo "      x-ver-os:" >> "$CONFIG_YAML" && echo "      - \"$x_ver_os\"" >> "$CONFIG_YAML"
-    [ -n "$x_device_model" ] && echo "      x-device-model:" >> "$CONFIG_YAML" && echo "      - \"$x_device_model\"" >> "$CONFIG_YAML"
-    [ -n "$user_agent" ] && echo "      User-Agent:" >> "$CONFIG_YAML" && echo "      - \"$user_agent\"" >> "$CONFIG_YAML"
+    [ -n "$x_hwid" ]         && echo "      x-hwid:"         >> "$CONFIG_YAML" && echo "        - \"$x_hwid\""         >> "$CONFIG_YAML"
+    [ -n "$x_device_os" ]    && echo "      x-device-os:"    >> "$CONFIG_YAML" && echo "        - \"$x_device_os\""    >> "$CONFIG_YAML"
+    [ -n "$x_ver_os" ]       && echo "      x-ver-os:"       >> "$CONFIG_YAML" && echo "        - \"$x_ver_os\""       >> "$CONFIG_YAML"
+    [ -n "$x_device_model" ] && echo "      x-device-model:" >> "$CONFIG_YAML" && echo "        - \"$x_device_model\"" >> "$CONFIG_YAML"
+    [ -n "$x_user_agent" ]   && echo "      User-Agent:"     >> "$CONFIG_YAML" && echo "        - \"$x_user_agent\""   >> "$CONFIG_YAML"
   fi
 
+  # === HEALTH-CHECK — КАК У ВСЕХ ===
   cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
 EOF
