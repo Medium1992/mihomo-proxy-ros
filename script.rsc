@@ -142,6 +142,10 @@ add blackhole comment=BlackHole disabled=no distance=254 dst-address=172.16.0.0/
 add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0/16 gateway="" routing-table=MihomoProxyRoS scope=30 suppress-hw-offload=no
 :put "Add default route 0.0.0.0/0 into routing table MihomoProxyRoS & BlackHole route"}
 
+:local softid [/system/license/get software-id]
+:local model [/system/resource/get board-name]
+:local version [/system/resource/get version]
+
 /container/envs
 :do {add key=FAKE_IP_RANGE list=MihomoProxyRoS value=198.18.0.0/15
 :put "Add env FAKE_IP_RANGE value: 198.18.0.0/15"} on-error {}
@@ -153,6 +157,16 @@ add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0
 :put "Add env GROUP value: youtube,telegram"} on-error {}
 :do { add key=TELEGRAM_GEOIP list=MihomoProxyRoS value=telegram
 :put "Add env TELEGRAM_GEOIP value: telegram"} on-error {}
+:do { add key=HWID list=MihomoProxyRoS value=$softid
+:put "Add env HWID value: $softid"} on-error {}
+:do { add key=DEVICE_OS list=MihomoProxyRoS value=RouterOS
+:put "Add env DEVICE_OS value:RouterOS"} on-error {}
+:do { add key=VER_OS list=MihomoProxyRoS value=$version
+:put "Add env VER_OS value: $version"} on-error {}
+:do { add key=DEVICE_MODEL list=MihomoProxyRoS value=$model
+:put "Add env DEVICE_MODEL value: $model"} on-error {}
+:do { add key=USER_AGENT list=MihomoProxyRoS value=medium1992/mihomo-proxy-ros
+:put "Add env USER_AGENT value: medium1992/mihomo-proxy-ros"} on-error {}
 :do {
 add key=LINK1 list=MihomoProxyRoS value=$inputLINK
 :put "Add env LINK1 value: $inputLINK"
