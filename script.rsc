@@ -35,12 +35,12 @@
 }
 
 :if ([:len [/interface/list/find name=WAN]] = 0) do={
-/interface/list/find add name=WAN
+/interface/list/add name=WAN
 :put "interface list WAN added, pls add interface to interface list WAN and press Enter to continue"
 :set start [/terminal ask]
 }
 :if ([:len [/interface/list/find name=LAN]] = 0) do={
-/interface/list/find add name=LAN
+/interface/list/add name=LAN
 :put "interface list LAN added, pls add interface to interface list LAN and press Enter to continue"
 :set start [/terminal ask]
 }
