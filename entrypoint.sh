@@ -266,19 +266,63 @@ EOF
   fi
 
   # провайдеры SUB_LINKi
-  for var in $(env | grep -E '^SUB_LINK[0-9]*=' | sort -t '=' -k1); do
-    name=$(echo "$var" | cut -d '=' -f1)
-    value=$(echo "$var" | cut -d '=' -f2-)
-    cat >> "$CONFIG_YAML" <<EOF
+for var in $(env | grep -E '^SUB_LINK[0-9]*=' | sort -t '=' -k1); do
+  name=$(echo "$var" | cut -d '=' -f1)
+  value=$(echo "$var" | cut -d '=' -f2-)
+  value=$(echo "$value" | tr '+' ' ')
+  url=$(echo "$value" | cut -d '#' -f1)
+  headers=$(echo "$value" | cut -d '#' -f2-)
+
+  x_hwid=""
+  x_device_os=""
+  x_ver_os=""
+  x_device_model=""
+  user_agent=""
+
+  if [ -n "$headers" ]; then
+    OLDIFS=$IFS
+    IFS='#'
+    for header in $headers; do
+      IFS=$OLDIFS
+
+      key=${header%%=*}
+      val=${header#*=}
+      val=$(echo "$val" | tr '+' ' ')
+
+      case "$key" in
+        x-hwid) x_hwid="$val" ;;
+        x-device-os) x_device_os="$val" ;;
+        x-ver-os) x_ver_os="$val" ;;
+        x-device-model) x_device_model="$val" ;;
+        user-agent) user_agent="$val" ;;
+      esac
+    done
+  fi
+
+  cat >> "$CONFIG_YAML" <<EOF
   $name:
-    url: "$value"
     type: http
+    url: "$url"
     interval: 86400
     proxy: DIRECT
+EOF
+
+  if [ -n "$x_hwid" ] || [ -n "$x_device_os" ] || [ -n "$x_ver_os" ] || [ -n "$x_device_model" ] || [ -n "$user_agent" ]; then
+    echo "    header:" >> "$CONFIG_YAML"
+
+    [ -n "$x_hwid" ] && echo "      x-hwid:" >> "$CONFIG_YAML" && echo "      - \"$x_hwid\"" >> "$CONFIG_YAML"
+    [ -n "$x_device_os" ] && echo "      x-device-os:" >> "$CONFIG_YAML" && echo "      - \"$x_device_os\"" >> "$CONFIG_YAML"
+    [ -n "$x_ver_os" ] && echo "      x-ver-os:" >> "$CONFIG_YAML" && echo "      - \"$x_ver_os\"" >> "$CONFIG_YAML"
+    [ -n "$x_device_model" ] && echo "      x-device-model:" >> "$CONFIG_YAML" && echo "      - \"$x_device_model\"" >> "$CONFIG_YAML"
+    [ -n "$user_agent" ] && echo "      User-Agent:" >> "$CONFIG_YAML" && echo "      - \"$user_agent\"" >> "$CONFIG_YAML"
+  fi
+
+  cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
 EOF
-    providers="$providers $name"
-  done
+
+  providers="$providers $name"
+done
 
   # провайдер AWG
   if find "$AWG_DIR" -name "*.conf" | grep -q . 2>/dev/null; then
