@@ -5,7 +5,7 @@
 
 :if ([:len [/container/find comment="MihomoProxyRoS"]] = 0) do={
 :local slotArray 
-:if ($freespace>=80914560) do={:set slotArray ($slotArray, "system")
+:if ($freespace>=80914560) do={:set slotArray ($slotArray, "system")}
 :local flagDisks false
 :local slotDisk 
 :local selectSlot 
