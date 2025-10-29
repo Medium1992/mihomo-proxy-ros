@@ -3,6 +3,7 @@
 :put "Low free space on storage(s), script exit"
 } else={
 
+:if ([:len [/container/find comment="MihomoProxyRoS"]] = 0) do={
 :local slotArray 
 :if ($freespace>=80914560) do={:set slotArray ($slotArray, "system")
 :local flagDisks false
@@ -22,7 +23,7 @@ foreach i in=$slotArray do={
 :if ($selectSlot!="system") do={:set pathPull "$selectSlot/"}
 :put "The slot $selectSlot selected for pulling Containers, path pulling $pathPull"
 :set flagDisks true
-}}}
+}}}}
 
 :local start
 :put "Script loaded, press Enter to start"
