@@ -2,14 +2,13 @@
 :if ($freespace<80914560 and ([:len [/container/find comment="MihomoProxyRoS"]] = 0) and ([:len [[/disk/find where fs=ext4 free>80914560]]] = 0)) do={
 :put "Low free space on storage(s), script exit"
 } else={
-
+:local pathPull ""
 :if ([:len [/container/find comment="MihomoProxyRoS"]] = 0) do={
 :local slotArray 
 :if ($freespace>=80914560) do={:set slotArray ($slotArray, "system")}
 :local flagDisks false
 :local slotDisk 
 :local selectSlot 
-:local pathPull
 foreach i in=[/disk/find where fs=ext4 free>80914560] do={
 :set slotArray ($slotArray, [/disk/get [find where fs=ext4 free>80914560] value-name=slot]);
 }
