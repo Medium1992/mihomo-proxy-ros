@@ -19,7 +19,7 @@ foreach i in=$slotArray do={:put "- $i"}
 foreach i in=$slotArray do={
 :if ($i=$slotDisk) do={
 :set selectSlot $i
-:if ($selectSlot!="system") do={:set pathPull "$selectSlot"}
+:if ($selectSlot!="system") do={:set pathPull "$selectSlot/"}
 :put "The slot $selectSlot selected for pulling Containers, path pulling $pathPull"
 :set flagDisks true
 }}}}
@@ -479,14 +479,15 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 
 :local flagContainer false
 :while ($flagContainer = false) do={
-:do {
 :if ([:len [/container/mounts/find comment="MihomoProxyRoSAWG"]] = 0) do={
 :do { /file/add name=awg_conf type=directory} on-error {}
 /container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ name=awg_conf comment="MihomoProxyRoSAWG"
 }
-/container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mount=awg_conf interface=MihomoProxyRoS root-dir="$pathPull/Containers/MihomoProxyRoS" dns=192.168.255.1 start-on-boot=yes comment="MihomoProxyRoS"
+:if ([:len [/container/find comment="MihomoProxyRoS"]] = 0) do={
+/container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mount=awg_conf interface=MihomoProxyRoS root-dir="$pathPullContainers/MihomoProxyRoS" dns=192.168.255.1 start-on-boot=yes comment="MihomoProxyRoS"
 :put "Start pull MihomoProxyRoS container, pls wait when container starting, pls wait"
 :delay 1
+}
 :if ([:len [/container/find comment="MihomoProxyRoS" and stopped]] > 0) do={
 /container/start [find where comment="MihomoProxyRoS" and stopped]
 :put "Container MihomoProxyRoS started"
@@ -497,7 +498,6 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :put "Container MihomoProxyRoS extract failed, repull, pls wait"
 :delay 1
 }
-} on-error {
 :if ([:len [/container/find comment="MihomoProxyRoS" and (stopped or running)]] > 0) do={
 /container/start [find where comment="MihomoProxyRoS" and stopped]
 :delay 3
@@ -518,14 +518,15 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 }
 :delay 1
 }
-}
+
 
 :set flagContainer false
 :while ($flagContainer = false) do={
-:do {
-/container/add remote-image="ghcr.io/medium1992/dns-proxy-ros" interface=DNSProxy cmd="--cache --upstream \"[/www.youtube.com/]192.168.255.2:53\" --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel" root-dir="$pathPull/Containers/DNSProxy" dns=192.168.255.9 start-on-boot=yes comment="DNSProxy"
+:if ([:len [/container/find comment="DNSProxy"]] = 0) do={
+/container/add remote-image="ghcr.io/medium1992/dns-proxy-ros" interface=DNSProxy cmd="--cache --upstream \"[/www.youtube.com/]192.168.255.2:53\" --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel" root-dir="$pathPullContainers/DNSProxy" dns=192.168.255.9 start-on-boot=yes comment="DNSProxy"
 :put "Start pull DNSProxy container, pls wait when container starting, pls wait"
 :delay 1
+}
 :if ([:len [/container/find comment="DNSProxy" and stopped]] > 0) do={
 /container/start [find where comment="DNSProxy" and stopped]
 :put "Container DNSProxy started"
@@ -536,7 +537,6 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :put "Container DNSProxy extract failed, repull, pls wait"
 :delay 1
 }
-} on-error {
 :if ([:len [/container/find comment="DNSProxy" and (stopped or running)]] > 0) do={
 /container/start [find where comment="DNSProxy" and stopped]
 :delay 3
@@ -557,14 +557,14 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 }
 :delay 1
 }
-}
 
 :set flagContainer false
 :while ($flagContainer = false) do={
-:do {
-/container/add remote-image="registry-1.docker.io/wiktorbgu/byedpi-mikrotik" interface=ByeDPI cmd="--tlsrec 41+s --udp-fake 1 --oob 1 --udp-fake 1 --auto=torst,redirect,ssl_err --fake -1 --udp-fake 1 --auto=torst,redirect,ssl_err --disorder 1:11+sm --md5sig --udp-fake 1 --auto=torst,redirect,ssl_err --fake-sni google.com --fake-tls-mod rand --fake 1 --disorder 1:11+sm --split 1:11+sm --md5sig --udp-fake 1 --auto=torst,redirect,ssl_err --oob 1 --disorder 1 --tlsrec 1+s --split 1+s --disorder 3+s --udp-fake 1 --auto=torst,redirect,ssl_err --split 5 --oob 2 --udp-fake 1 --auto=torst,redirect,ssl_err --split 1+s --disoob 1 --udp-fake 1 --auto=torst,redirect,ssl_err --oob 1 --disorder 1 --tlsrec 1+s --split 1+s --disorder 3+s --udp-fake 1" root-dir="$pathPull/Containers/ByeDPI" dns=192.168.255.10 start-on-boot=yes comment="ByeDPI"
+:if ([:len [/container/find comment="ByeDPI"]] = 0) do={
+/container/add remote-image="registry-1.docker.io/wiktorbgu/byedpi-mikrotik" interface=ByeDPI cmd="--tlsrec 41+s --udp-fake 1 --oob 1 --udp-fake 1 --auto=torst,redirect,ssl_err --fake -1 --udp-fake 1 --auto=torst,redirect,ssl_err --disorder 1:11+sm --md5sig --udp-fake 1 --auto=torst,redirect,ssl_err --fake-sni google.com --fake-tls-mod rand --fake 1 --disorder 1:11+sm --split 1:11+sm --md5sig --udp-fake 1 --auto=torst,redirect,ssl_err --oob 1 --disorder 1 --tlsrec 1+s --split 1+s --disorder 3+s --udp-fake 1 --auto=torst,redirect,ssl_err --split 5 --oob 2 --udp-fake 1 --auto=torst,redirect,ssl_err --split 1+s --disoob 1 --udp-fake 1 --auto=torst,redirect,ssl_err --oob 1 --disorder 1 --tlsrec 1+s --split 1+s --disorder 3+s --udp-fake 1" root-dir="$pathPullContainers/ByeDPI" dns=192.168.255.10 start-on-boot=yes comment="ByeDPI"
 :put "Start pull ByeDPI container, pls wait when container starting, pls wait"
 :delay 1
+}
 :if ([:len [/container/find comment="ByeDPI" and stopped]] > 0) do={
 /container/start [find where comment="ByeDPI" and stopped]
 :put "Container ByeDPI started"
@@ -575,7 +575,6 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :put "Container ByeDPI extract failed, repull, pls wait"
 :delay 1
 }
-} on-error {
 :if ([:len [/container/find comment="ByeDPI" and (stopped or running)]] > 0) do={
 /container/start [find where comment="ByeDPI" and stopped]
 :delay 3
@@ -595,7 +594,6 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :delay 1
 }
 :delay 1
-}
 }
 
 :if ([:len [/system/script/find name="changeDNS"]] = 0) do={
