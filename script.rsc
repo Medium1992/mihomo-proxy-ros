@@ -235,11 +235,6 @@ add address=8.8.4.4 list=DNS
 :if ([:len [find comment="MihomoProxyRoS8"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=128 connection-state=new content="\12\A4\42" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19294-19344,50000-50100 protocol=udp comment="MihomoProxyRoS8"; :put "Add mangle rules 8"}
 :if ([:len [find comment="MihomoProxyRoS9"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="MihomoProxyRoS9"; :put "Add mangle rules 9"}
 
-/ip firewall filter
-:if ([:len [find comment="MihomoProxyRoSDNS"]] = 0) do={
-add chain=input protocol=udp dst-port=53 in-interface-list=Containers comment="MihomoProxyRoSDNS" place-before=3
-}
-
 /ip firewall address-list
 :do {add list=VoiceTelegram comment=Telegram address=91.105.192.0/23} on-error {}
 :do {add list=VoiceTelegram comment=Telegram address=91.108.4.0/22} on-error {}
@@ -484,7 +479,7 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 /container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ name=awg_conf comment="MihomoProxyRoSAWG"
 }
 :if ([:len [/container/find comment="MihomoProxyRoS"]] = 0) do={
-/container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mount=awg_conf interface=MihomoProxyRoS root-dir=($pathPull . "Containers/MihomoProxyRoS") dns=192.168.255.1 start-on-boot=yes comment="MihomoProxyRoS"
+/container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mount=awg_conf interface=MihomoProxyRoS root-dir=($pathPull . "Containers/MihomoProxyRoS") start-on-boot=yes comment="MihomoProxyRoS"
 :put "Start pull MihomoProxyRoS container, pls wait when container starting, pls wait"
 :delay 1
 }
@@ -523,7 +518,7 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :set flagContainer false
 :while ($flagContainer = false) do={
 :if ([:len [/container/find comment="DNSProxy"]] = 0) do={
-/container/add remote-image="ghcr.io/medium1992/dns-proxy-ros" interface=DNSProxy cmd="--cache --upstream \"[/www.youtube.com/]192.168.255.2:53\" --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel" root-dir=($pathPull . "Containers/DNSProxy") dns=192.168.255.9 start-on-boot=yes comment="DNSProxy"
+/container/add remote-image="ghcr.io/medium1992/dns-proxy-ros" interface=DNSProxy cmd="--cache --hosts-files=/hosts --upstream \"[/www.youtube.com/]192.168.255.2:53\" --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel" root-dir=($pathPull . "Containers/DNSProxy") start-on-boot=yes comment="DNSProxy"
 :put "Start pull DNSProxy container, pls wait when container starting, pls wait"
 :delay 1
 }
