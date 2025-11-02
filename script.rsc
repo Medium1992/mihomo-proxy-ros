@@ -364,101 +364,78 @@ add address=8.8.4.4 list=DNS
 :if ([:len [/system/script/find name="FWD_update"]] = 0) do={
 /system script
 add name=FWD_update source="# Define global variables\r\
-    \n:global AddressList \"\"\r\
-    \n:global ForwardTo \"MihomoProxyRoS\"\r\
-    \n\r\
-    \n# List of resources corresponding to RSC files\r\
-    \n:local resources {\r\
-    \n    \"youtube\";\r\
-    \n    \"meta\";\r\
-    \n    \"netflix\";\r\
-    \n    \"discord\";\r\
-    \n    \"torrent\";\r\
-    \n    \"rutracker\";\r\
-    \n    \"adguard\";\r\
-    \n    \"anime\";\r\
-    \n    \"deepl\";\r\
-    \n    \"openai\";\r\
-    \n    \"google-gemini\";\r\
-    \n    \"canva\";\r\
-    \n    \"art\";\r\
-    \n    \"tidal\";\r\
-    \n    \"spotify\";\r\
-    \n    \"tiktok\";\r\
-    \n    \"music\";\r\
-    \n    \"x\";\r\
-    \n    \"pornhub\";\r\
-    \n    \"xhamster\";\r\
-    \n    \"porn\";\r\
-    \n    \"video\";\r\
-    \n    \"telegram\"\r\
-    \n}\r\
-    \n\r\
-    \n# Base URL for RSC files\r\
-    \n:local baseUrl \"https://raw.githubusercontent.com/Medium1992/MikroTik_DNS_FWD/refs/heads/main/for_scripts\"\r\
-    \n\r\
-    \n# Fetch and execute each script\r\
-    \n:foreach resource in=\$resources do={\r\
-    \n    # First try the single file without _part\r\
-    \n    :local url \"\$baseUrl/\$resource.rsc\"\r\
-    \n    :do {\r\
-    \n        :local r [/tool fetch url=\$url mode=https output=user as-value]\r\
-    \n        :if ((\$r->\"status\")=\"finished\") do={\r\
-    \n            :local content (\$r->\"data\")\r\
-    \n            :if ([:len \$content] > 0 && [:find \$content \"/ip dns static\"] >= 0) do={\r\
-    \n                :local s [:parse \$content]\r\
-    \n                \$s\r\
-    \n           \
-    \n     :log warning \"\$resource.rsc loading completed\"\
-    \n     :put \"\$resource.rsc loading completed\"\
-    \n\r\
-    \n            } else={\r\
-    \n                :log warning \"Invalid or empty content: \$url\"\r\
-    \n                :put \"Invalid or empty content: \$url\"\r\
-    \n            }\r\
-    \n        }\r\
-    \n    } on-error={\r\
-    \n        :log warning \"Error fetching single file \$resource.rsc, trying fetch parts file\"\r\
-    \n        :put \"Error fetching single file \$resource.rsc, trying fetch parts file\"\r\
-    \n        # If single file fails, try fetching parts\r\
-    \n        :local part 1\r\
-    \n        :local continue true\r\
-    \n        :while (\$continue) do={\r\
-    \n            :local url \"\$baseUrl/\$resource_part\$part.rsc\"\r\
-    \n            :do {\r\
-    \n                :local r [/tool fetch url=\$url mode=https output=user as-value]\r\
-    \n                :if ((\$r->\"status\")=\"finished\") do={\r\
-    \n                    :local content (\$r->\"data\")\r\
-    \n                    :if ([:len \$content] > 0 && [:find \$content \"/ip dns static\"] >= 0) do={\r\
-    \n                        :local s [:parse \$content]\r\
-    \n                        \$s\r\
-    \n                    } else={\r\
-    \n                        :log warning \"Invalid or empty content \$resource.rsc\"\r\
-    \n                        :put \"Invalid or empty content \$resource.rsc\"\r\
-    \n                        :set continue false\r\
-    \n                    }\r\
-    \n                } else={\r\
-    \n                    :set continue false\r\
-    \n                }\r\
-    \n            } on-error={\r\
-    \n                :if (\$part = 1) do={\r\
-    \n\
-    \n                   :log warning \"https://raw.githubusercontent.com is not available, check availability\"\
-    \n                   :put \"https://raw.githubusercontent.com is not available, check availability\"\
-    \n\r\
-    \n                } else={\r\
-    \n                   :set part (\$part - 1)\r\
-    \n           \
-    \n        :log warning \"\$resource.rsc loading completed, number last part \$part\"\
-    \n        :put \"\$resource.rsc loading completed, number last part \$part\"\
-    \n\r\
-    \n                }\r\
-    \n                :set continue false\r\
-    \n            }\r\
-    \n            :set part (\$part + 1)\r\
-    \n        }\r\
-    \n    }\r\
-    \n}"
+\n:global AddressList \"\"\r\
+\n:global ForwardTo \"MihomoProxyRoS\"\r\
+\n\r\
+\n# List of resources corresponding to RSC files\r\
+\n:global resources {\r\
+\n\"youtube\";\r\
+\n\"meta\";\r\
+\n\"netflix\";\r\
+\n\"discord\";\r\
+\n\"torrent\";\r\
+\n\"rutracker\";\r\
+\n\"adguard\";\r\
+\n\"anime\";\r\
+\n\"deepl\";\r\
+\n\"openai\";\r\
+\n\"google-gemini\";\r\
+\n\"canva\";\r\
+\n\"art\";\r\
+\n\"tidal\";\r\
+\n\"spotify\";\r\
+\n\"tiktok\";\r\
+\n\"music\";\r\
+\n\"x\";\r\
+\n\"xhamster\";\r\
+\n\"porn\";\r\
+\n\"video\";\r\
+\n\"telegram\"\r\
+\n\"claude\";\r\
+\n\"xai\";\r\
+\n\"notion\";\r\
+\n\"twitch\";\r\
+\n\"supercell\";\r\
+\n\"xbox\";\r\
+\n\"playstation\";\r\
+\n\"pornhub\"\r\
+\n}\r\
+\n\r\
+\n# Base URL for RSC files\r\
+\n:local baseUrl \"https://raw.githubusercontent.com/Medium1992/MikroTik_DNS_FWD/refs/heads/main/for_scripts\"\r\
+\n\r\
+\n:foreach resource in=\$resources do={\r\
+\n:local url \"\$baseUrl/\$resource.rsc\"\r\
+\n:do {\r\
+\n:local r [/tool fetch url=\$url mode=https output=user as-value]\r\
+\n:if ((\$r->\"status\")=\"finished\") do={\r\
+\n:local content (\$r->\"data\")\r\
+\n:local s [:parse \$content]\r\
+\n\$s\r\
+\n:log warning \"\$resource.rsc loading completed\"\r\
+\n:put \"\$resource.rsc loading completed\"\r\
+\n}\r\
+\n} on-error {}\r\
+\n:local part 1\r\
+\n:local continue true\r\
+\n:while (\$continue) do={\r\
+\n:local url \"\$baseUrl/\$resource_part\$part.rsc\"\r\
+\n:do {\r\
+\n:local r [/tool fetch url=\$url mode=https output=user as-value]\r\
+\n:if ((\$r->\"status\")=\"finished\") do={\r\
+\n:local content (\$r->\"data\")\r\
+\n:local s [:parse \$content]\r\
+\n\$s\r\
+\n:log warning \"\$resource.rsc part\$part loading completed\"\r\
+\n:put \"\$resource.rsc part\$part loading completed\"\r\
+\n}\r\
+\n:set part (\$part + 1)\r\
+\n} on-error {\r\
+\n:set continue false\r\
+\n}\r\
+\n}\r\
+\n}"
+
 :put "Add script FWD_update for pull resources to DNS static FWD"}
 :if ([:len [/system/scheduler/find comment="MihomoProxyRoS"]] = 0) do={
 :do {
@@ -468,7 +445,7 @@ add name=FWD_update source="# Define global variables\r\
 }
 :do {
 /system scheduler
-add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment="MihomoProxyRoS"
+add interval=1d name=update_FWD on-event="/system/script/run FWD_update" start-time=06:30:00 comment="MihomoProxyRoS"
 :put "Add shedule FWD_update on 06:30 am every day"
 } on-error {} 
 
@@ -594,20 +571,20 @@ add interval=1d name=update_FWD on-event=FWD_update start-time=06:30:00 comment=
 :if ([:len [/system/script/find name="changeDNS"]] = 0) do={
 /system script
 add name=changeDNS source=":if ([:len [/container/find comment=\"DNSProxy\" and running]] > 0 and [/ip/dns/get servers]!=192.168.255.10) d\
-    o={\r\
-    \n/ip dns set use-doh-server=\"\" verify-doh-cert=no\r\
-    \n/ip dns set servers=\"\"\r\
-    \n/ip dns set servers=192.168.255.10\r\
-    \n/ip dns cache flush\r\
-    \n:log warning \"change DNS server to DNSProxy\"\r\
-    \n} \r\
-    \n:if ([:len [/container/find comment=\"DNSProxy\" and stopped]] > 0 and [/ip/dns/get servers]=192.168.255.10) do={\r\
-    \n/ip dns set servers=\"\"\r\
-    \n/ip dns set servers=8.8.8.8\r\
-    \n/ip dns set use-doh-server=https://dns.google/dns-query verify-doh-cert=yes\r\
-    \n/ip dns cache flush\r\
-    \n:log warning \"change DNS server to DoH Google\"\r\
-    \n}"
+o={\r\
+\n/ip dns set use-doh-server=\"\" verify-doh-cert=no\r\
+\n/ip dns set servers=\"\"\r\
+\n/ip dns set servers=192.168.255.10\r\
+\n/ip dns cache flush\r\
+\n:log warning \"change DNS server to DNSProxy\"\r\
+\n} \r\
+\n:if ([:len [/container/find comment=\"DNSProxy\" and stopped]] > 0 and [/ip/dns/get servers]=192.168.255.10) do={\r\
+\n/ip dns set servers=\"\"\r\
+\n/ip dns set servers=8.8.8.8\r\
+\n/ip dns set use-doh-server=https://dns.google/dns-query verify-doh-cert=yes\r\
+\n/ip dns cache flush\r\
+\n:log warning \"change DNS server to DoH Google\"\r\
+\n}"
 :put "Add script changeDNS"}
 :do {
 /system scheduler
