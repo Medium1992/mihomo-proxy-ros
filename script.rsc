@@ -238,6 +238,7 @@ add address=8.8.4.4 list=DNS
 /ip firewall address-list
 :do {add list=YT comment=YT_MSS address=www.youtube.com} on-error {}
 :do {add list=MihomoProxyRoS comment=YT address=www.youtube.com} on-error {}
+:do {add list=MihomoProxyRoS comment=TelegramFromAS31500 address=109.239.140.0/24} on-error {}
 
 /ip dns static
 :if ([:len [find name="themoviedb.org"]] = 0) do={ add address-list=MihomoProxyRoS forward-to=Quad9 comment="tmdb" match-subdomain=yes type=FWD name="themoviedb.org" }
