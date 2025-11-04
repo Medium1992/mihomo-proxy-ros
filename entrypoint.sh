@@ -427,6 +427,11 @@ EOF
         grp_env_name=$(echo "$grp_trim" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
         grp_geoip=$(printenv "${grp_env_name}_GEOIP" || true)
 
+        # === ИСКЛЮЧАЕМ discord из стандартного GEOIP ===
+        if [ "$grp_trim" = "discord" ] && [ -n "${DISCORD_GEOIP:-}" ]; then
+          grp_geoip=""  # Сбрасываем стандартный GEOIP для discord
+        fi
+
         # Добавляем rule-provider для GEOSITE (замена на .mrs)
         cat <<EOF
   $grp_trim:
@@ -436,8 +441,7 @@ EOF
     url: "https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/$grp_trim.mrs"
     interval: 86400
 EOF
-
-        # Добавляем rule-provider для GEOIP, если указано
+        # Добавляем rule-provider для GEOIP, если указано (кроме discord)
         if [ -n "$grp_geoip" ]; then
           cat <<EOF
   ${grp_trim}_geoip:
@@ -451,43 +455,66 @@ EOF
       done
     fi
 
+    # === СПЕЦИАЛЬНЫЙ rule-provider для DISCORD_GEOIP (если задан) ===
+    if [ -n "${DISCORD_GEOIP:-}" ]; then
+      cat <<EOF
+  discord_geoip:
+    type: http
+    behavior: ipcidr
+    format: text
+    url: "https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/custom_list/discord.list"
+    interval: 86400
+EOF
+    fi
+
     # Правила
     echo
     echo "rules:"
-    if lsmod | grep -q '^nft_tproxy'; then
-      # Правила для групп: RULE-SET вместо GEOSITE и GEOIP
-      if [ -n "${GROUP:-}" ]; then
-        echo "$GROUP" | tr ',' '\n' | while read -r grp; do
-          grp_trim=$(echo "$grp" | xargs)
-          [ -z "$grp_trim" ] && continue
-          echo "  - RULE-SET,$grp_trim,$grp_trim"
-          grp_env_name=$(echo "$grp_trim" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
-          grp_geoip=$(printenv "${grp_env_name}_GEOIP" || true)
-          [ -n "$grp_geoip" ] && echo "  - RULE-SET,${grp_trim}_geoip,$grp_trim"
-        done
-      fi
-      echo "  - IN-NAME,tproxy-in,GLOBAL"
-      echo "  - IN-NAME,mixed-in,GLOBAL"
-      echo "  - MATCH,DIRECT"
-    else
-      echo "  - AND,((NETWORK,udp),(DST-PORT,443)),REJECT"
-      # Правила для групп: RULE-SET вместо GEOSITE и GEOIP
-      if [ -n "${GROUP:-}" ]; then
-        echo "$GROUP" | tr ',' '\n' | while read -r grp; do
-          grp_trim=$(echo "$grp" | xargs)
-          [ -z "$grp_trim" ] && continue
-          echo "  - RULE-SET,$grp_trim,$grp_trim"
-          grp_env_name=$(echo "$grp_trim" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
-          grp_geoip=$(printenv "${grp_env_name}_GEOIP" || true)
-          [ -n "$grp_geoip" ] && echo "  - RULE-SET,${grp_trim}_geoip,$grp_trim"
-        done
-      fi
-      echo "  - IN-NAME,tun-in,GLOBAL"
-      echo "  - IN-NAME,mixed-in,GLOBAL"
-      echo "  - MATCH,DIRECT"
+
+    if ! lsmod | grep -q '^nft_tproxy'; then
+      echo " - AND,((NETWORK,udp),(DST-PORT,443)),REJECT"
     fi
+
+    if [ -n "${GROUP:-}" ]; then
+      echo "$GROUP" | tr ',' '\n' | while read -r grp; do
+        grp_trim=$(echo "$grp" | xargs)
+        [ -z "$grp_trim" ] && continue
+        echo " - RULE-SET,$grp_trim,$grp_trim"
+      done
+    fi
+
+    if [ -n "${GROUP:-}" ]; then
+      echo "$GROUP" | tr ',' '\n' | while read -r grp; do
+        grp_trim=$(echo "$grp" | xargs)
+        [ -z "$grp_trim" ] && continue
+        grp_env_name=$(echo "$grp_trim" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
+        grp_geoip=$(printenv "${grp_env_name}_GEOIP" || echo "")
+
+        if [ "$grp_trim" != "discord" ] && [ -n "$grp_geoip" ]; then
+          echo " - RULE-SET,${grp_trim}_geoip,$grp_trim"
+        fi
+      done
+    fi
+
+    if [ -n "${DISCORD_GEOIP:-}" ]; then
+      cat <<EOF
+ - AND,((RULE-SET,discord_geoip),(NETWORK,UDP),(DST-PORT,19294-19344)),discord
+ - AND,((RULE-SET,discord_geoip),(NETWORK,UDP),(DST-PORT,50000-50100)),discord
+EOF
+    fi
+
+    if lsmod | grep -q '^nft_tproxy'; then
+      echo " - IN-NAME,tproxy-in,GLOBAL"
+      echo " - IN-NAME,mixed-in,GLOBAL"
+    else
+      echo " - IN-NAME,tun-in,GLOBAL"
+      echo " - IN-NAME,mixed-in,GLOBAL"
+    fi
+
+    echo " - MATCH,DIRECT"
   } >> "$CONFIG_YAML"
 }
+
 
 # ------------------- NFT / TPROXY -------------------
 nft_rules() {
