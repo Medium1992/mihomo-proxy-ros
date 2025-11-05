@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+
 FAKE_IP_RANGE="${FAKE_IP_RANGE:-198.18.0.0/15}"
 EXTERNAL_UI_URL="${EXTERNAL_UI_URL:-https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip}"
 CONFIG_DIR="/root/.config/mihomo"
@@ -7,9 +8,9 @@ AWG_DIR="$CONFIG_DIR/awg"
 AWG_YAML="$CONFIG_DIR/awg.yaml"
 LINKS_YAML="$CONFIG_DIR/links.yaml"
 CONFIG_YAML="$CONFIG_DIR/config.yaml"
-DIRECT_YAML="$CONFIG_DIR/direct.yaml" 
+DIRECT_YAML="$CONFIG_DIR/direct.yaml"
 BYEDPI_YAML="$CONFIG_DIR/byedpi.yaml"
-UI_URL_CHECK="$CONFIG_DIR/.ui_url" 
+UI_URL_CHECK="$CONFIG_DIR/.ui_url"
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
@@ -30,12 +31,9 @@ first_iface() {
 }
 
 # ------------------- DIRECT -------------------
-
 generate_direct_yaml() {
-  local iface
-  iface=$(first_iface)
+  local iface=$(first_iface)
   log "Generating $DIRECT_YAML with interface: $iface"
-
   cat > "$DIRECT_YAML" <<EOF
 proxies:
   - name: "direct"
@@ -47,10 +45,8 @@ EOF
 }
 
 # ------------------- ByeDPI -------------------
-
 generate_byedpi_yaml() {
-  log "Generating $BYEDPI_YAML with socks5"
-
+  log "Generating $BYEDPI_YAML"
   cat > "$BYEDPI_YAML" <<EOF
 proxies:
 - name: "ByeDPI"
@@ -62,22 +58,15 @@ EOF
 }
 
 # ------------------- AWG -------------------
-
 parse_awg_config() {
   local config_file="$1"
-  local awg_name
-  awg_name=$(basename "$config_file" .conf)
-
-  # базовые поля
+  local awg_name=$(basename "$config_file" .conf)
   local private_key=$(grep -E "^PrivateKey" "$config_file" | sed 's/^PrivateKey[[:space:]]*=[[:space:]]*//')
   local address=$(grep -E "^Address" "$config_file" | sed 's/^Address[[:space:]]*=[[:space:]]*//')
-  # первый IPv4 адрес
   address=$(echo "$address" | tr ',' '\n' | grep -v ':' | head -n1)
   local dns=$(grep -E "^DNS" "$config_file" | sed 's/^DNS[[:space:]]*=[[:space:]]*//')
   dns=$(echo "$dns" | tr ',' '\n' | grep -v ':' | sed 's/^ *//;s/ *$//' | paste -sd, -)
   local mtu=$(grep -E "^MTU" "$config_file" | sed 's/^MTU[[:space:]]*=[[:space:]]*//')
-
-  # старые awg-опции
   local jc=$(grep -E "^Jc" "$config_file" | sed 's/^Jc[[:space:]]*=[[:space:]]*//')
   local jmin=$(grep -E "^Jmin" "$config_file" | sed 's/^Jmin[[:space:]]*=[[:space:]]*//')
   local jmax=$(grep -E "^Jmax" "$config_file" | sed 's/^Jmax[[:space:]]*=[[:space:]]*//')
@@ -87,8 +76,6 @@ parse_awg_config() {
   local h2=$(grep -E "^H2" "$config_file" | sed 's/^H2[[:space:]]*=[[:space:]]*//')
   local h3=$(grep -E "^H3" "$config_file" | sed 's/^H3[[:space:]]*=[[:space:]]*//')
   local h4=$(grep -E "^H4" "$config_file" | sed 's/^H4[[:space:]]*=[[:space:]]*//')
-
-  # новые awg 1.5
   local i1=$(grep -E "^I1" "$config_file" | sed 's/^I1[[:space:]]*=[[:space:]]*//')
   local i2=$(grep -E "^I2" "$config_file" | sed 's/^I2[[:space:]]*=[[:space:]]*//')
   local i3=$(grep -E "^I3" "$config_file" | sed 's/^I3[[:space:]]*=[[:space:]]*//')
@@ -98,7 +85,6 @@ parse_awg_config() {
   local j2=$(grep -E "^J2" "$config_file" | sed 's/^J2[[:space:]]*=[[:space:]]*//')
   local j3=$(grep -E "^J3" "$config_file" | sed 's/^J3[[:space:]]*=[[:space:]]*//')
   local itime=$(grep -E "^itime" "$config_file" | sed 's/^itime[[:space:]]*=[[:space:]]*//')
-
   local public_key=$(grep -E "^PublicKey" "$config_file" | sed 's/^PublicKey[[:space:]]*=[[:space:]]*//')
   local psk=$(grep -E "^PresharedKey" "$config_file" | sed 's/^PresharedKey[[:space:]]*=[[:space:]]*//')
   local endpoint=$(grep -E "^Endpoint" "$config_file" | sed 's/^Endpoint[[:space:]]*=[[:space:]]*//')
@@ -115,7 +101,7 @@ parse_awg_config() {
     mtu: ${mtu:-1420}
     public-key: $public_key
     allowed-ips: ['0.0.0.0/0']
-$(if [ -n "$psk" ]; then echo "    pre-shared-key: $psk"; fi)
+$(if [ -n "$psk" ]; then echo " pre-shared-key: $psk"; fi)
     udp: true
     dns: [ $dns ]
     remote-dns-resolve: true
@@ -152,7 +138,6 @@ generate_awg_yaml() {
 }
 
 # ------------------- LINKS -------------------
-
 link_file_mihomo() {
   log "Generating $LINKS_YAML"
   : > "$LINKS_YAML"
@@ -162,21 +147,16 @@ link_file_mihomo() {
 }
 
 # ------------------- CONFIG -------------------
-
 config_file_mihomo() {
   log "Generating $CONFIG_YAML"
   mkdir -p "$CONFIG_DIR"
 
-# Проверка и обновление UI_URL
-LAST_UI_URL=$(cat "$UI_URL_CHECK" 2>/dev/null || true)
-log "EXTERNAL_UI_URL: '$EXTERNAL_UI_URL', LAST_UI_URL: '$LAST_UI_URL'"
-if [ "$EXTERNAL_UI_URL" != "$LAST_UI_URL" ]; then
-  log "UI URL changed, removing $CONFIG_DIR/ui and updating $UI_URL_CHECK"
-  rm -rf "$CONFIG_DIR/ui"
-  echo "$EXTERNAL_UI_URL" > "$UI_URL_CHECK"
-else
-  log "UI URL unchanged, skipping update"
-fi
+  LAST_UI_URL=$(cat "$UI_URL_CHECK" 2>/dev/null || true)
+  if [ "$EXTERNAL_UI_URL" != "$LAST_UI_URL" ]; then
+    log "UI URL changed → removing ui"
+    rm -rf "$CONFIG_DIR/ui"
+    echo "$EXTERNAL_UI_URL" > "$UI_URL_CHECK"
+  fi
 
   cat > "$CONFIG_YAML" <<EOF
 log-level: ${LOG_LEVEL:-error}
@@ -210,12 +190,10 @@ hosts:
   dns.google: [8.8.8.8, 8.8.4.4]
   dns.quad9.net: [9.9.9.9, 149.112.112.112]
   cloudflare-dns.com: [104.16.248.249, 104.16.249.249]
-
 listeners:
 EOF
 
   if lsmod | grep -q '^nft_tproxy'; then
-    log "nft_tproxy module loaded, configuring TPROXY listener"
     cat >> "$CONFIG_YAML" <<EOF
   - name: tproxy-in
     type: tproxy
@@ -224,7 +202,6 @@ EOF
     udp: true
 EOF
   else
-    log "nft_tproxy not loaded, configuring TUN listener with TCP redirect"
     cat >> "$CONFIG_YAML" <<EOF
   - name: tun-in
     type: tun
@@ -247,14 +224,12 @@ EOF
     port: 1080
     listen: 0.0.0.0
     udp: true
-
 proxy-providers:
 EOF
 
   providers=""
 
-
-  # провайдер links, если есть LINKi
+  # LINKS
   if env | grep -qE '^LINK[0-9]*='; then
     cat >> "$CONFIG_YAML" <<EOF
   LINKS:
@@ -265,84 +240,62 @@ EOF
     providers="$providers LINKS"
   fi
 
-# провайдер sub_links
-for var in $(env | grep -E '^SUB_LINK[0-9]*=' | sort -t '=' -k1); do
-  name=$(echo "$var" | cut -d '=' -f1)
-  value=$(echo "$var" | cut -d '=' -f2-)
-  value=$(echo "$value" | tr '+' ' ')
-  url=$(echo "$value" | cut -d '#' -f1)
-  headers_raw=$(echo "$value" | cut -d '#' -f2-)
+  # SUB_LINK
+  for var in $(env | grep -E '^SUB_LINK[0-9]*=' | sort -t '=' -k1); do
+    name=$(echo "$var" | cut -d '=' -f1)
+    value=$(echo "$var" | cut -d '=' -f2- | tr '+' ' ')
+    url=$(echo "$value" | cut -d '#' -f1)
+    headers_raw=$(echo "$value" | cut -d '#' -f2-)
+    headers_clean=$(echo "$headers_raw" | sed 's/^[[:space:]]*#*[[:space:]]*//; s/[[:space:]]*$//' | tr -d ' \t\n\r')
 
-  # Очистка: убираем пробелы, пустые #
-  headers_clean=$(echo "$headers_raw" | sed 's/^[[:space:]]*#*[[:space:]]*//; s/[[:space:]]*$//' | tr -d ' \t\n\r')
+    def_hwid="${HWID:-}"; def_device_os="${DEVICE_OS:-}"; def_ver_os="${VER_OS:-}"; def_device_model="${DEVICE_MODEL:-}"; def_user_agent="${USER_AGENT:-}"
+    x_hwid=""; x_device_os=""; x_ver_os=""; x_device_model=""; x_user_agent=""
 
-  # Дефолты
-  def_hwid="${HWID:-}"
-  def_device_os="${DEVICE_OS:-}"
-  def_ver_os="${VER_OS:-}"
-  def_device_model="${DEVICE_MODEL:-}"
-  def_user_agent="${USER_AGENT:-}"
+    if [ -n "$headers_clean" ]; then
+      OLDIFS=$IFS; IFS='#'
+      for pair in $headers_clean; do
+        [ -z "$pair" ] && continue
+        key=$(echo "$pair" | cut -d'=' -f1)
+        val=$(echo "$pair" | cut -d'=' -f2- | tr '+' ' ')
+        case "$key" in
+          x-hwid) x_hwid="$val" ;;
+          x-device-os) x_device_os="$val" ;;
+          x-ver-os) x_ver_os="$val" ;;
+          x-device-model) x_device_model="$val" ;;
+          user-agent) x_user_agent="$val" ;;
+        esac
+      done
+      IFS=$OLDIFS
+    fi
 
-  # Итоговые значения (по умолчанию — пустые)
-  x_hwid=""
-  x_device_os=""
-  x_ver_os=""
-  x_device_model=""
-  x_user_agent=""
+    [ -z "$x_hwid" ] && [ -n "$def_hwid" ] && x_hwid="$def_hwid"
+    [ -z "$x_device_os" ] && [ -n "$def_device_os" ] && x_device_os="$def_device_os"
+    [ -z "$x_ver_os" ] && [ -n "$def_ver_os" ] && x_ver_os="$def_ver_os"
+    [ -z "$x_device_model" ] && [ -n "$def_device_model" ] && x_device_model="$def_device_model"
+    [ -z "$x_user_agent" ] && [ -n "$def_user_agent" ] && x_user_agent="$def_user_agent"
 
-  # === ПАРСИМ SUB_LINK ЗАГОЛОВКИ (если есть) ===
-  if [ -n "$headers_clean" ]; then
-    OLDIFS=$IFS; IFS='#'
-    for pair in $headers_clean; do
-      [ -z "$pair" ] && continue
-      key=$(echo "$pair" | cut -d'=' -f1)
-      val=$(echo "$pair" | cut -d'=' -f2- | tr '+' ' ')
-      case "$key" in
-        x-hwid)         x_hwid="$val" ;;
-        x-device-os)    x_device_os="$val" ;;
-        x-ver-os)       x_ver_os="$val" ;;
-        x-device-model) x_device_model="$val" ;;
-        user-agent)     x_user_agent="$val" ;;
-      esac
-    done
-    IFS=$OLDIFS
-  fi
-
-  # === ПРИМЕНЯЕМ ДЕФОЛТЫ ТОЛЬКО ДЛЯ ПУСТЫХ ===
-  [ -z "$x_hwid" ]         && [ -n "$def_hwid" ]         && x_hwid="$def_hwid"
-  [ -z "$x_device_os" ]    && [ -n "$def_device_os" ]    && x_device_os="$def_device_os"
-  [ -z "$x_ver_os" ]       && [ -n "$def_ver_os" ]       && x_ver_os="$def_ver_os"
-  [ -z "$x_device_model" ] && [ -n "$def_device_model" ] && x_device_model="$def_device_model"
-  [ -z "$x_user_agent" ]   && [ -n "$def_user_agent" ]   && x_user_agent="$def_user_agent"
-
-  # === ПРОВАЙДЕР ===
-  cat >> "$CONFIG_YAML" <<EOF
+    cat >> "$CONFIG_YAML" <<EOF
   $name:
     type: http
     url: "$url"
     interval: 86400
     proxy: DIRECT
 EOF
-
-  # === HEADER — ТОЛЬКО ЕСЛИ ЕСТЬ ХОТЬ ОДИН ===
-  if [ -n "$x_hwid" ] || [ -n "$x_device_os" ] || [ -n "$x_ver_os" ] || [ -n "$x_device_model" ] || [ -n "$x_user_agent" ]; then
-    echo "    header:" >> "$CONFIG_YAML"
-    [ -n "$x_hwid" ]         && echo "      x-hwid:"         >> "$CONFIG_YAML" && echo "        - \"$x_hwid\""         >> "$CONFIG_YAML"
-    [ -n "$x_device_os" ]    && echo "      x-device-os:"    >> "$CONFIG_YAML" && echo "        - \"$x_device_os\""    >> "$CONFIG_YAML"
-    [ -n "$x_ver_os" ]       && echo "      x-ver-os:"       >> "$CONFIG_YAML" && echo "        - \"$x_ver_os\""       >> "$CONFIG_YAML"
-    [ -n "$x_device_model" ] && echo "      x-device-model:" >> "$CONFIG_YAML" && echo "        - \"$x_device_model\"" >> "$CONFIG_YAML"
-    [ -n "$x_user_agent" ]   && echo "      User-Agent:"     >> "$CONFIG_YAML" && echo "        - \"$x_user_agent\""   >> "$CONFIG_YAML"
-  fi
-
-  # === HEALTH-CHECK — КАК У ВСЕХ ===
-  cat >> "$CONFIG_YAML" <<EOF
+    if [ -n "$x_hwid" ] || [ -n "$x_device_os" ] || [ -n "$x_ver_os" ] || [ -n "$x_device_model" ] || [ -n "$x_user_agent" ]; then
+      echo " header:" >> "$CONFIG_YAML"
+      [ -n "$x_hwid" ] && echo " x-hwid:" >> "$CONFIG_YAML" && echo " - \"$x_hwid\"" >> "$CONFIG_YAML"
+      [ -n "$x_device_os" ] && echo " x-device-os:" >> "$CONFIG_YAML" && echo " - \"$x_device_os\"" >> "$CONFIG_YAML"
+      [ -n "$x_ver_os" ] && echo " x-ver-os:" >> "$CONFIG_YAML" && echo " - \"$x_ver_os\"" >> "$CONFIG_YAML"
+      [ -n "$x_device_model" ] && echo " x-device-model:" >> "$CONFIG_YAML" && echo " - \"$x_device_model\"" >> "$CONFIG_YAML"
+      [ -n "$x_user_agent" ] && echo " User-Agent:" >> "$CONFIG_YAML" && echo " - \"$x_user_agent\"" >> "$CONFIG_YAML"
+    fi
+    cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
 EOF
+    providers="$providers $name"
+  done
 
-  providers="$providers $name"
-done
-
-  # провайдер AWG
+  # AWG + BYEDPI + DIRECT
   if find "$AWG_DIR" -name "*.conf" | grep -q . 2>/dev/null; then
     cat >> "$CONFIG_YAML" <<EOF
   AWG:
@@ -353,154 +306,178 @@ EOF
     providers="$providers AWG"
   fi
 
-    # Всегда добавляем BYEDPI
   cat >> "$CONFIG_YAML" <<EOF
   BYEDPI:
     type: file
     path: $(basename "$BYEDPI_YAML")
 $(health_check_block)
-EOF
-  providers="$providers BYEDPI"
-  
-    # Всегда добавляем DIRECT
-  cat >> "$CONFIG_YAML" <<EOF
   DIRECT:
     type: file
     path: $(basename "$DIRECT_YAML")
 $(health_check_block)
 EOF
-  providers="$providers DIRECT"
+  providers="$providers BYEDPI DIRECT"
 
-  # Группы
+# === ГРУППЫ + ПРАВИЛА ===
   {
     echo
     echo "proxy-groups:"
-    echo "  - name: GLOBAL"
-    echo "    type: ${GLOBAL_TYPE:-select}"
-    echo "    use:"
+    echo " - name: GLOBAL"
+    echo "   type: ${GLOBAL_TYPE:-select}"
+    echo "   use:"
     if [ -n "${GLOBAL_USE:-}" ]; then
-      echo "$GLOBAL_USE" | tr ',' '\n' | sed 's/^/      - /'
+      echo "$GLOBAL_USE" | tr ',' '\n' | sed 's/^/     - /'
     else
-      for p in $providers; do
-        echo "      - $p"
-      done
+      for p in $providers; do echo "     - $p"; done
     fi
-    [ -n "${GLOBAL_FILTER:-}" ] && echo "    filter: $GLOBAL_FILTER"
-    [ -n "${GLOBAL_EXCLUDE:-}" ] && echo "    exclude-filter: $GLOBAL_EXCLUDE"
+    [ -n "${GLOBAL_FILTER:-}" ] && echo "   filter: $GLOBAL_FILTER"
+    [ -n "${GLOBAL_EXCLUDE:-}" ] && echo "   exclude-filter: $GLOBAL_EXCLUDE"
 
-    # дополнительные группы из GROUP
+    # === Сбор групп с приоритетами (ЛОГИ ВНЕ БЛОКА) ===
+    group_prio_list=""
+    idx=0
     if [ -n "${GROUP:-}" ]; then
-      echo "$GROUP" | tr ',' '\n' | while read -r grp; do
-        grp_trim=$(echo "$grp" | xargs)
-        [ -z "$grp_trim" ] && continue
-        grp_env_name=$(echo "$grp_trim" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
+      for g in $(echo "$GROUP" | tr ',' ' '); do
+        g=$(echo "$g" | xargs)
+        [ -z "$g" ] && continue
 
-        grp_type=$(printenv "${grp_env_name}_TYPE" || echo "select")
-        grp_filter=$(printenv "${grp_env_name}_FILTER" || true)
-        grp_exclude=$(printenv "${grp_env_name}_EXCLUDE" || true)
-        grp_use=$(printenv "${grp_env_name}_USE" || true)
+        env_name=$(echo "$g" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
+        has_resource=false
+        for suffix in GEOSITE GEOIP AS; do
+          if [ -n "$(printenv "${env_name}_${suffix}" 2>/dev/null || echo "")" ]; then
+            has_resource=true
+            break
+          fi
+        done
 
-        echo
-        echo "  - name: $grp_trim"
-        echo "    type: $grp_type"
-        [ -n "$grp_filter" ] && echo "    filter: $grp_filter"
-        [ -n "$grp_exclude" ] && echo "    exclude-filter: $grp_exclude"
-
-        echo "    use:"
-        if [ -n "$grp_use" ]; then
-          echo "$grp_use" | tr ',' '\n' | sed 's/^/      - /'
-        else
-          for p in $providers; do
-            echo "      - $p"
-          done
+        if ! $has_resource; then
+          # ЛОГ ТОЛЬКО В КОНСОЛЬ
+          continue
         fi
+
+        prio=$(printenv "${env_name}_PRIORITY" 2>/dev/null || echo "")
+        [ -z "$prio" ] && prio=$((1000 + idx))
+        group_prio_list="$group_prio_list $g|$prio"
+        idx=$((idx + 1))
       done
     fi
 
-# Добавляем секцию rule-providers
+    # === Сортировка по приоритету ===
+    sorted_groups=""
+    if [ -n "$group_prio_list" ]; then
+      sorted_groups=$(echo "$group_prio_list" | tr ' ' '\n' | sort -t'|' -k2 -n | cut -d'|' -f1)
+    fi
+
+    # === proxy-groups ===
+    for g in $sorted_groups; do
+      env_name=$(echo "$g" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
+      type=$(printenv "${env_name}_TYPE" || echo "select")
+      filter=$(printenv "${env_name}_FILTER" || true)
+      exclude=$(printenv "${env_name}_EXCLUDE" || true)
+      use=$(printenv "${env_name}_USE" || true)
+
+      echo
+      echo " - name: $g"
+      echo "   type: $type"
+      [ -n "$filter" ] && echo "   filter: $filter"
+      [ -n "$exclude" ] && echo "   exclude-filter: $exclude"
+      echo "   use:"
+      if [ -n "$use" ]; then
+        echo "$use" | tr ',' '\n' | sed 's/^/     - /'
+      else
+        for p in $providers; do echo "     - $p"; done
+      fi
+    done
+
+    # === rule-providers + rules ===
     echo
     echo "rule-providers:"
-    if [ -n "${GROUP:-}" ]; then
-      echo "$GROUP" | tr ',' '\n' | while read -r grp; do
-        grp_trim=$(echo "$grp" | xargs)
-        [ -z "$grp_trim" ] && continue
-        grp_env_name=$(echo "$grp_trim" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
-        grp_geoip=$(printenv "${grp_env_name}_GEOIP" || true)
 
-        # === ИСКЛЮЧАЕМ discord из стандартного GEOIP ===
-        if [ "$grp_trim" = "discord" ] && [ -n "${DISCORD_GEOIP:-}" ]; then
-          grp_geoip=""  # Сбрасываем стандартный GEOIP для discord
-        fi
+    rule_accum=""
 
-        # Добавляем rule-provider для GEOSITE (замена на .mrs)
+    for g in $sorted_groups; do
+      env_name=$(echo "$g" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
+
+      # GEOSITE
+      geosite_list=$(printenv "${env_name}_GEOSITE" || echo "")
+      for gs in $(echo "$geosite_list" | tr ',' ' '); do
+        gs=$(echo "$gs" | xargs)
+        [ -z "$gs" ] && continue
         cat <<EOF
-  $grp_trim:
+  ${g}_geosite_$gs:
     type: http
     behavior: domain
     format: mrs
-    url: "https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/$grp_trim.mrs"
+    url: "https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/$gs.mrs"
     interval: 86400
 EOF
-        # Добавляем rule-provider для GEOIP, если указано (кроме discord)
-        if [ -n "$grp_geoip" ]; then
-          cat <<EOF
-  ${grp_trim}_geoip:
-    type: http
-    behavior: ipcidr
-    format: mrs
-    url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/meta/geo/geoip/$grp_geoip.mrs"
-    interval: 86400
-EOF
-        fi
+        rule_accum="$rule_accum
+- RULE-SET,${g}_geosite_$gs,$g"
       done
-    fi
 
-    # === СПЕЦИАЛЬНЫЙ rule-provider для DISCORD_GEOIP (если задан) ===
-    if [ -n "${DISCORD_GEOIP:-}" ]; then
-      cat <<EOF
-  discord_geoip:
+# GEOIP
+      geoip_list=$(printenv "${env_name}_GEOIP" || echo "")
+      for gi in $(echo "$geoip_list" | tr ',' ' '); do
+        gi=$(echo "$gi" | xargs)
+        [ -z "$gi" ] && continue
+
+        if [ "$gi" = "discord" ]; then
+          # Специальный случай для DISCORD_GEOIP
+          cat <<EOF
+  ${g}_geoip_$gi:
     type: http
     behavior: ipcidr
     format: text
-    url: "https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/custom_list/discord.list"
+    url: "https://raw.githubusercontent.com/Medium1992/mihomo-mrs-ros/refs/heads/main/custom_list/discord.list"
     interval: 86400
 EOF
-    fi
+          rule_accum="$rule_accum
+- AND,((RULE-SET,${g}_geoip_$gi),(NETWORK,UDP),(DST-PORT,19294-19344)),$g
+- AND,((RULE-SET,${g}_geoip_$gi),(NETWORK,UDP),(DST-PORT,50000-50100)),$g"
+        else
+          # Обычный случай для всех остальных GEOIP
+          cat <<EOF
+  ${g}_geoip_$gi:
+    type: http
+    behavior: ipcidr
+    format: mrs
+    url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/meta/geo/geoip/$gi.mrs"
+    interval: 86400
+EOF
+          rule_accum="$rule_accum
+- RULE-SET,${g}_geoip_$gi,$g"
+        fi
+      done
 
-    # Правила
+      # AS
+      as_list=$(printenv "${env_name}_AS" || echo "")
+      for asn in $(echo "$as_list" | tr ',' ' '); do
+        asn=$(echo "$asn" | xargs)
+        [ -z "$asn" ] && continue
+        as_num=$(echo "$asn" | sed 's/^AS//')
+        [ "$as_num" = "$asn" ] && continue
+        cat <<EOF
+  ${g}_as_$asn:
+    type: http
+    behavior: ipcidr
+    format: mrs
+    url: "https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/asn/AS$as_num.mrs"
+    interval: 86400
+EOF
+        rule_accum="$rule_accum
+- RULE-SET,${g}_as_$asn,$g"
+      done
+    done
+
+    # === rules ===
     echo
     echo "rules:"
-
     if ! lsmod | grep -q '^nft_tproxy'; then
       echo " - AND,((NETWORK,udp),(DST-PORT,443)),REJECT"
     fi
 
-    if [ -n "${GROUP:-}" ]; then
-      echo "$GROUP" | tr ',' '\n' | while read -r grp; do
-        grp_trim=$(echo "$grp" | xargs)
-        [ -z "$grp_trim" ] && continue
-        echo " - RULE-SET,$grp_trim,$grp_trim"
-      done
-    fi
-
-    if [ -n "${GROUP:-}" ]; then
-      echo "$GROUP" | tr ',' '\n' | while read -r grp; do
-        grp_trim=$(echo "$grp" | xargs)
-        [ -z "$grp_trim" ] && continue
-        grp_env_name=$(echo "$grp_trim" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
-        grp_geoip=$(printenv "${grp_env_name}_GEOIP" || echo "")
-
-        if [ "$grp_trim" != "discord" ] && [ -n "$grp_geoip" ]; then
-          echo " - RULE-SET,${grp_trim}_geoip,$grp_trim"
-        fi
-      done
-    fi
-
-    if [ -n "${DISCORD_GEOIP:-}" ]; then
-      cat <<EOF
- - AND,((RULE-SET,discord_geoip),(NETWORK,UDP),(DST-PORT,19294-19344)),discord
- - AND,((RULE-SET,discord_geoip),(NETWORK,UDP),(DST-PORT,50000-50100)),discord
-EOF
+    if [ -n "$rule_accum" ]; then
+      echo "$rule_accum" | sed '1d' | sed 's/^/ /'
     fi
 
     if lsmod | grep -q '^nft_tproxy'; then
@@ -510,18 +487,15 @@ EOF
       echo " - IN-NAME,tun-in,GLOBAL"
       echo " - IN-NAME,mixed-in,GLOBAL"
     fi
-
     echo " - MATCH,DIRECT"
   } >> "$CONFIG_YAML"
 }
 
-
-# ------------------- NFT / TPROXY -------------------
+# ------------------- NFT -------------------
 nft_rules() {
-  log "Applying nftables rules for TPROXY..."
+  log "Applying nftables..."
   iface=$(first_iface)
   iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
-
   nft flush ruleset || true
   nft -f - <<EOF
 table inet mihomo_tproxy {
@@ -537,40 +511,32 @@ table inet mihomo_tproxy {
     }
 }
 EOF
-
   ip rule show | grep -q 'fwmark 0x00000001 lookup 100' || ip rule add fwmark 1 table 100
-  ip route replace local 0.0.0.0/0 dev lo table 100 table 100
+  ip route replace local 0.0.0.0/0 dev lo table 100
 }
 
-# ------------------- Orchestrator -------------------
-
+# ------------------- RUN -------------------
 run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR"
-
   generate_direct_yaml
   generate_byedpi_yaml
   generate_awg_yaml
   link_file_mihomo
-   if lsmod | grep -q '^nft_tproxy'; then
-    log "nft_tproxy module loaded, use inbound TPROXY"
+
+  if lsmod | grep -q '^nft_tproxy'; then
     nft_rules
-  else
-    log "nft_tproxy not loaded, use inbound TUN with TCP redirect"
   fi
+
   config_file_mihomo
-
-
   log "Starting mihomo..."
   exec ./mihomo
 }
 
-# ------------------- Entry -------------------
-
-# Проверка на наличие источников
+# ------------------- ENTRY -------------------
 if ! env | grep -qE '^LINK[0-9]*=' \
    && ! env | grep -qE '^SUB_LINK[0-9]*=' \
    && ! find "$AWG_DIR" -name "*.conf" | grep -q . 2>/dev/null; then
-  log "Warning: no LINK*, SUB_LINK*, or AWG .conf found. Config will be minimal (but DIRECT is always included)."
+  log "Warning: no sources → minimal config"
 fi
 
 run || exit 1
