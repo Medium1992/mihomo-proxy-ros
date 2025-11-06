@@ -172,6 +172,8 @@ add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0
 /container/envs
 :do {add key=FAKE_IP_RANGE list=MihomoProxyRoS value=198.18.0.0/15
 :put "Add env FAKE_IP_RANGE value: 198.18.0.0/15"} on-error {}
+:do {add key=FAKE_IP_FILTER list=MihomoProxyRoS value=www.youtube.com
+:put "Add env FAKE_IP_FILTER value: www.youtube.com"} on-error {}
 :do {add key=LOG_LEVEL list=MihomoProxyRoS value=error
 :put "Add env LOG_LEVEL value: error"} on-error {}
 :do {add key=TTL_FAKEIP list=MihomoProxyRoS value=10
