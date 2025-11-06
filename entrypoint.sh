@@ -8,6 +8,9 @@ AWG_DIR="$CONFIG_DIR/awg"
 LINKS_YAML="$CONFIG_DIR/links.yaml"
 CONFIG_YAML="$CONFIG_DIR/config.yaml"
 DIRECT_YAML="$CONFIG_DIR/direct.yaml"
+BYEDPI="${BYEDPI:-false}"                 
+BYEDPI_ADDRESS="${BYEDPI_ADDRESS:-192.168.255.6}"
+BYEDPI_SOCKS_PORT="${BYEDPI_SOCKS_PORT:-1080}"
 BYEDPI_YAML="$CONFIG_DIR/byedpi.yaml"
 UI_URL_CHECK="$CONFIG_DIR/.ui_url"
 
@@ -43,16 +46,18 @@ proxies:
 EOF
 }
 
-# ------------------- ByeDPI -------------------
+# ------------------- BYEDPI -------------------
 generate_byedpi_yaml() {
-  log "Generating $BYEDPI_YAML"
+  [ "$BYEDPI" = "true" ] || return 0
+
+  log "Generating $BYEDPI_YAML (address=$BYEDPI_ADDRESS, port=$BYEDPI_SOCKS_PORT)"
   cat > "$BYEDPI_YAML" <<EOF
 proxies:
-- name: "ByeDPI"
-  type: socks5
-  server: 192.168.255.6
-  port: 1080
-  udp: true
+  - name: "BYEDPI"
+    type: socks5
+    server: $BYEDPI_ADDRESS
+    port: $BYEDPI_SOCKS_PORT
+    udp: true
 EOF
 }
 
@@ -316,18 +321,25 @@ EOF
   awg_provs=$(generate_awg_providers)
   providers="${providers}${awg_provs}"
 
-  # BYEDPI + DIRECT
-  cat >> "$CONFIG_YAML" <<EOF
+  # BYEDPI
+  if [ "$BYEDPI" = "true" ]; then
+    cat >> "$CONFIG_YAML" <<EOF
   BYEDPI:
     type: file
     path: $(basename "$BYEDPI_YAML")
 $(health_check_block)
+EOF
+    providers="$providers BYEDPI"
+  fi
+
+# DIRECT
+  cat >> "$CONFIG_YAML" <<EOF
   DIRECT:
     type: file
     path: $(basename "$DIRECT_YAML")
 $(health_check_block)
 EOF
-  providers="$providers BYEDPI DIRECT"
+  providers="$providers DIRECT"
 
 
 # === ГРУППЫ + ПРАВИЛА ===
