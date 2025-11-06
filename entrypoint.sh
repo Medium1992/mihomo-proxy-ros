@@ -428,7 +428,7 @@ EOF
     type: http
     behavior: ipcidr
     format: text
-    url: "https://raw.githubusercontent.com/Medium1992/mihomo-mrs-ros/refs/heads/main/custom_list/discord.list"
+    url: "https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/custom_list/discord.list"
     interval: 86400
 EOF
           rule_accum="$rule_accum
