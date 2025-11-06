@@ -5,7 +5,6 @@ FAKE_IP_RANGE="${FAKE_IP_RANGE:-198.18.0.0/15}"
 EXTERNAL_UI_URL="${EXTERNAL_UI_URL:-https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip}"
 CONFIG_DIR="/root/.config/mihomo"
 AWG_DIR="$CONFIG_DIR/awg"
-AWG_YAML="$CONFIG_DIR/awg.yaml"
 LINKS_YAML="$CONFIG_DIR/links.yaml"
 CONFIG_YAML="$CONFIG_DIR/config.yaml"
 DIRECT_YAML="$CONFIG_DIR/direct.yaml"
@@ -101,7 +100,7 @@ parse_awg_config() {
     mtu: ${mtu:-1420}
     public-key: $public_key
     allowed-ips: ['0.0.0.0/0']
-$(if [ -n "$psk" ]; then echo " pre-shared-key: $psk"; fi)
+$(if [ -n "$psk" ]; then echo "    pre-shared-key: $psk"; fi)
     udp: true
     dns: [ $dns ]
     remote-dns-resolve: true
@@ -127,14 +126,30 @@ $(if [ -n "$psk" ]; then echo " pre-shared-key: $psk"; fi)
 EOF
 }
 
-generate_awg_yaml() {
-  log "Generating $AWG_YAML"
-  echo "proxies:" > "$AWG_YAML"
-  if find "$AWG_DIR" -name "*.conf" | grep -q . 2>/dev/null; then
-    find "$AWG_DIR" -name "*.conf" | while read -r conf; do
-      parse_awg_config "$conf"
-    done >> "$AWG_YAML"
+generate_awg_providers() {
+  local awg_providers=""
+  if ls "$AWG_DIR"/*.conf >/dev/null 2>&1; then
+    for conf in "$AWG_DIR"/*.conf; do
+      [ ! -f "$conf" ] && continue
+      local awg_name=$(basename "$conf" .conf)
+      local awg_yaml="${CONFIG_DIR}/${awg_name}.yaml"
+
+      {
+        echo "proxies:"
+        parse_awg_config "$conf"
+      } > "$awg_yaml"
+
+      cat >> "$CONFIG_YAML" <<EOF
+  ${awg_name}:
+    type: file
+    path: ${awg_name}.yaml
+$(health_check_block)
+EOF
+
+      awg_providers="${awg_providers} ${awg_name}"
+    done
   fi
+  echo "$awg_providers"
 }
 
 # ------------------- LINKS -------------------
@@ -297,17 +312,11 @@ EOF
     providers="$providers $name"
   done
 
-  # AWG + BYEDPI + DIRECT
-  if find "$AWG_DIR" -name "*.conf" | grep -q . 2>/dev/null; then
-    cat >> "$CONFIG_YAML" <<EOF
-  AWG:
-    type: file
-    path: $(basename "$AWG_YAML")
-$(health_check_block)
-EOF
-    providers="$providers AWG"
-  fi
+  # AWG
+  awg_provs=$(generate_awg_providers)
+  providers="${providers}${awg_provs}"
 
+  # BYEDPI + DIRECT
   cat >> "$CONFIG_YAML" <<EOF
   BYEDPI:
     type: file
@@ -319,6 +328,7 @@ $(health_check_block)
 $(health_check_block)
 EOF
   providers="$providers BYEDPI DIRECT"
+
 
 # === ГРУППЫ + ПРАВИЛА ===
   {
@@ -522,7 +532,7 @@ run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR"
   generate_direct_yaml
   generate_byedpi_yaml
-  generate_awg_yaml
+  
   link_file_mihomo
 
   if lsmod | grep -q '^nft_tproxy'; then
