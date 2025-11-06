@@ -282,12 +282,14 @@ EOF
     proxy: DIRECT
 EOF
     if [ -n "$x_hwid" ] || [ -n "$x_device_os" ] || [ -n "$x_ver_os" ] || [ -n "$x_device_model" ] || [ -n "$x_user_agent" ]; then
-      echo " header:" >> "$CONFIG_YAML"
-      [ -n "$x_hwid" ] && echo " x-hwid:" >> "$CONFIG_YAML" && echo " - \"$x_hwid\"" >> "$CONFIG_YAML"
-      [ -n "$x_device_os" ] && echo " x-device-os:" >> "$CONFIG_YAML" && echo " - \"$x_device_os\"" >> "$CONFIG_YAML"
-      [ -n "$x_ver_os" ] && echo " x-ver-os:" >> "$CONFIG_YAML" && echo " - \"$x_ver_os\"" >> "$CONFIG_YAML"
-      [ -n "$x_device_model" ] && echo " x-device-model:" >> "$CONFIG_YAML" && echo " - \"$x_device_model\"" >> "$CONFIG_YAML"
-      [ -n "$x_user_agent" ] && echo " User-Agent:" >> "$CONFIG_YAML" && echo " - \"$x_user_agent\"" >> "$CONFIG_YAML"
+      cat >> "$CONFIG_YAML" <<EOF
+    header:
+EOF
+      [ -n "$x_hwid" ] &&         echo "      x-hwid:" >> "$CONFIG_YAML" &&         echo "      - \"$x_hwid\"" >> "$CONFIG_YAML"
+      [ -n "$x_device_os" ] &&    echo "      x-device-os:" >> "$CONFIG_YAML" &&    echo "      - \"$x_device_os\"" >> "$CONFIG_YAML"
+      [ -n "$x_ver_os" ] &&       echo "      x-ver-os:" >> "$CONFIG_YAML" &&       echo "      - \"$x_ver_os\"" >> "$CONFIG_YAML"
+      [ -n "$x_device_model" ] && echo "      x-device-model:" >> "$CONFIG_YAML" && echo "      - \"$x_device_model\"" >> "$CONFIG_YAML"
+      [ -n "$x_user_agent" ] &&   echo "      User-Agent:" >> "$CONFIG_YAML" &&     echo "      - \"$x_user_agent\"" >> "$CONFIG_YAML"
     fi
     cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
