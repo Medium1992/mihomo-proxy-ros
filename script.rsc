@@ -29,8 +29,6 @@ foreach i in=$slotArray do={
 :set flagDisks true
 }}}}
 
-
-
 :local inputLINK
 :local defaultLINK
 :do {
@@ -112,6 +110,7 @@ add doh-servers=https://dns.quad9.net/dns-query name=Quad9
 add dns-servers=176.99.11.77,80.78.247.254 name=XBOX
 add dns-servers=77.88.8.8,77.88.8.1 name=Yandex verify-doh-cert=no
 add dns-servers=8.8.8.8 name=Google8 verify-doh-cert=no
+/certificate/settings/set builtin-trust-anchors=not-trusted
 /certificate/settings/set builtin-trust-anchors=trusted
 /ip/dns/set allow-remote-requests=yes cache-max-ttl=1d cache-size=15000KiB doh-max-concurrent-queries=500 doh-max-server-connections=10 servers=8.8.8.8 use-doh-server=https://dns.google/dns-query verify-doh-cert=yes
 /ip dns static
@@ -135,14 +134,14 @@ add address=3.ru.pool.ntp.org
 /ipv6 nd set [ find default=yes ] advertise-dns=yes disabled=yes
 /ipv6 settings set accept-redirects=no accept-router-advertisements=no allow-fast-path=no disable-ipv6=yes disable-link-local-address=yes forward=no
 :put "Disable ipv6"
-/ip service
-set ftp disabled=yes
-set ssh disabled=yes
-set telnet disabled=yes
-set www disabled=yes
-set api disabled=yes
-set api-ssl disabled=yes
-:put "Disable services ftp, ssh, telnet, www, api, api-ssl"
+#/ip service
+#set ftp disabled=yes
+#set ssh disabled=yes
+#set telnet disabled=yes
+#set www disabled=yes
+#set api disabled=yes
+#set api-ssl disabled=yes
+#:put "Disable services ftp, ssh, telnet, www, api, api-ssl"
 /ip route
 add blackhole comment=BlackHole disabled=no distance=254 dst-address=10.0.0.0/8 gateway="" routing-table=main scope=30 suppress-hw-offload=no
 add blackhole comment=BlackHole disabled=no distance=254 dst-address=172.16.0.0/12 gateway="" routing-table=main scope=30 suppress-hw-offload=no
@@ -250,16 +249,16 @@ add address=8.8.4.4 list=DNS
 } on-error {}
 
 /ip firewall mangle
-:if ([:len [find comment="MihomoProxyRoS1"]] = 0) do={add action=change-mss chain=postrouting new-mss=clamp-to-pmtu protocol=tcp tcp-flags=syn connection-state=new comment="MihomoProxyRoS1"; :put "Add mangle rules 1"}
+:if ([:len [find comment="MSSClamp"]] = 0) do={add action=change-mss chain=postrouting new-mss=clamp-to-pmtu protocol=tcp tcp-flags=syn connection-state=new comment="MSSClamp"; :put "Add mangle rules 1"}
 :if ([:len [find comment="YT_MSS"]] = 0) do={add action=change-mss chain=postrouting dst-address-list=YT in-interface=ByeDPI new-mss=88 protocol=tcp tcp-flags=syn connection-state=new comment="YT_MSS"; :put "Add mangle rules YT_MSS"}
-:if ([:len [find comment="MihomoProxyRoS2"]] = 0) do={add action=accept chain=prerouting connection-mark=no-mark connection-state=established,related,untracked comment="MihomoProxyRoS2"; :put "Add mangle rules 2"}
-:if ([:len [find comment="MihomoProxyRoS3"]] = 0) do={add action=accept chain=prerouting in-interface-list=InAccept comment="MihomoProxyRoS3"; :put "Add mangle rules 3"}
-:if ([:len [find comment="MihomoProxyRoS4"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="MihomoProxyRoS4"; :put "Add mangle rules 4"}
-:if ([:len [find comment="MihomoProxyRoS5"]] = 0) do={add action=mark-connection chain=prerouting connection-state=new dst-address-list=MihomoProxyRoS new-connection-mark=MihomoProxyRoS comment="MihomoProxyRoS5"; :put "Add mangle rules 5"}
-:if ([:len [find comment="MihomoProxyRoS6"]] = 0) do={add action=mark-connection chain=prerouting connection-state=new content="\12\A4\42" dst-address-list=VoiceTelegram in-interface-list=LAN new-connection-mark=MihomoProxyRoS protocol=udp comment="MihomoProxyRoS6"; :put "Add mangle rules 6"}
-:if ([:len [find comment="MihomoProxyRoS7"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=102 connection-state=new content="\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19294-19344,50000-50100 protocol=udp comment="MihomoProxyRoS7"; :put "Add mangle rules 7"}
-:if ([:len [find comment="MihomoProxyRoS8"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=128 connection-state=new content="\12\A4\42" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19294-19344,50000-50100 protocol=udp comment="MihomoProxyRoS8"; :put "Add mangle rules 8"}
-:if ([:len [find comment="MihomoProxyRoS9"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="MihomoProxyRoS9"; :put "Add mangle rules 9"}
+:if ([:len [find comment="Accept_no_mark"]] = 0) do={add action=accept chain=prerouting connection-mark=no-mark connection-state=established,related,untracked comment="Accept_no_mark"; :put "Add mangle rules 2"}
+:if ([:len [find comment="AcceptInWAN&Containers"]] = 0) do={add action=accept chain=prerouting in-interface-list=InAccept comment="AcceptInWAN&Containers"; :put "Add mangle rules 3"}
+:if ([:len [find comment="RoutingToMihomo2"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="RoutingToMihomo2"; :put "Add mangle rules 4"}
+:if ([:len [find comment="MarkConnAddressList"]] = 0) do={add action=mark-connection chain=prerouting connection-state=new dst-address-list=MihomoProxyRoS new-connection-mark=MihomoProxyRoS comment="MarkConnAddressList"; :put "Add mangle rules 5"}
+:if ([:len [find comment="Telegram_RTC"]] = 0) do={add action=mark-connection chain=prerouting connection-state=new content="\12\A4\42" dst-address-list=Telegram in-interface-list=LAN new-connection-mark=MihomoProxyRoS protocol=udp comment="Telegram_RTC"; :put "Add mangle rules 6"}
+:if ([:len [find comment="Discord_RTC"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=102 connection-state=new content="\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19294-19344,50000-50100 protocol=udp comment="Discord_RTC"; :put "Add mangle rules 7"}
+:if ([:len [find comment="Discord_WebRTC"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=128 connection-state=new content="\12\A4\42" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19294-19344,50000-50100 protocol=udp comment="Discord_WebRTC"; :put "Add mangle rules 8"}
+:if ([:len [find comment="RoutingToMihomo1"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="RoutingToMihomo1"; :put "Add mangle rules 9"}
 
 /ip firewall address-list
 :do {add list=YT comment=YT_MSS address=www.youtube.com} on-error {}
@@ -271,19 +270,13 @@ add address=8.8.4.4 list=DNS
 :if ([:len [find name="tmdb.org"]] = 0) do={ add address-list=MihomoProxyRoS forward-to=Quad9 comment="tmdb" match-subdomain=yes type=FWD name="tmdb.org" }
 :if ([:len [find name="tmdb-image-prod.b-cdn.net"]] = 0) do={ add address-list=MihomoProxyRoS forward-to=Quad9 comment="tmdb" type=FWD name="tmdb-image-prod.b-cdn.net" }
 
-:if ([:len [/system/script/find name="IP_AddressList"]] = 0) do={
+:if ([:len [/system/script/find name="IP_MihomoProxyRoS"]] = 0) do={
 /system script
-add name=IP_AddressList source="# Define global variables\r\
+add name=IP_MihomoProxyRoS source="# Define global variables\r\
 \n:global AddressList \"MihomoProxyRoS\"\r\
 \n\r\
 \n# List of resources corresponding to RSC files\r\
 \n:global resources {\r\
-\n\"geoipv4/telegram\";\r\
-\n\"asnv4/AS62041\";\r\
-\n\"asnv4/AS59930\";\r\
-\n\"asnv4/AS62014\";\r\
-\n\"asnv4/AS211157\";\r\
-\n\"asnv4/AS44907\";\r\
 \n\"geoipv4/twitter\";\r\
 \n\"asnv4/AS13414\";\r\
 \n\"asnv4/AS63179\";\r\
@@ -293,6 +286,58 @@ add name=IP_AddressList source="# Define global variables\r\
 \n\"asnv4/AS54115\";\r\
 \n\"geoipv4/netflix\";\r\
 \n\"asnv4/AS2906\"\r\
+\n}\r\
+\n\r\
+\n# Base URL for RSC files\r\
+\n:local baseUrl \"https://raw.githubusercontent.com/Medium1992/MikroTik_IPlist/refs/heads/main/for_scripts\
+\"\r\
+\n\r\
+\n:foreach resource in=\$resources do={\r\
+\n:local url \"\$baseUrl/\$resource.rsc\"\r\
+\n:do {\r\
+\n:local r [/tool fetch url=\$url mode=https output=user as-value]\r\
+\n:if ((\$r->\"status\")=\"finished\") do={\r\
+\n:local content (\$r->\"data\")\r\
+\n:local s [:parse \$content]\r\
+\n\$s\r\
+\n:log warning \"\$resource.rsc loading completed\"\r\
+\n:put \"\$resource.rsc loading completed\"\r\
+\n}\r\
+\n} on-error {}\r\
+\n:local part 1\r\
+\n:local continue true\r\
+\n:while (\$continue) do={\r\
+\n:local url \"\$baseUrl/\$resource_part\$part.rsc\"\r\
+\n:do {\r\
+\n:local r [/tool fetch url=\$url mode=https output=user as-value]\r\
+\n:if ((\$r->\"status\")=\"finished\") do={\r\
+\n:local content (\$r->\"data\")\r\
+\n:local s [:parse \$content]\r\
+\n\$s\r\
+\n:log warning \"\$resource.rsc part\$part loading completed\"\r\
+\n:put \"\$resource.rsc part\$part loading completed\"\r\
+\n}\r\
+\n:set part (\$part + 1)\r\
+\n} on-error {\r\
+\n:set continue false\r\
+\n}\r\
+\n}\r\
+\n}"
+:put "Add script IP_AddressList for pull IPs to ip firewall address-list"}
+
+:if ([:len [/system/script/find name="IP_Telegram"]] = 0) do={
+/system script
+add name=IP_Telegram source="# Define global variables\r\
+\n:global AddressList \"Telegram\"\r\
+\n\r\
+\n# List of resources corresponding to RSC files\r\
+\n:global resources {\r\
+\n\"geoipv4/telegram\";\r\
+\n\"asnv4/AS62041\";\r\
+\n\"asnv4/AS59930\";\r\
+\n\"asnv4/AS62014\";\r\
+\n\"asnv4/AS211157\";\r\
+\n\"asnv4/AS44907\"\r\
 \n}\r\
 \n\r\
 \n# Base URL for RSC files\r\
@@ -412,14 +457,17 @@ add name=FWD_update source="# Define global variables\r\
 :do {
 :put "Run script FWD_update, pls wait for DNS static entries pulled"
 /system/script/run FWD_update
-:put "Run script IP_AddressList, pls wait for IPs static entries pulled"
-/system/script/run IP_AddressList
+:put "Run script IP_MihomoProxyRoS, pls wait for IPs static entries pulled"
+/system/script/run IP_MihomoProxyRoS
+:put "Run script IP_Telegram, pls wait for IPs static entries pulled"
+/system/script/run IP_Telegram
 } on-error {}
 }
 :do {
 /system scheduler
 add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-event="/system/script/run FWD_update\r\
-\n/system/script/run IP_AddressList"
+\n/system/script/run IP_MihomoProxyRoS\r\
+\n/system/script/run IP_Telegram"
 :put "Add shedule update resources on 06:30 AM every day"
 } on-error {} 
 
@@ -464,7 +512,6 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 }
 :delay 1
 }
-
 
 :set flagContainer false
 :while ($flagContainer = false) do={
@@ -567,7 +614,7 @@ add interval=10s name=DNSchange on-event=changeDNS
 } on-error {} 
 
 /system/script/environment/remove [find where ]
-:put "Script complete, enjoy, for use AWG pls push AWG_conf file on Mikrotik to path /awg_conf/"
+:put "Script complete, enjoy, for use WG,AWG pls push conf files on Mikrotik to path /awg_conf/"
 :put "For donate USDT(TRC20):TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ"
 :log warning "script complete, enjoy!"
 :log warning "For donate USDT(TRC20):TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ"
