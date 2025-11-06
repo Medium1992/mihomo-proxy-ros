@@ -13,6 +13,7 @@ BYEDPI_ADDRESS="${BYEDPI_ADDRESS:-192.168.255.6}"
 BYEDPI_SOCKS_PORT="${BYEDPI_SOCKS_PORT:-1080}"
 BYEDPI_YAML="$CONFIG_DIR/byedpi.yaml"
 UI_URL_CHECK="$CONFIG_DIR/.ui_url"
+FAKE_IP_FILTER="${FAKE_IP_FILTER:-}"
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
@@ -199,9 +200,8 @@ dns:
     - 9.9.9.9
     - 1.1.1.1
   enhanced-mode: fake-ip
-  fake-ip-range: ${FAKE_IP_RANGE}
-  fake-ip-filter:
-    - www.youtube.com
+  fake-ip-range: ${FAKE_IP_RANGE}${FAKE_IP_FILTER:+
+  fake-ip-filter:}${FAKE_IP_FILTER:+$(printf '\n    - %s' $(echo "$FAKE_IP_FILTER" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$'))}
   nameserver:
     - https://dns.google/dns-query
     - https://1.1.1.1/dns-query
@@ -456,8 +456,7 @@ EOF
     interval: 86400
 EOF
           rule_accum="$rule_accum
-- AND,((RULE-SET,${g}_geoip_$gi),(NETWORK,UDP),(DST-PORT,19294-19344)),$g
-- AND,((RULE-SET,${g}_geoip_$gi),(NETWORK,UDP),(DST-PORT,50000-50100)),$g"
+- AND,((RULE-SET,${g}_geoip_$gi),(NETWORK,UDP),(DST-PORT,19294-19344/50000-50100)),$g"
         else
           # Обычный случай для всех остальных GEOIP
           cat <<EOF
