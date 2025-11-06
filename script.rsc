@@ -8,7 +8,7 @@
 :put "Starting script"
 
 :local pathPull ""
-:if ([:len [/container/find comment="MihomoProxyRoS"]] = 0 or [:len [/container/find comment="DNSProxy"]] = 0 or [:len [/container/find comment="ByeDPI"]] = 0) do={
+:if (([:len [/container/find comment="MihomoProxyRoS"]] = 0) or ([:len [/container/find comment="DNSProxy"]] = 0) or ([:len [/container/find comment="ByeDPI"]] = 0)) do={
 :local slotArray 
 :if ($freespace>=80914560) do={:set slotArray ($slotArray, "system")}
 :local flagDisks false
@@ -176,18 +176,26 @@ add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0
 :put "Add env LOG_LEVEL value: error"} on-error {}
 :do {add key=TTL_FAKEIP list=MihomoProxyRoS value=10
 :put "Add env TTL_FAKEIP value: 10"} on-error {}
+:do {add key=BYEDPI list=MihomoProxyRoS value=true
+:put "Add env BYEDPI value: true"} on-error {}
+:do {add key=BYEDPI_ADDRESS list=MihomoProxyRoS value=192.168.255.6
+:put "Add env BYEDPI_ADDRESS value: 192.168.255.6"} on-error {}
+:do {add key=BYEDPI_SOCKS_PORT list=MihomoProxyRoS value=1080
+:put "Add env BYEDPI_SOCKS_PORT: 1080"} on-error {}
 :do { add key=GROUP list=MihomoProxyRoS value=youtube,telegram,discord,amazon
 :put "Add env GROUP value: youtube,telegram,discord,amazon"} on-error {}
 :do { add key=YOUTUBE_GEOSITE list=MihomoProxyRoS value=youtube
 :put "Add env YOUTUBE_GEOSITE value: youtube"} on-error {}
-:do { add key=TELEGRAM_PRIORITY list=MihomoProxyRoS value=1
-:put "Add env YOUTUBE_PRIORITY value: youtube"} on-error {}
+:do { add key=YOUTUBE_PRIORITY list=MihomoProxyRoS value=1
+:put "Add env YOUTUBE_PRIORITY value: 1"} on-error {}
 :do { add key=TELEGRAM_GEOSITE list=MihomoProxyRoS value=telegram
 :put "Add env TELEGRAM_GEOSITE value: telegram"} on-error {}
 :do { add key=TELEGRAM_GEOIP list=MihomoProxyRoS value=telegram
 :put "Add env TELEGRAM_GEOIP value: telegram"} on-error {}
 :do { add key=TELEGRAM_AS list=MihomoProxyRoS value=AS62041,AS59930,AS62014,AS211157,AS44907
 :put "Add env TELEGRAM_AS value: AS62041,AS59930,AS62014,AS211157,AS44907"} on-error {}
+:do { add key=TELEGRAM_PRIORITY list=MihomoProxyRoS value=2
+:put "Add env TELEGRAM_PRIORITY value: 2"} on-error {}
 :do { add key=DISCORD_GEOSITE list=MihomoProxyRoS value=discord
 :put "Add env DISCORD_GEOSITE value: telegram"} on-error {}
 :do { add key=DISCORD_GEOIP list=MihomoProxyRoS value=discord
