@@ -203,8 +203,8 @@ add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0
 :put "Add env DISCORD_GEOIP value: telegram"} on-error {}
 :do { add key=AMAZON_AS list=MihomoProxyRoS value=AS16509
 :put "Add env AMAZON_AS value: AS16509"} on-error {}
-:do { add key=HWID list=MihomoProxyRoS value=$softid
-:put "Add env HWID value: $softid"} on-error {}
+:do { add key=SW_ID_FOR_HWID list=MihomoProxyRoS value=$softid
+:put "Add env SW_ID_FOR_HWID value: $softid"} on-error {}
 :do { add key=DEVICE_OS list=MihomoProxyRoS value=RouterOS
 :put "Add env DEVICE_OS value:RouterOS"} on-error {}
 :do { add key=VER_OS list=MihomoProxyRoS value=$version
