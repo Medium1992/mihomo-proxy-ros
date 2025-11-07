@@ -261,7 +261,7 @@ EOF
   fi
 
   # SUB_LINK
-  env | grep -E '^SUB_LINK[0-9]*=' | sort -t '=' -k1 | while IFS= read var; do
+  while IFS= read -r var; do
     name=$(echo "$var" | cut -d '=' -f1)
     value=$(echo "$var" | cut -d '=' -f2-)
     url=$(echo "$value" | cut -d '#' -f1)
@@ -324,7 +324,7 @@ EOF
 $(health_check_block)
 EOF
     providers="$providers $name"
-  done
+  done < <(env | grep -E '^SUB_LINK[0-9]*=' | sort -t '=' -k1)
 
   # AWG
   awg_provs=$(generate_awg_providers)
