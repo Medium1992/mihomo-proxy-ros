@@ -82,8 +82,10 @@ jobs:
             BUILDTIME=${{ env.BUILDTIME }}
             AMD64VERSION=v1
           tags: |
-            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64_v1
-            medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64_v1
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v1
+            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64v1
+            medium1992/mihomo-proxy-ros:amd64v1
+            medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64v1
 
       # 8. Сборка и пуш AMD64_v2
       - name: Build and push mihomo AMD64_v2
@@ -98,8 +100,10 @@ jobs:
             BUILDTIME=${{ env.BUILDTIME }}
             AMD64VERSION=v2
           tags: |
-            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64_v2
-            medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64_v2
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v2
+            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64v2
+            medium1992/mihomo-proxy-ros:amd64v2
+            medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64v2
 
       # 9. Сборка и пуш multi-arch (AMD64_v3) + latest
       - name: Build and push mihomo multi-arch
