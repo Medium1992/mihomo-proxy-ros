@@ -261,12 +261,12 @@ EOF
   fi
 
   # SUB_LINK
-  for var in $(env | grep -E '^SUB_LINK[0-9]*=' | sort -t '=' -k1); do
+  env | grep -E '^SUB_LINK[0-9]*=' | sort -t '=' -k1 | while IFS= read var; do
     name=$(echo "$var" | cut -d '=' -f1)
-    value=$(echo "$var" | cut -d '=' -f2- | tr '+' ' ')
+    value=$(echo "$var" | cut -d '=' -f2-)
     url=$(echo "$value" | cut -d '#' -f1)
     headers_raw=$(echo "$value" | cut -d '#' -f2-)
-    headers_clean=$(echo "$headers_raw" | sed 's/^[[:space:]]*#*[[:space:]]*//; s/[[:space:]]*$//' | tr -d ' \t\n\r')
+    headers_clean=$(echo "$headers_raw" | sed 's/^[[:space:]]*#*[[:space:]]*//; s/[[:space:]]*$//' | tr -d '\r')
 
     if [ -n "${SW_ID_FOR_HWID:-}" ]; then
         def_hwid=$(printf '%s' "$SW_ID_FOR_HWID" | busybox sha256sum | busybox cut -c1-16)
