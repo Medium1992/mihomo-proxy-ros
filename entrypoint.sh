@@ -268,8 +268,8 @@ EOF
     headers_raw=$(echo "$value" | cut -d '#' -f2-)
     headers_clean=$(echo "$headers_raw" | sed 's/^[[:space:]]*#*[[:space:]]*//; s/[[:space:]]*$//' | tr -d ' \t\n\r')
 
-    if [ -n "${HWID:-}" ]; then
-        def_hwid=$(printf '%s' "$HWID" | busybox sha256sum | busybox cut -c1-16)
+    if [ -n "${SW_ID_FOR_HWID:-}" ]; then
+        def_hwid=$(printf '%s' "$SW_ID_FOR_HWID" | busybox sha256sum | busybox cut -c1-16)
     else
         def_hwid=""
     fi
