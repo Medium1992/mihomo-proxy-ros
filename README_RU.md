@@ -72,6 +72,7 @@
 
 > **SUB_LINK** с индивидуальными параметрами [x-hwid](https://docs.rw/docs/features/hwid-device-limit), [x-device-os](https://docs.rw/docs/features/hwid-device-limit), [x-ver-os](https://docs.rw/docs/features/hwid-device-limit), [x-device-model](https://docs.rw/docs/features/hwid-device-limit), [User-Agent](https://docs.rw/docs/features/hwid-device-limit) задаются через `#` ```https://...#x-hwid=...#x-device-os=...#x-ver-os=...#x-device-model=...#user-agent=...```
 
+> **WG, AWG** необходимо маунтить конфиги WG, AWG в папку контейнера `/root/.config/mihomo/awg/`, будут созданы прокси-провайдеры в кол-ве файлов конфигов с именами этих файлов.
 
 
 ### Пример вставки в терминал MikroTik
