@@ -268,7 +268,16 @@ EOF
     headers_raw=$(echo "$value" | cut -d '#' -f2-)
     headers_clean=$(echo "$headers_raw" | sed 's/^[[:space:]]*#*[[:space:]]*//; s/[[:space:]]*$//' | tr -d ' \t\n\r')
 
-    def_hwid="${HWID:-}"; def_device_os="${DEVICE_OS:-}"; def_ver_os="${VER_OS:-}"; def_device_model="${DEVICE_MODEL:-}"; def_user_agent="${USER_AGENT:-}"
+    if [ -n "${HWID:-}" ]; then
+        def_hwid=$(printf '%s' "$HWID" | busybox sha256sum | busybox cut -c1-16)
+    else
+        def_hwid=""
+    fi
+    def_device_os="${DEVICE_OS:-}"
+    def_ver_os="${VER_OS:-}"
+    def_device_model="${DEVICE_MODEL:-}"
+    def_user_agent="${USER_AGENT:-}"
+    
     x_hwid=""; x_device_os=""; x_ver_os=""; x_device_model=""; x_user_agent=""
 
     if [ -n "$headers_clean" ]; then
