@@ -15,7 +15,6 @@ RUN git clone https://github.com/MetaCubeX/mihomo.git /src
 WORKDIR /src
 
 # Переключаемся на нужный тэг
-# RUN git fetch --all --tags --prune && git checkout "$TAG"
 RUN git fetch --all --tags --prune && git switch --detach "$TAG" 2>/dev/null || git switch "$TAG"
 RUN echo "Updating version.go with TAG=${TAG}-fakeip-ros and BUILDTIME=${BUILDTIME}" && \
     sed -i "s|Version\s*=.*|Version = \"${TAG}-fakeip-ros\"|" constant/version.go && \
