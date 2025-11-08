@@ -102,6 +102,10 @@ $s
 }
 
 ```
+### Пример docker compose файла
+
+[Docker](https://github.com/Medium1992/mihomo-proxy-ros/blob/main/docker-compose.yml)
+
 ## 💖 Поддержка проекта
 
 Если вам полезен этот проект, вы можете поддержать его донатом:  
