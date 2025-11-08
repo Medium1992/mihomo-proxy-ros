@@ -18,8 +18,8 @@ services:
       DISCORD_GEOSITE: "discord"
       DISCORD_GEOIP: "discord"
       AMAZON_AS: "AS16509"
-      LINK1: " "
-      SUB_LINK1: " "
+      LINK1: " " #paste your link proxy
+      SUB_LINK1: " " #paste your sublink proxyies
     image: ghcr.io/medium1992/mihomo-proxy-ros
     restart: unless-stopped
     container_name: mihomo-proxy-ros
@@ -36,7 +36,7 @@ services:
     image: wiktorbgu/byedpi-mikrotik
     restart: unless-stopped
     container_name: byedpi
-    command: --disorder 1 --fake 0 --ttl 1 --auto=torst --tlsrec 1+s --debug 1
+    command: --disorder 1 --fake 0 --ttl 1 --auto=torst --tlsrec 1+s --debug 1 #paste your strategy BYEDPI
     depends_on:
       - mihomo-proxy-ros
       - dnsproxy
