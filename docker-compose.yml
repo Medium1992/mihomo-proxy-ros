@@ -1,0 +1,71 @@
+services:
+  mihomo-proxy-ros:
+    environment:
+      FAKE_IP_RANGE: "198.18.0.0/15"
+      FAKE_IP_FILTER: "www.youtube.com"
+      LOG_LEVEL: "error"
+      TTL_FAKEIP: "10"
+      BYEDPI: "true"
+      BYEDPI_ADDRESS: "192.168.255.3"
+      BYEDPI_SOCKS_PORT: "1080"
+      GROUP: "youtube,telegram,discord,amazon"
+      YOUTUBE_GEOSITE: "youtube"
+      YOUTUBE_PRIORITY: "1"
+      TELEGRAM_GEOSITE: "telegram"
+      TELEGRAM_GEOIP: "telegram"
+      TELEGRAM_AS: "AS62041,AS59930,AS62014,AS211157,AS44907"
+      TELEGRAM_PRIORITY: "2"
+      DISCORD_GEOSITE: "discord"
+      DISCORD_GEOIP: "discord"
+      AMAZON_AS: "AS16509"
+      LINK1: " "
+      SUB_LINK1: " "
+    image: ghcr.io/medium1992/mihomo-proxy-ros
+    restart: unless-stopped
+    container_name: mihomo-proxy-ros
+    volumes:
+      - ./awg_conf/:/root/.config/mihomo/awg/ #use dir with wg,awg conf
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - ALL
+    networks:
+      macvlan_network:
+        ipv4_address: 192.168.255.2
+
+  byedpi:
+    image: wiktorbgu/byedpi-mikrotik
+    restart: unless-stopped
+    container_name: byedpi
+    command: --disorder 1 --fake 0 --ttl 1 --auto=torst --tlsrec 1+s --debug 1
+    depends_on:
+      - mihomo-proxy-ros
+      - dnsproxy
+    networks:
+      macvlan_network:
+        ipv4_address: 192.168.255.3
+    dns:
+      - 192.168.255.4
+
+  dnsproxy:
+    image: ghcr.io/medium1992/dns-proxy-ros
+    restart: unless-stopped
+    container_name: dnsproxy
+    command: --cache --hosts-files=/hosts --upstream "[/www.youtube.com/]192.168.255.2:53" --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel
+    depends_on:
+      - mihomo-proxy-ros
+    networks:
+      macvlan_network:
+        ipv4_address: 192.168.255.4
+
+
+networks:
+  macvlan_network:
+    driver: macvlan
+    driver_opts:
+      parent: enp1s0 #check name network adapter "ip a"
+    ipam:
+      driver: default
+      config:
+       - subnet: 192.168.255.0/24
+         ip_range: 192.168.255.0/24
+         gateway: 192.168.255.1
