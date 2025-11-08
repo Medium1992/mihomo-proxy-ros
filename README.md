@@ -14,6 +14,7 @@ If you have **AMD64v1** or **AMD64v2**, you need to pull the corresponding tag.
 If you find this project useful, you can support it via donation:  
 **USDT(TRC20): TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ**
 
+
 ## 🌟 Features of the Automated Installation Script for MikroTik Routers
 
 The repository contains an **interactive automated installation script** for **RouterOS MikroTik**,  
@@ -111,3 +112,4 @@ $s
 
 If you find this project useful, you can support it via donation:  
 **USDT(TRC20): TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ**
+
