@@ -505,7 +505,7 @@ EOF
     echo
     echo "rules:"
     if ! lsmod | grep -q '^nft_tproxy'; then
-      echo " - AND,((NETWORK,udp),(DST-PORT,443)),REJECT"
+      echo " - AND,((NETWORK,udp),(DST-PORT,443),(DOMAIN-SUFFIX,googlevideo.com)),REJECT"
     fi
 
     if [ -n "$rule_accum" ]; then
