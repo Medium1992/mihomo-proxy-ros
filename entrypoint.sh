@@ -14,6 +14,13 @@ BYEDPI_SOCKS_PORT="${BYEDPI_SOCKS_PORT:-1080}"
 BYEDPI_YAML="$CONFIG_DIR/byedpi.yaml"
 UI_URL_CHECK="$CONFIG_DIR/.ui_url"
 FAKE_IP_FILTER="${FAKE_IP_FILTER:-}"
+INTERVAL_HEALTHCHECK="${INTERVAL_HEALTHCHECK:-120}"
+URL_HEALTHCHECK="${URL_HEALTHCHECK:-https://www.gstatic.com/generate_204}"
+GROUP_URL="${GROUP_URL:-https://www.gstatic.com/generate_204}"
+GROUP_URL_STATUS="${GROUP_URL_STATUS:-204}"
+GROUP_INTERVAL="${GROUP_INTERVAL:-60}"
+GROUP_TOLERANCE="${GROUP_TOLERANCE:-20}"
+GROUP_STRATEGY="${GROUP_STRATEGY:-consistent-hashing}"
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
@@ -21,9 +28,9 @@ health_check_block() {
   cat <<EOF
     health-check:
       enable: true
-      url: https://www.gstatic.com/generate_204
-      interval: ${INTERVAL:-120}
-      timeout: 5000
+      url: $URL_HEALTHCHECK
+      interval: $INTERVAL_HEALTHCHECK
+      timeout: 1500
       lazy: false
       expected-status: 204
 EOF
@@ -199,7 +206,8 @@ dns:
     - 8.8.8.8
     - 9.9.9.9
     - 1.1.1.1
-  enhanced-mode: fake-ip
+  enhanced-mode: ${DNS_MODE:-fake-ip}
+  fake-ip-filter-mode: ${FAKE_IP_FILTER_MODE:-blacklist}
   fake-ip-range: ${FAKE_IP_RANGE}${FAKE_IP_FILTER:+
   fake-ip-filter:}${FAKE_IP_FILTER:+$(printf '\n    - %s' $(echo "$FAKE_IP_FILTER" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$'))}
   nameserver:
@@ -210,6 +218,14 @@ hosts:
   dns.google: [8.8.8.8, 8.8.4.4]
   dns.quad9.net: [9.9.9.9, 149.112.112.112]
   cloudflare-dns.com: [104.16.248.249, 104.16.249.249]
+
+sniffer:
+  enable: ${SNIFFER:-true}
+  sniff:
+    QUIC:
+    TLS:
+    HTTP:
+
 listeners:
 EOF
 
@@ -336,7 +352,13 @@ EOF
   BYEDPI:
     type: file
     path: $(basename "$BYEDPI_YAML")
-$(health_check_block)
+    health-check:
+      enable: true
+      url: ${URL_HEALTHCHECK_BYEDPI:-https://www.facebook.com}
+      interval: $INTERVAL_HEALTHCHECK
+      timeout: 1500
+      lazy: false
+      expected-status: 200
 EOF
     providers="$providers BYEDPI"
   fi
@@ -350,21 +372,51 @@ $(health_check_block)
 EOF
   providers="$providers DIRECT"
 
-
 # === ГРУППЫ + ПРАВИЛА ===
   {
     echo
     echo "proxy-groups:"
-    echo " - name: GLOBAL"
-    echo "   type: ${GLOBAL_TYPE:-select}"
-    echo "   use:"
+    echo "  - name: GLOBAL"
+    echo "    type: ${GLOBAL_TYPE:-select}"
+    g_type="${GLOBAL_TYPE:-select}"
+    g_tol="${GLOBAL_TOLERANCE:-$GROUP_TOLERANCE}"
+    g_url="${GLOBAL_URL:-$GROUP_URL}"
+    g_status="${GLOBAL_URL_STATUS:-$GROUP_URL_STATUS}"
+    g_interval="${GLOBAL_INTERVAL:-$GROUP_INTERVAL}"
+    g_strategy="${GLOBAL_STRATEGY:-$GROUP_STRATEGY}"
+
+    case "$g_type" in
+      url-test)
+        [ -n "$g_tol" ] && echo "    tolerance: $g_tol"
+        [ -n "$g_url" ] && echo "    url: \"$g_url\""
+        [ -n "$g_status" ] && echo "    expected-status: $g_status"
+        [ -n "$g_interval" ] && echo "    interval: $g_interval"
+        echo "    lazy: false"
+        ;;
+
+      fallback)
+        [ -n "$g_url" ] && echo "    url: \"$g_url\""
+        [ -n "$g_status" ] && echo "    expected-status: $g_status"
+        [ -n "$g_interval" ] && echo "    interval: $g_interval"
+        echo "    lazy: false"
+        ;;
+
+      load-balance)
+        [ -n "$g_url" ] && echo "    url: \"$g_url\""
+        [ -n "$g_status" ] && echo "    expected-status: $g_status"
+        [ -n "$g_interval" ] && echo "    interval: $g_interval"
+        [ -n "$g_strategy" ] && echo "    strategy: $g_strategy"
+        echo "    lazy: false"
+        ;;
+    esac
+    echo "    use:"
     if [ -n "${GLOBAL_USE:-}" ]; then
-      echo "$GLOBAL_USE" | tr ',' '\n' | sed 's/^/     - /'
+      echo "$GLOBAL_USE" | tr ',' '\n' | sed 's/^/      - /'
     else
-      for p in $providers; do echo "     - $p"; done
+      for p in $providers; do echo "      - $p"; done
     fi
-    [ -n "${GLOBAL_FILTER:-}" ] && echo "   filter: $GLOBAL_FILTER"
-    [ -n "${GLOBAL_EXCLUDE:-}" ] && echo "   exclude-filter: $GLOBAL_EXCLUDE"
+    [ -n "${GLOBAL_FILTER:-}" ] && echo "    filter: $GLOBAL_FILTER"
+    [ -n "${GLOBAL_EXCLUDE:-}" ] && echo "    exclude-filter: $GLOBAL_EXCLUDE"
 
     # === Сбор групп с приоритетами (ЛОГИ ВНЕ БЛОКА) ===
     group_prio_list=""
@@ -410,16 +462,59 @@ EOF
       use=$(printenv "${env_name}_USE" || true)
 
       echo
-      echo " - name: $g"
-      echo "   type: $type"
-      [ -n "$filter" ] && echo "   filter: $filter"
-      [ -n "$exclude" ] && echo "   exclude-filter: $exclude"
-      echo "   use:"
+      echo "  - name: $g"
+      echo "    type: $type"
+      g_tol=$(printenv "${env_name}_TOLERANCE" || echo "$GROUP_TOLERANCE")
+      g_url=$(printenv "${env_name}_URL" || echo "$GROUP_URL")
+      g_status=$(printenv "${env_name}_URL_STATUS" || echo "$GROUP_URL_STATUS")
+      g_interval=$(printenv "${env_name}_INTERVAL" || echo "$GROUP_INTERVAL")
+      g_strategy=$(printenv "${env_name}_STRATEGY" || echo "$GROUP_STRATEGY")
+
+      case "$type" in
+        url-test)
+          [ -n "$g_tol" ] && echo "    tolerance: $g_tol"
+          [ -n "$g_url" ] && echo "    url: \"$g_url\""
+          [ -n "$g_status" ] && echo "    expected-status: $g_status"
+          [ -n "$g_interval" ] && echo "    interval: $g_interval"
+          echo "    lazy: false"
+          ;;
+
+        fallback)
+          [ -n "$g_url" ] && echo "    url: \"$g_url\""
+          [ -n "$g_status" ] && echo "    expected-status: $g_status"
+          [ -n "$g_interval" ] && echo "    interval: $g_interval"
+          echo "    lazy: false"
+          ;;
+
+        load-balance)
+          [ -n "$g_url" ] && echo "    url: \"$g_url\""
+          [ -n "$g_status" ] && echo "    expected-status: $g_status"
+          [ -n "$g_interval" ] && echo "    interval: $g_interval"
+          [ -n "$g_strategy" ] && echo "    strategy: $g_strategy"
+          echo "    lazy: false"
+          ;;
+      esac
+
+      [ -n "$filter" ] && echo "    filter: $filter"
+      [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
+      echo "    use:"
       if [ -n "$use" ]; then
-        echo "$use" | tr ',' '\n' | sed 's/^/     - /'
+        echo "$use" | tr ',' '\n' | sed 's/^/      - /'
       else
-        for p in $providers; do echo "     - $p"; done
+        for p in $providers; do echo "      - $p"; done
       fi
+    done
+
+    echo
+    echo "  - name: FINAL"
+    echo "    type: select"
+    echo "    use:"
+    set -- $providers
+    count=$#
+    while [ $count -gt 0 ]; do
+      eval p=\${$count}
+      echo "      - $p"
+      count=$((count - 1))
     done
 
     # === rule-providers + rules ===
@@ -519,7 +614,7 @@ EOF
       echo " - IN-NAME,tun-in,GLOBAL"
       echo " - IN-NAME,mixed-in,GLOBAL"
     fi
-    echo " - MATCH,DIRECT"
+    echo " - MATCH,FINAL"
   } >> "$CONFIG_YAML"
 }
 
