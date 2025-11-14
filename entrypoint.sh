@@ -429,7 +429,7 @@ EOF
 
         env_name=$(echo "$g" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
         has_resource=false
-        for suffix in GEOSITE GEOIP AS; do
+        for suffix in GEOSITE GEOIP AS DOMAIN SUFFIX; do
           if [ -n "$(printenv "${env_name}_${suffix}" 2>/dev/null || echo "")" ]; then
             has_resource=true
             break
@@ -595,27 +595,44 @@ EOF
         rule_accum="$rule_accum
 - RULE-SET,${g}_as_$asn,$g"
       done
+            # === DOMAIN правила ===
+      domain_list=$(printenv "${env_name}_DOMAIN" || echo "")
+      for dm in $(echo "$domain_list" | tr ',' ' '); do
+        dm=$(echo "$dm" | xargs)
+        [ -z "$dm" ] && continue
+        rule_accum="$rule_accum
+- DOMAIN,$dm,$g"
+      done
+
+      # === DOMAIN-SUFFIX правила ===
+      suffix_list=$(printenv "${env_name}_SUFFIX" || echo "")
+      for sf in $(echo "$suffix_list" | tr ',' ' '); do
+        sf=$(echo "$sf" | xargs)
+        [ -z "$sf" ] && continue
+        rule_accum="$rule_accum
+- DOMAIN-SUFFIX,$sf,$g"
+      done
     done
 
     # === rules ===
     echo
     echo "rules:"
     if ! lsmod | grep -q '^nft_tproxy'; then
-      echo " - AND,((NETWORK,udp),(DST-PORT,443),(DOMAIN-SUFFIX,googlevideo.com)),REJECT"
+      echo "  - AND,((NETWORK,udp),(DST-PORT,443),(DOMAIN-SUFFIX,googlevideo.com)),REJECT"
     fi
 
     if [ -n "$rule_accum" ]; then
-      echo "$rule_accum" | sed '1d' | sed 's/^/ /'
+      echo "$rule_accum" | sed '1d' | sed 's/^/  /'
     fi
 
     if lsmod | grep -q '^nft_tproxy'; then
-      echo " - IN-NAME,tproxy-in,GLOBAL"
-      echo " - IN-NAME,mixed-in,GLOBAL"
+      echo "  - IN-NAME,tproxy-in,GLOBAL"
+      echo "  - IN-NAME,mixed-in,GLOBAL"
     else
-      echo " - IN-NAME,tun-in,GLOBAL"
-      echo " - IN-NAME,mixed-in,GLOBAL"
+      echo "  - IN-NAME,tun-in,GLOBAL"
+      echo "  - IN-NAME,mixed-in,GLOBAL"
     fi
-    echo " - MATCH,FINAL"
+    echo "  - MATCH,FINAL"
   } >> "$CONFIG_YAML"
 }
 
