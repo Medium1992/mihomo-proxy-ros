@@ -14,8 +14,9 @@ BYEDPI_SOCKS_PORT="${BYEDPI_SOCKS_PORT:-1080}"
 BYEDPI_YAML="$CONFIG_DIR/byedpi.yaml"
 UI_URL_CHECK="$CONFIG_DIR/.ui_url"
 FAKE_IP_FILTER="${FAKE_IP_FILTER:-}"
-INTERVAL_HEALTHCHECK="${INTERVAL_HEALTHCHECK:-120}"
-URL_HEALTHCHECK="${URL_HEALTHCHECK:-https://www.gstatic.com/generate_204}"
+HEALTHCHECK_INTERVAL="${HEALTHCHECK_INTERVAL:-120}"
+HEALTHCHECK_URL="${HEALTHCHECK_URL:-https://www.gstatic.com/generate_204}"
+HEALTHCHECK_URL_STATUS="${HEALTHCHECK_URL_STATUS:-204}"
 GROUP_URL="${GROUP_URL:-https://www.gstatic.com/generate_204}"
 GROUP_URL_STATUS="${GROUP_URL_STATUS:-204}"
 GROUP_INTERVAL="${GROUP_INTERVAL:-60}"
@@ -28,11 +29,11 @@ health_check_block() {
   cat <<EOF
     health-check:
       enable: true
-      url: $URL_HEALTHCHECK
-      interval: $INTERVAL_HEALTHCHECK
+      url: $HEALTHCHECK_URL
+      interval: $HEALTHCHECK_INTERVAL
       timeout: 1500
       lazy: false
-      expected-status: 204
+      expected-status: $HEALTHCHECK_URL_STATUS
 EOF
 }
 
@@ -354,11 +355,11 @@ EOF
     path: $(basename "$BYEDPI_YAML")
     health-check:
       enable: true
-      url: ${URL_HEALTHCHECK_BYEDPI:-https://www.facebook.com}
-      interval: $INTERVAL_HEALTHCHECK
+      url: ${HEALTHCHECK_URL_BYEDPI:-https://www.facebook.com}
+      interval: $HEALTHCHECK_INTERVAL
       timeout: 1500
       lazy: false
-      expected-status: 200
+      expected-status: ${HEALTHCHECK_URL_STATUS_BYEDPI:-200}
 EOF
     providers="$providers BYEDPI"
   fi
