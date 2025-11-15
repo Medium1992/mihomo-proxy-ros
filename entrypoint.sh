@@ -131,16 +131,38 @@ parse_awg_config() {
 
   [ -n "$dns" ] && echo "    dns: [ $dns ]"
   echo "    remote-dns-resolve: true"
-  echo "    amnezia-wg-option:"
+  awg_params="jc jmin jmax s1 s2 h1 h2 h3 h4 i1 i2 i3 i4 i5 j1 j2 j3 itime"
 
-  [ -n "$jc" ] && echo "      jc: $jc"
-  [ -n "$jmin" ] && echo "      jmin: $jmin"
-  [ -n "$jmax" ] && echo "      jmax: $jmax"
-
-  for v in s1 s2 h1 h2 h3 h4 i1 i2 i3 i4 i5 j1 j2 j3 itime; do
-    eval val=\$$v
-    [ -n "$val" ] && echo "      $v: \"$val\""
+  # Проверяем, есть ли хотя бы один параметр
+  awg_has_value=false
+  for v in $awg_params; do
+      eval val=\$$v
+      if [ -n "$val" ]; then
+          awg_has_value=true
+          break
+      fi
   done
+
+  # Если параметров нет — ничего не выводим
+  if $awg_has_value; then
+      echo "    amnezia-wg-option:"
+
+      for v in $awg_params; do
+          eval val=\$$v
+          [ -n "$val" ] || continue
+
+          case "$v" in
+              jc|jmin|jmax)
+                  # ненужные кавычки, выводим как число
+                  echo "      $v: $val"
+                  ;;
+              *)
+                  # все остальные — в кавычках
+                  echo "      $v: \"$val\""
+                  ;;
+          esac
+      done
+  fi
 }
 
 generate_awg_providers() {
