@@ -183,7 +183,7 @@ add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0
 :put "Add env BYEDPI_ADDRESS value: 192.168.255.6"} on-error {}
 :do {add key=BYEDPI_SOCKS_PORT list=MihomoProxyRoS value=1080
 :put "Add env BYEDPI_SOCKS_PORT: 1080"} on-error {}
-:do { add key=GROUP list=MihomoProxyRoS value=youtube,telegram,discord,amazon
+:do { add key=GROUP list=MihomoProxyRoS value=youtube,telegram,discord
 :put "Add env GROUP value: youtube,telegram,discord,amazon"} on-error {}
 :do { add key=YOUTUBE_GEOSITE list=MihomoProxyRoS value=youtube
 :put "Add env YOUTUBE_GEOSITE value: youtube"} on-error {}
@@ -201,8 +201,6 @@ add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0
 :put "Add env DISCORD_GEOSITE value: telegram"} on-error {}
 :do { add key=DISCORD_GEOIP list=MihomoProxyRoS value=discord
 :put "Add env DISCORD_GEOIP value: telegram"} on-error {}
-:do { add key=AMAZON_AS list=MihomoProxyRoS value=AS16509
-:put "Add env AMAZON_AS value: AS16509"} on-error {}
 :do { add key=SW_ID_FOR_HWID list=MihomoProxyRoS value=$softid
 :put "Add env SW_ID_FOR_HWID value: $softid"} on-error {}
 :do { add key=DEVICE_OS list=MihomoProxyRoS value=RouterOS
@@ -399,7 +397,6 @@ add name=FWD_update source="# Define global variables\r\
 \n\"canva\";\r\
 \n\"art\";\r\
 \n\"tidal\";\r\
-\n\"spotify\";\r\
 \n\"tiktok\";\r\
 \n\"music\";\r\
 \n\"x\";\r\
