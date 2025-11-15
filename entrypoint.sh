@@ -74,70 +74,72 @@ EOF
 parse_awg_config() {
   local config_file="$1"
   local awg_name=$(basename "$config_file" .conf)
-  local private_key=$(grep -E "^PrivateKey" "$config_file" | sed 's/^PrivateKey[[:space:]]*=[[:space:]]*//')
-  local address=$(grep -E "^Address" "$config_file" | sed 's/^Address[[:space:]]*=[[:space:]]*//')
+
+  # Функция для чтения ключа (без вывода пустых)
+  read_cfg() {
+    grep -E "^$1" "$config_file" | sed "s/^$1[[:space:]]*=[[:space:]]*//"
+  }
+
+  local private_key=$(read_cfg "PrivateKey")
+  local address=$(read_cfg "Address")
   address=$(echo "$address" | tr ',' '\n' | grep -v ':' | head -n1)
-  local dns=$(grep -E "^DNS" "$config_file" | sed 's/^DNS[[:space:]]*=[[:space:]]*//')
+  local dns=$(read_cfg "DNS")
   dns=$(echo "$dns" | tr ',' '\n' | grep -v ':' | sed 's/^ *//;s/ *$//' | paste -sd, -)
-  local mtu=$(grep -E "^MTU" "$config_file" | sed 's/^MTU[[:space:]]*=[[:space:]]*//')
-  local jc=$(grep -E "^Jc" "$config_file" | sed 's/^Jc[[:space:]]*=[[:space:]]*//')
-  local jmin=$(grep -E "^Jmin" "$config_file" | sed 's/^Jmin[[:space:]]*=[[:space:]]*//')
-  local jmax=$(grep -E "^Jmax" "$config_file" | sed 's/^Jmax[[:space:]]*=[[:space:]]*//')
-  local s1=$(grep -E "^S1" "$config_file" | sed 's/^S1[[:space:]]*=[[:space:]]*//')
-  local s2=$(grep -E "^S2" "$config_file" | sed 's/^S2[[:space:]]*=[[:space:]]*//')
-  local h1=$(grep -E "^H1" "$config_file" | sed 's/^H1[[:space:]]*=[[:space:]]*//')
-  local h2=$(grep -E "^H2" "$config_file" | sed 's/^H2[[:space:]]*=[[:space:]]*//')
-  local h3=$(grep -E "^H3" "$config_file" | sed 's/^H3[[:space:]]*=[[:space:]]*//')
-  local h4=$(grep -E "^H4" "$config_file" | sed 's/^H4[[:space:]]*=[[:space:]]*//')
-  local i1=$(grep -E "^I1" "$config_file" | sed 's/^I1[[:space:]]*=[[:space:]]*//')
-  local i2=$(grep -E "^I2" "$config_file" | sed 's/^I2[[:space:]]*=[[:space:]]*//')
-  local i3=$(grep -E "^I3" "$config_file" | sed 's/^I3[[:space:]]*=[[:space:]]*//')
-  local i4=$(grep -E "^I4" "$config_file" | sed 's/^I4[[:space:]]*=[[:space:]]*//')
-  local i5=$(grep -E "^I5" "$config_file" | sed 's/^I5[[:space:]]*=[[:space:]]*//')
-  local j1=$(grep -E "^J1" "$config_file" | sed 's/^J1[[:space:]]*=[[:space:]]*//')
-  local j2=$(grep -E "^J2" "$config_file" | sed 's/^J2[[:space:]]*=[[:space:]]*//')
-  local j3=$(grep -E "^J3" "$config_file" | sed 's/^J3[[:space:]]*=[[:space:]]*//')
-  local itime=$(grep -E "^itime" "$config_file" | sed 's/^itime[[:space:]]*=[[:space:]]*//')
-  local public_key=$(grep -E "^PublicKey" "$config_file" | sed 's/^PublicKey[[:space:]]*=[[:space:]]*//')
-  local psk=$(grep -E "^PresharedKey" "$config_file" | sed 's/^PresharedKey[[:space:]]*=[[:space:]]*//')
-  local endpoint=$(grep -E "^Endpoint" "$config_file" | sed 's/^Endpoint[[:space:]]*=[[:space:]]*//')
+
+  local mtu=$(read_cfg "MTU")
+  local jc=$(read_cfg "Jc")
+  local jmin=$(read_cfg "Jmin")
+  local jmax=$(read_cfg "Jmax")
+  local s1=$(read_cfg "S1")
+  local s2=$(read_cfg "S2")
+  local h1=$(read_cfg "H1")
+  local h2=$(read_cfg "H2")
+  local h3=$(read_cfg "H3")
+  local h4=$(read_cfg "H4")
+  local i1=$(read_cfg "I1")
+  local i2=$(read_cfg "I2")
+  local i3=$(read_cfg "I3")
+  local i4=$(read_cfg "I4")
+  local i5=$(read_cfg "I5")
+  local j1=$(read_cfg "J1")
+  local j2=$(read_cfg "J2")
+  local j3=$(read_cfg "J3")
+  local itime=$(read_cfg "ITime")
+
+  local public_key=$(read_cfg "PublicKey")
+  local psk=$(read_cfg "PresharedKey")
+  local endpoint=$(read_cfg "Endpoint")
+
   local server=$(echo "$endpoint" | cut -d':' -f1)
   local port=$(echo "$endpoint" | cut -d':' -f2)
 
-  cat <<EOF
-  - name: "$awg_name"
-    type: wireguard
-    private-key: $private_key
-    server: $server
-    port: $port
-    ip: $address
-    mtu: ${mtu:-1420}
-    public-key: $public_key
-    allowed-ips: ['0.0.0.0/0']
-$(if [ -n "$psk" ]; then echo "    pre-shared-key: $psk"; fi)
-    udp: true
-    dns: [ $dns ]
-    remote-dns-resolve: true
-    amnezia-wg-option:
-      jc: ${jc:-4}
-      jmin: ${jmin:-40}
-      jmax: ${jmax:-70}
-      s1: ${s1:-0}
-      s2: ${s2:-0}
-      h1: ${h1:-1}
-      h2: ${h2:-2}
-      h3: ${h3:-3}
-      h4: ${h4:-4}
-      i1: "${i1:-""}"
-      i2: "${i2:-""}"
-      i3: "${i3:-""}"
-      i4: "${i4:-""}"
-      i5: "${i5:-""}"
-      j1: "${j1:-""}"
-      j2: "${j2:-""}"
-      j3: "${j3:-""}"
-      itime: ${itime:-"0"}
-EOF
+  echo "  - name: \"$awg_name\""
+  echo "    type: wireguard"
+
+  [ -n "$private_key" ] && echo "    private-key: $private_key"
+  [ -n "$server" ] && echo "    server: $server"
+  [ -n "$port" ] && echo "    port: $port"
+  [ -n "$address" ] && echo "    ip: $address"
+  [ -n "$mtu" ] && echo "    mtu: $mtu"
+  [ -n "$public_key" ] && echo "    public-key: $public_key"
+
+  echo "    allowed-ips: ['0.0.0.0/0']"
+  [ -n "$psk" ] && echo "    pre-shared-key: $psk"
+
+  echo "    udp: true"
+
+  [ -n "$dns" ] && echo "    dns: [ $dns ]"
+  echo "    remote-dns-resolve: true"
+  echo "    amnezia-wg-option:"
+
+  [ -n "$jc" ] && echo "      jc: $jc"
+  [ -n "$jmin" ] && echo "      jmin: $jmin"
+  [ -n "$jmax" ] && echo "      jmax: $jmax"
+
+  for v in s1 s2 h1 h2 h3 h4 i1 i2 i3 i4 i5 j1 j2 j3 itime; do
+    eval val=\$$v
+    [ -n "$val" ] && echo "      $v: \"$val\""
+  done
 }
 
 generate_awg_providers() {
