@@ -410,14 +410,16 @@ EOF
         echo "    lazy: false"
         ;;
     esac
+    [ -n "${GLOBAL_FILTER:-}" ] && echo "    filter: $GLOBAL_FILTER"
+    [ -n "${GLOBAL_EXCLUDE:-}" ] && echo "    exclude-filter: $GLOBAL_EXCLUDE"
+    [ -n "${GLOBAL_EXCLUDE_TYPE:-}" ] && echo "    exclude-type: $GLOBAL_EXCLUDE_TYPE"
     echo "    use:"
     if [ -n "${GLOBAL_USE:-}" ]; then
       echo "$GLOBAL_USE" | tr ',' '\n' | sed 's/^/      - /'
     else
       for p in $providers; do echo "      - $p"; done
     fi
-    [ -n "${GLOBAL_FILTER:-}" ] && echo "    filter: $GLOBAL_FILTER"
-    [ -n "${GLOBAL_EXCLUDE:-}" ] && echo "    exclude-filter: $GLOBAL_EXCLUDE"
+
 
     # === Сбор групп с приоритетами (ЛОГИ ВНЕ БЛОКА) ===
     group_prio_list=""
@@ -429,7 +431,7 @@ EOF
 
         env_name=$(echo "$g" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
         has_resource=false
-        for suffix in GEOSITE GEOIP AS DOMAIN SUFFIX; do
+        for suffix in GEOSITE GEOIP AS DOMAIN SUFFIX IPCIDR; do
           if [ -n "$(printenv "${env_name}_${suffix}" 2>/dev/null || echo "")" ]; then
             has_resource=true
             break
@@ -460,6 +462,7 @@ EOF
       type=$(printenv "${env_name}_TYPE" || echo "select")
       filter=$(printenv "${env_name}_FILTER" || true)
       exclude=$(printenv "${env_name}_EXCLUDE" || true)
+      exclude_type=$(printenv "${env_name}_EXCLUDE_TYPE" || true)
       use=$(printenv "${env_name}_USE" || true)
 
       echo
@@ -498,24 +501,13 @@ EOF
 
       [ -n "$filter" ] && echo "    filter: $filter"
       [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
+      [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
       echo "    use:"
       if [ -n "$use" ]; then
         echo "$use" | tr ',' '\n' | sed 's/^/      - /'
       else
         for p in $providers; do echo "      - $p"; done
       fi
-    done
-
-    echo
-    echo "  - name: FINAL"
-    echo "    type: select"
-    echo "    use:"
-    set -- $providers
-    count=$#
-    while [ $count -gt 0 ]; do
-      eval p=\${$count}
-      echo "      - $p"
-      count=$((count - 1))
     done
 
     # === rule-providers + rules ===
@@ -612,6 +604,15 @@ EOF
         rule_accum="$rule_accum
 - DOMAIN-SUFFIX,$sf,$g"
       done
+
+      # === IP-CIDR правила ===
+      ipcidr_list=$(printenv "${env_name}_IPCIDR" || echo "")
+      for ipcidr in $(echo "$ipcidr_list" | tr ',' ' '); do
+        ipcidr=$(echo "$ipcidr" | xargs)
+        [ -z "$ipcidr" ] && continue
+        rule_accum="$rule_accum
+- IP-CIDR,$ipcidr,$g",no-resolve
+      done
     done
 
     # === rules ===
@@ -632,7 +633,7 @@ EOF
       echo "  - IN-NAME,tun-in,GLOBAL"
       echo "  - IN-NAME,mixed-in,GLOBAL"
     fi
-    echo "  - MATCH,FINAL"
+    echo "  - MATCH,DIRECT"
   } >> "$CONFIG_YAML"
 }
 
