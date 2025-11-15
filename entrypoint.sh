@@ -75,9 +75,10 @@ parse_awg_config() {
   local config_file="$1"
   local awg_name=$(basename "$config_file" .conf)
 
-  # Функция для чтения ключа (без вывода пустых)
+  # Чтение параметра WG/AWG без учёта регистра
   read_cfg() {
-    grep -E "^$1" "$config_file" | sed "s/^$1[[:space:]]*=[[:space:]]*//"
+    local key="$1"
+    grep -Ei "^${key}[[:space:]]*=" "$config_file" | sed -E "s/^${key}[[:space:]]*=[[:space:]]*//I"
   }
 
   local private_key=$(read_cfg "PrivateKey")
