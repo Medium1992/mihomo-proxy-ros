@@ -465,7 +465,7 @@ add name=FWD_update source="# Define global variables\r\
 add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-event="/system/script/run FWD_update\r\
 \n/system/script/run IP_MihomoProxyRoS\r\
 \n/system/script/run IP_Telegram"
-:put "Add shedule update resources on 06:30 AM every day"
+:put "Add schedule update resources on 06:30 AM every day"
 } on-error {} 
 
 :local flagContainer false
