@@ -1,4 +1,4 @@
-name: Manual Build and Publish Multi-Arch Docker Images
+name: Manual Old branche Build and Publish Multi-Arch Docker Images
 
 on:
   workflow_dispatch: # Ручной запуск
@@ -43,7 +43,9 @@ jobs:
           
       - name: Checkout code
         uses: actions/checkout@v5
-
+        with:
+            ref: old
+            
       # 3. Устанавливаем Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -82,10 +84,10 @@ jobs:
             BUILDTIME=${{ env.BUILDTIME }}
             AMD64VERSION=v1
           tags: |
-            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64v1
-            ghcr.io/medium1992/mihomo-proxy-ros:amd64v1
-            medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64v1
-            medium1992/mihomo-proxy-ros:amd64v1
+            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64v1-old
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-old
+            medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64v1-old
+            medium1992/mihomo-proxy-ros:amd64v1-old
 
       # 8. Сборка и пуш AMD64_v2
       - name: Build and push mihomo AMD64_v2
@@ -100,10 +102,10 @@ jobs:
             BUILDTIME=${{ env.BUILDTIME }}
             AMD64VERSION=v2
           tags: |
-            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64v2
-            ghcr.io/medium1992/mihomo-proxy-ros:amd64v2
-            medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64v2
-            medium1992/mihomo-proxy-ros:amd64v2
+            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64v2-old
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-old
+            medium1992/mihomo-proxy-ros:${{ env.VERSION }}-amd64v2-old
+            medium1992/mihomo-proxy-ros:amd64v2-old
 
       # 9. Сборка и пуш multi-arch (AMD64_v3) + latest
       - name: Build and push mihomo multi-arch
@@ -118,10 +120,10 @@ jobs:
             BUILDTIME=${{ env.BUILDTIME }}
             AMD64VERSION=v3
           tags: |
-            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.VERSION }}
-            ghcr.io/medium1992/mihomo-proxy-ros:latest          
-            medium1992/mihomo-proxy-ros:${{ env.VERSION }}
-            medium1992/mihomo-proxy-ros:latest
+            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.VERSION }}-old
+            ghcr.io/medium1992/mihomo-proxy-ros:latest-old
+            medium1992/mihomo-proxy-ros:${{ env.VERSION }}-old
+            medium1992/mihomo-proxy-ros:latest-old
 
       - name: Log in to GHCR with crane
         run: echo "${GITHUB_TOKEN}" | crane auth login ghcr.io -u ${PACKAGE_OWNER} --password-stdin
