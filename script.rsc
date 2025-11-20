@@ -34,6 +34,9 @@
 foreach i in=[/disk/find where fs=ext4 free>80914560] do={
 :set slotArray ($slotArray, [/disk/get [find where fs=ext4 free>80914560] value-name=slot]);
 }
+foreach i in=[/disk/find where fs=tmpfs free>80914560] do={
+:set slotArray ($slotArray, [/disk/get [find where fs=tmpfs free>80914560] value-name=slot]);
+}
 :while ($flagDisks=false) do={
 :put "Enter the name of the disk slot to which you want to pull the containers. Possible options slot:"
 foreach i in=$slotArray do={:put "- $i"}
