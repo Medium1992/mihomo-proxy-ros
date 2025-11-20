@@ -2,7 +2,7 @@
 
 👉 Ознакомьтесь с [Кодексом поведения](./CODE_OF_CONDUCT.md) перед участием в проекте.
 
-**mihomo-proxy-ros** — это мультиархитектурный Docker-контейнер на базе **Mihomo**,  
+**mihomo-proxy-ros** — это мультиархитектурный Docker-контейнер на базе **Mihomo** и **byedpi** в одном контейнере,  
 поддерживающий платформы **ARM**, **ARM64**, **AMD64v1**, **AMD64v2** и **AMD64v3**.  
 Тег latest включает в себя **ARM**, **ARM64**, **AMD64v3**.  
 Если у вас **AMD64v1**,**AMD64v2** то необходимо запулить соответствующий тэг.
@@ -15,12 +15,12 @@
 ## 🌟 Особенности скрипта автоматизированной установки на роутеры MikroTik
 
 В репозитории доступен **интерактивный скрипт автоматизированной установки** для **RouterOS MikroTik**,  
-который также устанавливает **ByeDPI** и **dnsproxy** от **AdGuardHome**.
+который также устанавливает по желанию **dnsproxy** от **AdGuardHome**.
 
 - 🌍 Мультиархитектура: ARM, ARM64, AMD64v1-v3
 - ⚙️ Автоматизированная установка через терминал MikroTik с использованием скрипта в конце описания
 - 🔐 Обход DPI с помощью ByeDPI (спасибо за контейнер [wiktorbgu](https://hub.docker.com/r/wiktorbgu/byedpi-mikrotik), вы можете изменить стратегию в CMD контейнера)
-- 🌐 DNSProxy: мультирезолв с нескольких DNS-серверов, поддержка всех протоколов DNS
+- 🌐 DNSProxy: мультирезолв с нескольких DNS-серверов, поддержка всех протоколов DNS (Установка по желанию)
 - 🧩 Гибкая маршрутизация и управление пулом доменов, ip, AS через ENVs
 - 🛡️ Возможность добавления нескольких прокси-ссылок, а также подписок(включая подписки RemnaWave с HWID) через ENVs
 - 🚀 Интеграция множества WG, AWG VPN посредством копирования конфиг файлов в mount папку.
@@ -50,19 +50,18 @@
 | `DNS_MODE`             | `fake-ip`                             | Режим работы DNS сервера [DOCs](https://wiki.metacubex.one/ru/config/dns/#enhanced-mode) |
 | `SNIFFER`              | `true`                                | [Сниффер доменов](https://wiki.metacubex.one/ru/config/sniff). Применяется при роутинге по доменам, когда домен резолвил не mihomo |
 | `FAKE_IP_RANGE`        | `198.18.0.0/15`                       | Диапазон Fake-IP пула [DOCs](https://wiki.metacubex.one/ru/config/dns/#fake-ip-range) |
-| `TTL_FAKEIP`           | `1`                                   | Время жизни записи с FakeIP в кеше DNS в секундах |
 | `FAKE_IP_FILTER`       | —                                     | Список доменов через запятую, исключённых из Fake-IP [DOCs](https://wiki.metacubex.one/ru/config/dns/#fake-ip-filter). При выполнении скрипта задается `www.youtube.com` из-за особенностей работы youtube на телевизорах через BYEDPI и необходимости изменять MSS |
 | `FAKE_IP_FILTER_MODE`  | `blacklist`                           | Режим работы fakeip filter [DOCs](https://wiki.metacubex.one/ru/config/dns/#fake-ip-filter-mode-blacklist) |
 | `EXTERNAL_UI_URL`      | [ссылка](https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip) | Ссылка на веб-интерфейс (zip-архив) [DOCs](https://wiki.metacubex.one/ru/config/general/#url) |
 | `LOG_LEVEL`            | `error`                               | Уровень логов mihomo (`silent`, `error`, `warning`, `info`, `debug`) [DOCs](https://wiki.metacubex.one/ru/config/general/#_5) |
 | `HEALTHCHECK_URL`      | `https://www.gstatic.com/generate_204`| [URL health-check](https://wiki.metacubex.one/ru/config/proxy-providers/#health-checkurl) |
-| `HEALTHCHECK_URL_STATUS`| `204`                                 | Ожидаемый статус health-check [DOCs](https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status) |
+| `HEALTHCHECK_URL_STATUS`| `204`                                | Ожидаемый статус health-check [DOCs](https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status) |
 | `HEALTHCHECK_INTERVAL` | `120`                                 | Интервал health-check в секундах [DOCs](https://wiki.metacubex.one/ru/config/proxy-providers/#health-checkinterval) |
-| `HEALTHCHECK_URL_BYEDPI`      | `https://www.facebook.com`| [URL health-check](https://wiki.metacubex.one/ru/config/proxy-providers/#health-checkurl) для прокси-провайдера BYEDPI |
-| `HEALTHCHECK_URL_STATUS_BYEDPI`| `200`                                 | Ожидаемый статус health-check [DOCs](https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status) для прокси-провайдера BYEDPI |
-| `BYEDPI`               | `false`                               | Включить прокси через byeDPI (`true`/`false`). Добавляет [прокси-провайдера](https://wiki.metacubex.one/ru/config/proxy-providers) типа [SOCKS5](https://wiki.metacubex.one/ru/config/proxies/socks) с именем `BYEDPI` |
-| `BYEDPI_ADDRESS`       | `192.168.255.6`                       | IP-адрес server для [прокси-провайдера](https://wiki.metacubex.one/ru/config/proxy-providers) `BYEDPI` |
-| `BYEDPI_SOCKS_PORT`    | `1080`                                | Порт SOCKS5 сервера [прокси-провайдера](https://wiki.metacubex.one/ru/config/proxy-providers) `BYEDPI` |
+| `HEALTHCHECK_URL_BYEDPI`| `https://www.facebook.com`           | [URL health-check](https://wiki.metacubex.one/ru/config/proxy-providers/#health-checkurl) для прокси-провайдера BYEDPI |
+| `HEALTHCHECK_URL_STATUS_BYEDPI`| `200`                         | Ожидаемый статус health-check [DOCs](https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status) для прокси-провайдера BYEDPI |
+| `BYEDPI`               | `false`                               | Включить прокси через byeDPI (`true`/`false`). Добавляет [прокси-провайдера](https://wiki.metacubex.one/ru/config/proxy-providers) типа [DIRECT](https://wiki.metacubex.one/ru/config/proxies/direct) с именем `BYEDPI` |
+| `BYEDPI_CMD`           | —                                     | Стратегия [BYEDPI](https://github.com/hufrea/byedpi) работает только для TCP через mihomo |
+| `BYEDPI_CMD_UDP`       | ENV `BYEDPI_CMD`                      | Стратегия [BYEDPI](https://github.com/hufrea/byedpi) работает только для UDP через mihomo а также для TCP и UDP по socks5 порт :1090 |
 | `LINK0`, `LINK1`...    | —                                     | Прокси-ссылки `vless://`, `vmess://`, `ss://`, `trojan://`... Для каждой прокси-ссылке создается отдельный [прокси-провайдер](https://wiki.metacubex.one/ru/config/proxy-providers) |
 | `SUB_LINK0`, `SUB_LINK1`... | —                                | Подписки типа `http(s)://`... Для каждой подписки создается отдельный [прокси-провайдер](https://wiki.metacubex.one/ru/config/proxy-providers). Имеется поддержка задания [HWID](https://docs.rw/docs/features/hwid-device-limit) каждой подписке отдельно|
 | `SW_ID_FOR_HWID`       | —                                     | Задание любого значения которое зашифруется автоматически для header [x-hwid](https://docs.rw/docs/features/hwid-device-limit) (sha256[:16]). По умолчанию будет автоматически добавляться header [x-hwid](https://docs.rw/docs/features/hwid-device-limit) для любого запроса подписок `SUB_LINK`, если в ENV `SUB_LINK` не были заданы индивидуальные значения. В выполнении скрипта в этот ENV записывается `Software ID` роутера Mikrotik |
@@ -91,6 +90,7 @@
 | `XXX_AS`               | —                                     | Список [AS](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/asn) через запятую для [прокси-группы](https://wiki.metacubex.one/ru/config/proxy-groups) `XXX`. Фактически создает [rule-set](https://wiki.metacubex.one/ru/config/rules/#rule-set) формата rms и соответствующие правила маршрутизации [rules](https://wiki.metacubex.one/ru/config/rules) в [прокси-группу](https://wiki.metacubex.one/ru/config/proxy-groups), где `XXX`-[имя прокси-группы](https://wiki.metacubex.one/ru/config/proxy-groups/#name) которое задаешь в ENV `GROUP`. Например для `GROUP` `...,telegram,...` `TELEGRAM_AS` со значением `AS62041,AS59930,AS62014,AS211157,AS44907` подгрузит список пулов IP `AS62041`,`AS59930`,`AS62014`,`AS211157`,`AS44907` и будет маршрутизировать их в прокси-провайдера `TELEGRAM` |
 | `XXX_DOMAIN`           | —                                     | Список [доменов](https://wiki.metacubex.one/ru/config/rules/#domain) через запятую для [прокси-группы](https://wiki.metacubex.one/ru/config/proxy-groups) `XXX`. Фактически создает соответствующие правила маршрутизации [rules](https://wiki.metacubex.one/ru/config/rules) в [прокси-группу](https://wiki.metacubex.one/ru/config/proxy-groups), где `XXX`-[имя прокси-группы](https://wiki.metacubex.one/ru/config/proxy-groups/#name) которое задаешь в ENV `GROUP`. Например для `GROUP` `...,telegram,...` `TELEGRAM_DOMAIN` со значением `telegram.org,telegram.com` будет маршрутизировать заданные домены в прокси-провайдера `TELEGRAM` |
 | `XXX_SUFFIX`           | —                                     | Список [доменов](https://wiki.metacubex.one/ru/config/rules/#domain-suffix) через запятую для [прокси-группы](https://wiki.metacubex.one/ru/config/proxy-groups) `XXX`. Фактически создает соответствующие правила маршрутизации [rules](https://wiki.metacubex.one/ru/config/rules) в [прокси-группу](https://wiki.metacubex.one/ru/config/proxy-groups), где `XXX`-[имя прокси-группы](https://wiki.metacubex.one/ru/config/proxy-groups/#name) которое задаешь в ENV `GROUP`. Например для `GROUP` `...,telegram,...` `TELEGRAM_SUFFIX` со значением `telegram.org,telegram.com` будет маршрутизировать заданные домены и их поддомены в прокси-провайдера `TELEGRAM` |
+| `XXX_KEYWORD`           | —                                     | Список [ключевых слов](https://wiki.metacubex.one/ru/config/rules/#domain-keyword) через запятую для [прокси-группы](https://wiki.metacubex.one/ru/config/proxy-groups) `XXX`. Фактически создает соответствующие правила маршрутизации [rules](https://wiki.metacubex.one/ru/config/rules) в [прокси-группу](https://wiki.metacubex.one/ru/config/proxy-groups), где `XXX`-[имя прокси-группы](https://wiki.metacubex.one/ru/config/proxy-groups/#name) которое задаешь в ENV `GROUP`. Например для `GROUP` `...,telegram,...` `TELEGRAM_KEYWORD` со значением `telegram` будет маршрутизировать домены которые содержат слово `telegram` в прокси-провайдера `TELEGRAM` |
 | `XXX_IPCIDR`           | —                                     | Список [IP-CIDR](https://wiki.metacubex.one/ru/config/rules/#ip-cidr-ip-cidr6) через запятую для [прокси-группы](https://wiki.metacubex.one/ru/config/proxy-groups) `XXX`. Фактически создает соответствующие правила маршрутизации [rules](https://wiki.metacubex.one/ru/config/rules) в [прокси-группу](https://wiki.metacubex.one/ru/config/proxy-groups), где `XXX`-[имя прокси-группы](https://wiki.metacubex.one/ru/config/proxy-groups/#name) которое задаешь в ENV `GROUP`. Например для `GROUP` `...,telegram,...` `TELEGRAM_IPCIDR` со значением `91.108.4.0/22,91.108.56.0/22` будет маршрутизировать заданные подсети в прокси-провайдера `TELEGRAM` |
 | `XXX_PRIORITY`         | —                                     | Приоритет [прокси-группы](https://wiki.metacubex.one/ru/config/proxy-groups) `XXX`, в части порядка правил в [rules](https://wiki.metacubex.one/ru/config/rules). Например, `YOUTUBE_PRIORITY` со значением `1` `TELEGRAM_PRIORITY` со значением `2` создадут правила в [rules](https://wiki.metacubex.one/ru/config/rules) по очереди сначала `YOUTUBE`, потом `TELEGRAM` |
 
