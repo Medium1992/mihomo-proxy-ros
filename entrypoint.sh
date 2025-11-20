@@ -311,7 +311,7 @@ EOF
       for pair in $headers_clean; do
         [ -z "$pair" ] && continue
         key=$(echo "$pair" | cut -d'=' -f1)
-        val=$(echo "$pair" | cut -d'=' -f2- | tr '+' ' ')
+        val=$(echo "$pair" | cut -d'=' -f2-)
         case "$key" in
           x-hwid) x_hwid="$val" ;;
           x-device-os) x_device_os="$val" ;;
@@ -355,6 +355,62 @@ EOF
   # AWG
   awg_provs=$(generate_awg_providers)
   providers="${providers}${awg_provs}"
+
+# SOCKS5
+  while IFS= read -r var; do
+    name=$(echo "$var" | cut -d '=' -f1)
+    value=$(echo "$var" | cut -d '=' -f2-)
+    server=""
+    port=""
+    username=""
+    password=""
+    tls=""
+    fingerprint=""
+    skip_cert_verify=""
+    udp="true"
+    ip_version="ipv4"
+    OLDIFS=$IFS
+    IFS='#'
+    for pair in $value; do
+      [ -z "$pair" ] && continue
+      key=$(echo "$pair" | cut -d'=' -f1 | xargs)
+      val=$(echo "$pair" | cut -d'=' -f2- | xargs)
+      case "$key" in
+        server)           server="$val" ;;
+        port)             port="$val" ;;
+        username)         username="$val" ;;
+        password)         password="$val" ;;
+        tls)              tls="$val" ;;
+        fingerprint)      fingerprint="$val" ;;
+        skip-cert-verify) skip_cert_verify="$val" ;;
+        udp)              udp="$val" ;;
+        ip-version)       ip_version="$val" ;;
+      esac
+    done
+    IFS=$OLDIFS
+    yaml_file="$CONFIG_DIR/${name}.yaml"
+    {
+      echo "proxies:"
+      echo "  - name: \"$name\""
+      echo "    type: socks5"
+      echo "    server: $server"
+      echo "    port: $port"
+      echo "    udp: $udp"
+      echo "    ip-version: $ip_version"
+      [ -n "$username" ] && echo "    username: $username"
+      [ -n "$password" ] && echo "    password: $password"
+      [ -n "$tls" ] && echo "    tls: $tls"
+      [ -n "$fingerprint" ] && echo "    fingerprint: $fingerprint"
+      [ -n "$skip_cert_verify" ] && echo "    skip-cert-verify: $skip_cert_verify"
+    } > "$yaml_file"
+    cat >> "$CONFIG_YAML" <<EOF
+  $name:
+    type: file
+    path: ${name}.yaml
+$(health_check_block)
+EOF
+    providers="$providers $name"
+  done < <(env | grep -E '^SOCKS[0-9]+=' | sort -V)
 
   # BYEDPI
   if [ "$BYEDPI" = "true" ]; then
@@ -426,7 +482,7 @@ EOF
 
         env_name=$(echo "$g" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
         has_resource=false
-        for suffix in GEOSITE GEOIP AS DOMAIN SUFFIX IPCIDR KEYWORD; do
+        for suffix in GEOSITE GEOIP AS DOMAIN SUFFIX IPCIDR KEYWORD SRCIPCIDR; do
           if [ -n "$(printenv "${env_name}_${suffix}" 2>/dev/null || echo "")" ]; then
             has_resource=true
             break
@@ -605,6 +661,15 @@ EOF
         [ -z "$ipcidr" ] && continue
         custom_payload="$custom_payload
       - IP-CIDR,$ipcidr,no-resolve"
+      done
+
+      # SRC-IP-CIDR
+      srcipcidr_list=$(printenv "${env_name}_SRCIPCIDR" || echo "")
+      for srcipcidr in $(echo "$srcipcidr_list" | tr ',' ' '); do
+        srcipcidr=$(echo "$srcipcidr" | xargs)
+        [ -z "$srcipcidr" ] && continue
+        custom_payload="$custom_payload
+      - SRC-IP-CIDR,$srcipcidr"
       done
 
       if [ -n "$custom_payload" ]; then
