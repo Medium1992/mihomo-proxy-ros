@@ -107,7 +107,7 @@
 после чего скрипт **автоматически загрузится** из репозитория и **начнёт установку**.
 
 ```bash
-:global r [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/script.rsc mode=https output=user as-value]
+:global r [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/old/script.rsc mode=https output=user as-value]
 :if (($r->"status")="finished") do={
 :global content ($r->"data")
 :if ([:len $content] > 0) do={
