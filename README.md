@@ -130,7 +130,7 @@ $s
 ```
 ### Docker compose example
 
-[Docker](https://github.com/Medium1992/mihomo-proxy-ros/blob/main/docker-compose.yml)
+[Docker](https://github.com/Medium1992/mihomo-proxy-ros/blob/old/docker-compose.yml)
 
 ## 💖 Project Support
 
