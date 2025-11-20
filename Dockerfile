@@ -30,6 +30,7 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then mv hev-socks5-tunnel-linux-x86_64 /hs5t
 RUN if [ "$TARGETARCH" = "amd64" ]; then mv ciadpi-x86_64 /byedpi; \
     elif [ "$TARGETARCH" = "arm64" ]; then mv ciadpi-aarch64 /byedpi; \
     else mv ciadpi-armv7l /byedpi; fi
+RUN chmod +x /mihomo /byedpi /hs5t
 
 FROM alpine:latest
 ARG TARGETARCH
@@ -48,8 +49,8 @@ RUN rm -vrf /var/cache/apk/* && \
     ln -s /usr/sbin/iptables-legacy-save /usr/sbin/iptables-save && \
     ln -s /usr/sbin/iptables-legacy-restore /usr/sbin/iptables-restore;
 COPY --from=builder /mihomo /mihomo
-COPY --from=builder /byedpi /byedpi
 COPY --from=builder /hs5t /hs5t
+COPY --from=builder /byedpi /byedpi
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh /mihomo /byedpi /hs5t
+RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
