@@ -1,19 +1,19 @@
 #!/bin/sh
 set -eu
 
-FAKE_IP_RANGE="${FAKE_IP_RANGE:-198.18.0.0/15}"
 EXTERNAL_UI_URL="${EXTERNAL_UI_URL:-https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip}"
 CONFIG_DIR="/root/.config/mihomo"
 AWG_DIR="$CONFIG_DIR/awg"
 LINKS_YAML="$CONFIG_DIR/links.yaml"
 CONFIG_YAML="$CONFIG_DIR/config.yaml"
 DIRECT_YAML="$CONFIG_DIR/direct.yaml"
-BYEDPI="${BYEDPI:-false}"                 
-BYEDPI_ADDRESS="${BYEDPI_ADDRESS:-192.168.255.6}"
-BYEDPI_SOCKS_PORT="${BYEDPI_SOCKS_PORT:-1080}"
 BYEDPI_YAML="$CONFIG_DIR/byedpi.yaml"
 UI_URL_CHECK="$CONFIG_DIR/.ui_url"
+FAKE_IP_RANGE="${FAKE_IP_RANGE:-198.18.0.0/15}"
 FAKE_IP_FILTER="${FAKE_IP_FILTER:-}"
+BYEDPI="${BYEDPI:-false}"
+BYEDPI_CMD="${BYEDPI_CMD:-}"
+BYEDPI_CMD_UDP="${BYEDPI_CMD_UDP:-}"
 HEALTHCHECK_INTERVAL="${HEALTHCHECK_INTERVAL:-120}"
 HEALTHCHECK_URL="${HEALTHCHECK_URL:-https://www.gstatic.com/generate_204}"
 HEALTHCHECK_URL_STATUS="${HEALTHCHECK_URL_STATUS:-204}"
@@ -58,15 +58,14 @@ EOF
 # ------------------- BYEDPI -------------------
 generate_byedpi_yaml() {
   [ "$BYEDPI" = "true" ] || return 0
-
-  log "Generating $BYEDPI_YAML (address=$BYEDPI_ADDRESS, port=$BYEDPI_SOCKS_PORT)"
+  log "Generating $BYEDPI_YAML"
   cat > "$BYEDPI_YAML" <<EOF
 proxies:
   - name: "BYEDPI"
-    type: socks5
-    server: $BYEDPI_ADDRESS
-    port: $BYEDPI_SOCKS_PORT
+    type: direct
     udp: true
+    ip-version: ipv4
+    routing-mark: 8888
 EOF
 }
 
@@ -175,15 +174,6 @@ EOF
   echo "$awg_providers"
 }
 
-# ------------------- LINKS -------------------
-link_file_mihomo() {
-  log "Generating $LINKS_YAML"
-  : > "$LINKS_YAML"
-  for i in $(env | grep -E '^LINK[0-9]*=' | sort -t '=' -k1 | cut -d '=' -f1); do
-    eval "echo \"\$$i\"" >> "$LINKS_YAML"
-  done
-}
-
 # ------------------- CONFIG -------------------
 config_file_mihomo() {
   log "Generating $CONFIG_YAML"
@@ -249,6 +239,10 @@ EOF
 EOF
   else
     cat >> "$CONFIG_YAML" <<EOF
+  - name: redir-in
+    type: redir
+    port: 12345
+    listen: 0.0.0.0
   - name: tun-in
     type: tun
     stack: system
@@ -256,7 +250,7 @@ EOF
     include-interface:
       - $(first_iface)
     auto-route: true
-    auto-redirect: true
+    auto-redirect: false
     inet4-address:
       - 198.19.0.1/30
     udp-timeout: 30
@@ -275,15 +269,21 @@ EOF
 
   providers=""
 
-  # LINKS
+  # LINK
   if env | grep -qE '^LINK[0-9]*='; then
-    cat >> "$CONFIG_YAML" <<EOF
-  LINKS:
+    for varname in $(env | grep -E '^LINK[0-9]*=' | sort -t '=' -k1 | cut -d'=' -f1); do
+      eval "url=\"\$$varname\""
+      provider_name="$varname"
+      yaml_file="$CONFIG_DIR/${provider_name}.yaml"
+      printf '%s\n' "$url" > "$yaml_file"
+      cat >> "$CONFIG_YAML" <<EOF
+  $provider_name:
     type: file
-    path: $(basename "$LINKS_YAML")
+    path: ${provider_name}.yaml
 $(health_check_block)
 EOF
-    providers="$providers LINKS"
+      providers="$providers $provider_name"
+    done
   fi
 
   # SUB_LINK
@@ -384,41 +384,28 @@ EOF
 
 # === ГРУППЫ + ПРАВИЛА ===
   {
-    echo
-    echo "proxy-groups:"
-    echo "  - name: GLOBAL"
-    echo "    type: ${GLOBAL_TYPE:-select}"
     g_type="${GLOBAL_TYPE:-select}"
     g_tol="${GLOBAL_TOLERANCE:-$GROUP_TOLERANCE}"
     g_url="${GLOBAL_URL:-$GROUP_URL}"
     g_status="${GLOBAL_URL_STATUS:-$GROUP_URL_STATUS}"
     g_interval="${GLOBAL_INTERVAL:-$GROUP_INTERVAL}"
     g_strategy="${GLOBAL_STRATEGY:-$GROUP_STRATEGY}"
-
+    echo
+    echo "proxy-groups:"
+    echo "  - name: GLOBAL"
+    echo "    type: ${GLOBAL_TYPE:-select}"
+    echo "    url: \"$g_url\""
+    echo "    expected-status: $g_status"
+    echo "    interval: $g_interval"
     case "$g_type" in
       url-test)
         [ -n "$g_tol" ] && echo "    tolerance: $g_tol"
-        [ -n "$g_url" ] && echo "    url: \"$g_url\""
-        [ -n "$g_status" ] && echo "    expected-status: $g_status"
-        [ -n "$g_interval" ] && echo "    interval: $g_interval"
-        echo "    lazy: false"
         ;;
-
-      fallback)
-        [ -n "$g_url" ] && echo "    url: \"$g_url\""
-        [ -n "$g_status" ] && echo "    expected-status: $g_status"
-        [ -n "$g_interval" ] && echo "    interval: $g_interval"
-        echo "    lazy: false"
-        ;;
-
       load-balance)
-        [ -n "$g_url" ] && echo "    url: \"$g_url\""
-        [ -n "$g_status" ] && echo "    expected-status: $g_status"
-        [ -n "$g_interval" ] && echo "    interval: $g_interval"
         [ -n "$g_strategy" ] && echo "    strategy: $g_strategy"
-        echo "    lazy: false"
         ;;
     esac
+    echo "    lazy: false"
     [ -n "${GLOBAL_FILTER:-}" ] && echo "    filter: $GLOBAL_FILTER"
     [ -n "${GLOBAL_EXCLUDE:-}" ] && echo "    exclude-filter: $GLOBAL_EXCLUDE"
     [ -n "${GLOBAL_EXCLUDE_TYPE:-}" ] && echo "    exclude-type: $GLOBAL_EXCLUDE_TYPE"
@@ -428,7 +415,6 @@ EOF
     else
       for p in $providers; do echo "      - $p"; done
     fi
-
 
     # === Сбор групп с приоритетами (ЛОГИ ВНЕ БЛОКА) ===
     group_prio_list=""
@@ -440,7 +426,7 @@ EOF
 
         env_name=$(echo "$g" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
         has_resource=false
-        for suffix in GEOSITE GEOIP AS DOMAIN SUFFIX IPCIDR; do
+        for suffix in GEOSITE GEOIP AS DOMAIN SUFFIX IPCIDR KEYWORD; do
           if [ -n "$(printenv "${env_name}_${suffix}" 2>/dev/null || echo "")" ]; then
             has_resource=true
             break
@@ -473,41 +459,27 @@ EOF
       exclude=$(printenv "${env_name}_EXCLUDE" || true)
       exclude_type=$(printenv "${env_name}_EXCLUDE_TYPE" || true)
       use=$(printenv "${env_name}_USE" || true)
-
-      echo
-      echo "  - name: $g"
-      echo "    type: $type"
       g_tol=$(printenv "${env_name}_TOLERANCE" || echo "$GROUP_TOLERANCE")
       g_url=$(printenv "${env_name}_URL" || echo "$GROUP_URL")
       g_status=$(printenv "${env_name}_URL_STATUS" || echo "$GROUP_URL_STATUS")
       g_interval=$(printenv "${env_name}_INTERVAL" || echo "$GROUP_INTERVAL")
       g_strategy=$(printenv "${env_name}_STRATEGY" || echo "$GROUP_STRATEGY")
 
+      echo
+      echo "  - name: $g"
+      echo "    type: $type"
+      echo "    url: \"$g_url\""
+      echo "    expected-status: $g_status"
+      echo "    interval: $g_interval"
       case "$type" in
         url-test)
           [ -n "$g_tol" ] && echo "    tolerance: $g_tol"
-          [ -n "$g_url" ] && echo "    url: \"$g_url\""
-          [ -n "$g_status" ] && echo "    expected-status: $g_status"
-          [ -n "$g_interval" ] && echo "    interval: $g_interval"
-          echo "    lazy: false"
           ;;
-
-        fallback)
-          [ -n "$g_url" ] && echo "    url: \"$g_url\""
-          [ -n "$g_status" ] && echo "    expected-status: $g_status"
-          [ -n "$g_interval" ] && echo "    interval: $g_interval"
-          echo "    lazy: false"
-          ;;
-
         load-balance)
-          [ -n "$g_url" ] && echo "    url: \"$g_url\""
-          [ -n "$g_status" ] && echo "    expected-status: $g_status"
-          [ -n "$g_interval" ] && echo "    interval: $g_interval"
           [ -n "$g_strategy" ] && echo "    strategy: $g_strategy"
-          echo "    lazy: false"
           ;;
       esac
-
+      echo "    lazy: false"
       [ -n "$filter" ] && echo "    filter: $filter"
       [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
       [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
@@ -596,32 +568,56 @@ EOF
         rule_accum="$rule_accum
 - RULE-SET,${g}_as_$asn,$g"
       done
-            # === DOMAIN правила ===
+      
+      custom_payload=""
+      
+      # DOMAIN
       domain_list=$(printenv "${env_name}_DOMAIN" || echo "")
       for dm in $(echo "$domain_list" | tr ',' ' '); do
         dm=$(echo "$dm" | xargs)
         [ -z "$dm" ] && continue
-        rule_accum="$rule_accum
-- DOMAIN,$dm,$g"
+        custom_payload="$custom_payload
+      - DOMAIN,$dm"
       done
 
-      # === DOMAIN-SUFFIX правила ===
+      # DOMAIN-SUFFIX
       suffix_list=$(printenv "${env_name}_SUFFIX" || echo "")
       for sf in $(echo "$suffix_list" | tr ',' ' '); do
         sf=$(echo "$sf" | xargs)
         [ -z "$sf" ] && continue
-        rule_accum="$rule_accum
-- DOMAIN-SUFFIX,$sf,$g"
+        custom_payload="$custom_payload
+      - DOMAIN-SUFFIX,$sf"
       done
 
-      # === IP-CIDR правила ===
+      # DOMAIN-KEYWORD
+      keyword_list=$(printenv "${env_name}_KEYWORD" || echo "")
+      for kw in $(echo "$keyword_list" | tr ',' ' '); do
+        kw=$(echo "$kw" | xargs)
+        [ -z "$kw" ] && continue
+        custom_payload="$custom_payload
+      - DOMAIN-KEYWORD,$kw"
+      done
+
+      # IP-CIDR
       ipcidr_list=$(printenv "${env_name}_IPCIDR" || echo "")
       for ipcidr in $(echo "$ipcidr_list" | tr ',' ' '); do
         ipcidr=$(echo "$ipcidr" | xargs)
         [ -z "$ipcidr" ] && continue
-        rule_accum="$rule_accum
-- IP-CIDR,$ipcidr,$g",no-resolve
+        custom_payload="$custom_payload
+      - IP-CIDR,$ipcidr,no-resolve"
       done
+
+      if [ -n "$custom_payload" ]; then
+        cat <<EOF
+  ${g}_custom_rules:
+    type: inline
+    behavior: classical
+    format: text
+    payload:$custom_payload
+EOF
+        rule_accum="$rule_accum
+- RULE-SET,${g}_custom_rules,$g"
+      fi
     done
 
     # === rules ===
@@ -637,11 +633,11 @@ EOF
 
     if lsmod | grep -q '^nft_tproxy'; then
       echo "  - IN-NAME,tproxy-in,GLOBAL"
-      echo "  - IN-NAME,mixed-in,GLOBAL"
     else
+      echo "  - IN-NAME,redir-in,GLOBAL"
       echo "  - IN-NAME,tun-in,GLOBAL"
-      echo "  - IN-NAME,mixed-in,GLOBAL"
     fi
+    echo "  - IN-NAME,mixed-in,GLOBAL"
     echo "  - MATCH,DIRECT"
   } >> "$CONFIG_YAML"
 }
@@ -653,7 +649,7 @@ nft_rules() {
   iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
   nft flush ruleset || true
   nft -f - <<EOF
-table inet mihomo_tproxy {
+table inet mihomo {
     chain prerouting {
         type filter hook prerouting priority filter; policy accept;
         ip daddr ${FAKE_IP_RANGE} meta l4proto { tcp, udp } meta mark set 0x00000001 tproxy ip to 127.0.0.1:12345 accept
@@ -666,8 +662,70 @@ table inet mihomo_tproxy {
     }
 }
 EOF
+if [ "${BYEDPI}" = "true" ]; then
+  nft add table nat
+  nft add chain nat output '{ type nat hook output priority -100; }'
+  nft add rule nat output meta l4proto tcp mark 0x000022b8 redirect to 1100
+fi
   ip rule show | grep -q 'fwmark 0x00000001 lookup 100' || ip rule add fwmark 1 table 100
   ip route replace local 0.0.0.0/0 dev lo table 100
+}
+
+iptables_rules() {
+  log "Applying iptables..."
+  local iface=$(first_iface)
+  iptables -F
+  iptables -X
+  iptables -t nat -F
+  iptables -t nat -X
+  iptables -t mangle -F
+  iptables -t mangle -X
+  iptables -t nat -N mihomo-output
+  iptables -t nat -N mihomo-prerouting
+  iptables -t nat -A PREROUTING -j mihomo-prerouting
+  iptables -t nat -A OUTPUT -j mihomo-output
+  if [ "${BYEDPI}" = "true" ]; then
+  iptables -t nat -A mihomo-output -p tcp -m mark --mark 8888 -j REDIRECT --to-port 1100
+  fi
+  iptables -t nat -A mihomo-output -o Meta -p tcp -j REDIRECT --to-ports 12345
+  iptables -t nat -A mihomo-prerouting -i Meta -j RETURN
+  iptables -t nat -A mihomo-prerouting -i $iface -p udp -m udp --dport 53 -j DNAT --to-destination 198.19.0.2
+  iptables -t nat -A mihomo-prerouting -i $iface -p tcp -m tcp --dport 53 -j DNAT --to-destination 198.19.0.2
+  iptables -t nat -A mihomo-prerouting -m addrtype --dst-type LOCAL -j RETURN
+  iptables -t nat -A mihomo-prerouting -i $iface -p tcp -j REDIRECT --to-ports 12345
+}
+
+config_file() {
+  cat > /hs5t.yml << EOF
+misc:
+  log-level: 'error'
+tunnel:
+  name: hs5t
+  mtu: 1500
+  ipv4: 100.64.0.1
+  multi-queue: true
+  post-up-script: '/hs5t.sh'
+socks5:
+  address: '127.0.0.1'
+  port: 1090
+  udp: 'udp'
+EOF
+}
+
+hs5t_file() {
+  cat > /hs5t.sh << 'EOF'
+#!/bin/sh
+mkdir -p /etc/iproute2
+if [ ! -f /etc/iproute2/rt_tables ]; then
+   touch /etc/iproute2/rt_tables
+fi
+if ! grep -Eq "^500[[:space:]]*byedpi_udp\b" /etc/iproute2/rt_tables; then
+   echo "500 byedpi_udp" >> /etc/iproute2/rt_tables
+fi
+ip rule show | grep -q 'fwmark 0x22b8 lookup 500' || ip rule add fwmark 8888 ipproto udp table 500
+ip route replace default via 100.64.0.1 dev hs5t table 500
+EOF
+chmod +x /hs5t.sh
 }
 
 # ------------------- RUN -------------------
@@ -675,15 +733,29 @@ run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR"
   generate_direct_yaml
   generate_byedpi_yaml
-  
-  link_file_mihomo
-
   if lsmod | grep -q '^nft_tproxy'; then
     nft_rules
+  else
+    iptables_rules
   fi
-
   config_file_mihomo
-  log "Starting mihomo..."
+  if [ "${BYEDPI}" = "true" ]; then
+    config_file
+    hs5t_file
+    echo "Starting ByeDPI v.$(./byedpi --version) "
+    log "Starting ByeDPI v.$(./byedpi --version)"
+    echo "Starting hev-socks5-tunnel $(./hs5t --version | head -n 2 | tail -n 1)"
+    log "Starting hev-socks5-tunnel $(./hs5t --version | head -n 2 | tail -n 1)"
+    echo "Starting Mihomo $(./mihomo -v)"
+    log "Starting Mihomo $(./mihomo -v)"
+    local cmd_udp=$(printenv "$BYEDPI_CMD_UDP" || echo "$BYEDPI_CMD")
+    ./byedpi --port 1100 --transparent $BYEDPI_CMD &
+    ./byedpi --port 1090 $cmd_udp &
+    ./hs5t ./hs5t.yml &
+    exec ./mihomo
+  fi
+  echo "Starting Mihomo $(./mihomo -v)"
+  log "Starting Mihomo $(./mihomo -v)"
   exec ./mihomo
 }
 
