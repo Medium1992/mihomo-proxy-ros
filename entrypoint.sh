@@ -174,6 +174,22 @@ EOF
   echo "$awg_providers"
 }
 
+#   NAMESERVER_POLICY="domain1#dns1,domain2#dns2"
+generate_nameserver_policy() {
+  [ -z "${NAMESERVER_POLICY:-}" ] && return
+  echo "  nameserver-policy:"
+  OLDIFS=$IFS
+  IFS=','
+  for raw in $NAMESERVER_POLICY; do
+    item=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ -z "$item" ] && continue
+    domain=${item%%#*}
+    dns=${item#*#}
+    printf "    '%s': '%s'\n" "$domain" "$dns"
+  done
+  IFS=$OLDIFS
+}
+
 # ------------------- CONFIG -------------------
 config_file_mihomo() {
   log "Generating $CONFIG_YAML"
@@ -210,6 +226,9 @@ dns:
   fake-ip-filter-mode: ${FAKE_IP_FILTER_MODE:-blacklist}
   fake-ip-range: ${FAKE_IP_RANGE}${FAKE_IP_FILTER:+
   fake-ip-filter:}${FAKE_IP_FILTER:+$(printf '\n    - %s' $(echo "$FAKE_IP_FILTER" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$'))}
+EOF
+generate_nameserver_policy >>  $CONFIG_YAML
+    cat >> "$CONFIG_YAML" <<EOF
   nameserver:
     - https://dns.google/dns-query
     - https://1.1.1.1/dns-query
