@@ -4,10 +4,9 @@ services:
       FAKE_IP_RANGE: "198.18.0.0/15"
       FAKE_IP_FILTER: "www.youtube.com"
       LOG_LEVEL: "error"
-      TTL_FAKEIP: "10"
       BYEDPI: "true"
-      BYEDPI_ADDRESS: "192.168.255.3"
-      BYEDPI_SOCKS_PORT: "1080"
+      BYEDPI_CMD: "--disorder 1 --fake 0 --ttl 1 --auto=torst --tlsrec 1+s --debug 1" #paste your strategy BYEDPI
+      BYEDPI_CMD_UDP: "--disorder 1 --fake 0 --ttl 1 --auto=torst --tlsrec 1+s --debug 1" #paste your strategy BYEDPI
       GROUP: "youtube,telegram,discord,amazon"
       YOUTUBE_GEOSITE: "youtube"
       YOUTUBE_PRIORITY: "1"
@@ -26,36 +25,36 @@ services:
     volumes:
       - ./awg_conf/:/root/.config/mihomo/awg/ #use dir with wg,awg conf
       - /dev/net/tun:/dev/net/tun
-    cap_add:
-      - ALL
+#    cap_add:
+#      - ALL
     networks:
       macvlan_network:
         ipv4_address: 192.168.255.2
 
-  byedpi:
-    image: wiktorbgu/byedpi-mikrotik
-    restart: unless-stopped
-    container_name: byedpi
-    command: --disorder 1 --fake 0 --ttl 1 --auto=torst --tlsrec 1+s --debug 1 #paste your strategy BYEDPI
-    depends_on:
-      - mihomo-proxy-ros
-      - dnsproxy
-    networks:
-      macvlan_network:
-        ipv4_address: 192.168.255.3
-    dns:
-      - 192.168.255.4
+#  byedpi:
+#    image: wiktorbgu/byedpi-mikrotik
+#    restart: unless-stopped
+#    container_name: byedpi
+#    command: --disorder 1 --fake 0 --ttl 1 --auto=torst --tlsrec 1+s --debug 1 #paste your strategy BYEDPI
+#    depends_on:
+#      - mihomo-proxy-ros
+#      - dnsproxy
+#    networks:
+#      macvlan_network:
+#        ipv4_address: 192.168.255.3
+#    dns:
+#      - 192.168.255.4
 
-  dnsproxy:
-    image: ghcr.io/medium1992/dns-proxy-ros
-    restart: unless-stopped
-    container_name: dnsproxy
-    command: --cache --hosts-files=/hosts --upstream "[/www.youtube.com/]192.168.255.2:53" --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel
-    depends_on:
-      - mihomo-proxy-ros
-    networks:
-      macvlan_network:
-        ipv4_address: 192.168.255.4
+#  dnsproxy:
+#    image: ghcr.io/medium1992/dns-proxy-ros
+#    restart: unless-stopped
+#    container_name: dnsproxy
+#    command: --cache --hosts-files=/hosts --upstream "[/www.youtube.com/]192.168.255.2:53" --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel
+#    depends_on:
+#      - mihomo-proxy-ros
+#    networks:
+#      macvlan_network:
+#        ipv4_address: 192.168.255.4
 
 
 networks:
