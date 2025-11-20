@@ -4,7 +4,7 @@
 
 👉 Please read the [Code of Conduct](./CODE_OF_CONDUCT.md) before participating in the project.
 
-**mihomo-proxy-ros** is a multi-architecture Docker container based on **Mihomo**,  
+**mihomo-proxy-ros** is a multi-architecture Docker container based on **Mihomo** and **byedpi**,  
 supporting platforms **ARM**, **ARM64**, **AMD64v1**, **AMD64v2**, and **AMD64v3**.  
 The `latest` tag includes **ARM**, **ARM64**, and **AMD64v3**.  
 If you have **AMD64v1** or **AMD64v2**, you need to pull the corresponding tag.
@@ -18,12 +18,12 @@ If you find this project useful, you can support it via donation:
 ## 🌟 Features of the Automated Installation Script for MikroTik Routers
 
 The repository contains an **interactive automated installation script** for **RouterOS MikroTik**,  
-which also installs **ByeDPI** and **dnsproxy** from **AdGuardHome**.
+which also If set installs and runs standalone dnsproxy from AdGuardHome **dnsproxy** from **AdGuardHome**.
 
 - 🌍 Multi-architecture: ARM, ARM64, AMD64v1-v3  
 - ⚙️ Automated installation via MikroTik terminal using the script at the end of this description  
 - 🔐 DPI bypass via ByeDPI (thanks to [wiktorbgu](https://hub.docker.com/r/wiktorbgu/byedpi-mikrotik), you can modify the strategy in the container CMD)  
-- 🌐 DNSProxy: multi-resolve from multiple DNS servers, supports all DNS protocols  
+- 🌐 DNSProxy: multi-resolve from multiple DNS servers, supports all DNS protocols (Optional)
 - 🧩 Flexible routing and management of domain, IP, and AS pools via ENVs  
 - 🛡️ Ability to add multiple proxy links and subscriptions (including RemnaWave subscriptions with HWID) via ENVs  
 - 🚀 Integration of multiple WG, AWG VPNs by copying config files into the mount folder  
@@ -54,7 +54,6 @@ as well as **adding new links** and other parameters via environment variables (
 | `DNS_MODE` | `fake-ip` | DNS server operation mode [DOCs](https://wiki.metacubex.one/en/config/dns/#enhanced-mode) |
 | `SNIFFER` | `true` | [Domain sniffer](https://wiki.metacubex.one/en/config/sniff). Applied when routing by domains, when the domain is resolved not by mihomo |
 | `FAKE_IP_RANGE` | `198.18.0.0/15` | Fake-IP pool range [DOCs](https://wiki.metacubex.one/en/config/dns/#fake-ip-range) |
-| `TTL_FAKEIP` | `1` | Lifetime of FakeIP record in DNS cache in seconds |
 | `FAKE_IP_FILTER` | — | Comma-separated list of domains excluded from Fake-IP [DOCs](https://wiki.metacubex.one/en/config/dns/#fake-ip-filter). When running the script, `www.youtube.com` is set due to YouTube specifics on TVs via BYEDPI and the need to modify MSS |
 | `FAKE_IP_FILTER_MODE` | `blacklist` | Fakeip filter operation mode [DOCs](https://wiki.metacubex.one/en/config/dns/#fake-ip-filter-mode-blacklist) |
 | `EXTERNAL_UI_URL` | [link](https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip) | Web interface link (zip archive) [DOCs](https://wiki.metacubex.one/en/config/general/#url) |
@@ -64,9 +63,9 @@ as well as **adding new links** and other parameters via environment variables (
 | `HEALTHCHECK_INTERVAL` | `120` | Health-check interval in seconds [DOCs](https://wiki.metacubex.one/en/config/proxy-providers/#health-checkinterval) |
 | `HEALTHCHECK_URL_BYEDPI` | `https://www.facebook.com`| [Health-check URL](https://wiki.metacubex.one/en/config/proxy-providers/#health-checkurl) for BYEDPI proxy provider |
 | `HEALTHCHECK_URL_STATUS_BYEDPI`| `200` | Expected health-check status [DOCs](https://wiki.metacubex.one/en/config/proxy-groups/#expected-status) for BYEDPI proxy provider |
-| `BYEDPI` | `false` | Enable proxy via byeDPI (`true`/`false`). Adds a [proxy provider](https://wiki.metacubex.one/en/config/proxy-providers) of type [SOCKS5](https://wiki.metacubex.one/en/config/proxies/socks) named `BYEDPI` |
-| `BYEDPI_ADDRESS` | `192.168.255.6` | Server IP address for [proxy provider](https://wiki.metacubex.one/en/config/proxy-providers) `BYEDPI` |
-| `BYEDPI_SOCKS_PORT` | `1080` | SOCKS5 server port for [proxy provider](https://wiki.metacubex.one/en/config/proxy-providers) `BYEDPI` |
+| `BYEDPI` | `false` | Enable proxy via byeDPI (`true`/`false`). Adds a [proxy provider](https://wiki.metacubex.one/en/config/proxy-providers) of type [DIRECT](https://wiki.metacubex.one/en/config/proxies/direct) named `BYEDPI` |
+| `BYEDPI_CMD`       | —                     | Enables [BYEDPI](https://github.com/hufrea/byedpi) DPI bypass strategy **only for TCP** traffic going through mihomo (Clash Meta kernel) |
+| `BYEDPI_CMD_UDP`   | Same as `BYEDPI_CMD`  | Enables [BYEDPI](https://github.com/hufrea/byedpi) DPI bypass strategy **only for UDP** through mihomo **and** additionally starts a socks5 proxy on port **:1090** that handles both TCP and UDP via byedpi |
 | `LINK0`, `LINK1`... | — | Proxy links `vless://`, `vmess://`, `ss://`, `trojan://`... For each proxy link, a separate [proxy provider](https://wiki.metacubex.one/en/config/proxy-providers) is created |
 | `SUB_LINK0`, `SUB_LINK1`... | — | Subscriptions of type `http(s)://`... For each subscription, a separate [proxy provider](https://wiki.metacubex.one/en/config/proxy-providers) is created. Supports setting [HWID](https://docs.rw/docs/features/hwid-device-limit) individually for each subscription |
 | `SW_ID_FOR_HWID` | — | Setting any value that will be automatically encrypted for the [x-hwid](https://docs.rw/docs/features/hwid-device-limit) header (sha256[:16]). By default, the [x-hwid](https://docs.rw/docs/features/hwid-device-limit) header will be automatically added to any `SUB_LINK` subscription request if individual values were not set in the `SUB_LINK` ENV. During script execution, the Mikrotik router's `Software ID` is written to this ENV |
@@ -95,6 +94,7 @@ as well as **adding new links** and other parameters via environment variables (
 | `XXX_AS` | — | Comma-separated list of [AS](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/asn) for proxy group `XXX`. Actually creates a [rule-set](https://wiki.metacubex.one/en/config/rules/#rule-set) in rms format and corresponding routing [rules](https://wiki.metacubex.one/en/config/rules) to the [proxy group](https://wiki.metacubex.one/en/config/proxy-groups), where `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,telegram,...` → `TELEGRAM_AS` with value `AS62041,AS59930,AS62014,AS211157,AS44907` will load IP pools for `AS62041`,`AS59930`,`AS62014`,`AS211157`,`AS44907` and route them to the `TELEGRAM` proxy provider |
 | `XXX_DOMAIN` | — | Comma-separated list of [domains](https://wiki.metacubex.one/en/config/rules/#domain) for proxy group `XXX`. Actually creates corresponding routing [rules](https://wiki.metacubex.one/en/config/rules) to the [proxy group](https://wiki.metacubex.one/en/config/proxy-groups), where `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,telegram,...` → `TELEGRAM_DOMAIN` with value `telegram.org,telegram.com` will route the specified domains to the `TELEGRAM` proxy provider |
 | `XXX_SUFFIX` | — | Comma-separated list of [domain suffixes](https://wiki.metacubex.one/en/config/rules/#domain-suffix) for proxy group `XXX`. Actually creates corresponding routing [rules](https://wiki.metacubex.one/en/config/rules) to the [proxy group](https://wiki.metacubex.one/en/config/proxy-groups), where `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,telegram,...` → `TELEGRAM_SUFFIX` with value `telegram.org,telegram.com` will route the specified domains and their subdomains to the `TELEGRAM` proxy provider |
+| `XXX_KEYWORD`      | —                     | Comma-separated list of [domain keywords](https://wiki.metacubex.one/en/config/rules/#domain-keyword) for the proxy-group named `XXX`. Automatically creates corresponding [rules](https://wiki.metacubex.one/en/config/rules) that route matching domains to the proxy-group `XXX`. The group name `XXX` is taken from the `GROUP` environment variable (comma-separated list). Example: `GROUP=...,telegram,...` + `TELEGRAM_KEYWORD=telegram,tg` → all domains containing `telegram` or `tg` will be routed to the `TELEGRAM` proxy-group |
 | `XXX_IPCIDR` | — | Comma-separated list of [IP-CIDR](https://wiki.metacubex.one/en/config/rules/#ip-cidr-ip-cidr6) for proxy group `XXX`. Actually creates corresponding routing [rules](https://wiki.metacubex.one/en/config/rules) to the [proxy group](https://wiki.metacubex.one/en/config/proxy-groups), where `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,telegram,...` → `TELEGRAM_IPCIDR` with value `91.108.4.0/22,91.108.56.0/22` will route the specified subnets to the `TELEGRAM` proxy provider |
 | `XXX_PRIORITY` | — | Priority of proxy group `XXX` in terms of rule order in [rules](https://wiki.metacubex.one/en/config/rules). For example, `YOUTUBE_PRIORITY` with value `1` and `TELEGRAM_PRIORITY` with value `2` will create rules in [rules](https://wiki.metacubex.one/en/config/rules) in order: first `YOUTUBE`, then `TELEGRAM` |
 
