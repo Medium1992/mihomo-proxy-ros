@@ -20,7 +20,7 @@ services:
       AMAZON_AS: "AS16509"
       LINK1: " " #paste your link proxy
       SUB_LINK1: " " #paste your sublink proxyies
-    image: ghcr.io/medium1992/mihomo-proxy-ros
+    image: ghcr.io/medium1992/mihomo-proxy-ros:latest-old
     restart: unless-stopped
     container_name: mihomo-proxy-ros
     volumes:
