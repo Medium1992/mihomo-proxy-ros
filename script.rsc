@@ -7,8 +7,25 @@
 :set start [/terminal ask]
 :put "Starting script"
 
+:local flagDNSproxy false
+:local dnsproxy false
+:local dnsproxychoice
+
+:while ($flagDNSproxy=false) do={
+:put "Specify whether you want to install dnsproxy:"
+:put "- yes"
+:put "- no"
+:set dnsproxychoice [/terminal ask]
+:if ($dnsproxychoice="yes") do={
+:set dnsproxy true
+:set flagDNSproxy true
+}
+:if ($dnsproxychoice="no") do={
+:set flagDNSproxy true
+}}
+
 :local pathPull ""
-:if (([:len [/container/find comment="MihomoProxyRoS"]] = 0) or ([:len [/container/find comment="DNSProxy"]] = 0) or ([:len [/container/find comment="ByeDPI"]] = 0)) do={
+:if (([:len [/container/find comment="MihomoProxyRoS"]] = 0) or (([:len [/container/find comment="DNSProxy"]] = 0) and $dnsproxy=true)) do={
 :local slotArray 
 :if ($freespace>=80914560) do={:set slotArray ($slotArray, "system")}
 :local flagDisks false
@@ -77,13 +94,6 @@ foreach i in=$slotArray do={
 :do {/ip/dns/forwarders/add name=MihomoProxyRoS dns-servers=192.168.255.2 verify-doh-cert=no
 :put "Add DNS Forwarders MihomoProxyRoS"} on-error {}
 
-:do {/interface/veth/add name=ByeDPI address=192.168.255.6/30 gateway=192.168.255.5
-:put "Create VETH ByeDPI"} on-error {}
-:do {/interface/list/member/add interface=ByeDPI list=InAccept
-:put "Add in interfacelist InAccept interface ByeDPI"} on-error {}
-:do {/ip/address/add address=192.168.255.5/30 interface=ByeDPI
-:put "Add address Mikrotik for interface ByeDPI"} on-error {}
-
 :do {/interface/veth/add name=DNSProxy address=192.168.255.10/30 gateway=192.168.255.9
 :put "Create VETH DNSProxy"} on-error {}
 :do {/interface/list/member/add interface=DNSProxy list=InAccept
@@ -97,8 +107,6 @@ foreach i in=$slotArray do={
 :put "Create interfacelist Containers"} on-error {}
 :do {/interface/list/member/add interface=MihomoProxyRoS list=Containers
 :put "Add in interfacelist Containers interface MihomoProxyRoS"} on-error {}
-:do {/interface/list/member/add interface=ByeDPI list=Containers
-:put "Add in interfacelist Containers interface ByeDPI"} on-error {}
 :do {/interface/list/member/add interface=DNSProxy list=Containers
 :put "Add in interfacelist Containers interface DNSProxy"} on-error {}
 
@@ -175,14 +183,10 @@ add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0
 :put "Add env FAKE_IP_FILTER value: www.youtube.com"} on-error {}
 :do {add key=LOG_LEVEL list=MihomoProxyRoS value=error
 :put "Add env LOG_LEVEL value: error"} on-error {}
-:do {add key=TTL_FAKEIP list=MihomoProxyRoS value=10
-:put "Add env TTL_FAKEIP value: 10"} on-error {}
 :do {add key=BYEDPI list=MihomoProxyRoS value=true
 :put "Add env BYEDPI value: true"} on-error {}
-:do {add key=BYEDPI_ADDRESS list=MihomoProxyRoS value=192.168.255.6
-:put "Add env BYEDPI_ADDRESS value: 192.168.255.6"} on-error {}
-:do {add key=BYEDPI_SOCKS_PORT list=MihomoProxyRoS value=1080
-:put "Add env BYEDPI_SOCKS_PORT: 1080"} on-error {}
+:do {add key=BYEDPI_CMD list=MihomoProxyRoS value="-Ku -a1 -An -d1 -s1+s -d3+s -s6+s -d9+s -s12+s -d15+s -s20+s -d25+s -s30+s -d35+s -At,r,s -s1 -q1 -At,r,s -s5 -o2 -At,r,s -o1 -d1 -r1+s -s1+s -d3+s -At,r,s -f-1 -r1+s -At,r,s -s1 -o1+s -s-1"
+:put "Add env BYEDPI_CMD"} on-error {}
 :do { add key=GROUP list=MihomoProxyRoS value=youtube,telegram,discord
 :put "Add env GROUP value: youtube,telegram,discord,amazon"} on-error {}
 :do { add key=YOUTUBE_GEOSITE list=MihomoProxyRoS value=youtube
@@ -248,7 +252,7 @@ add address=8.8.4.4 list=DNS
 
 /ip firewall mangle
 :if ([:len [find comment="MSSClamp"]] = 0) do={add action=change-mss chain=postrouting new-mss=clamp-to-pmtu protocol=tcp tcp-flags=syn connection-state=new comment="MSSClamp"; :put "Add mangle rules 1"}
-:if ([:len [find comment="YT_MSS"]] = 0) do={add action=change-mss chain=postrouting dst-address-list=YT in-interface=ByeDPI new-mss=88 protocol=tcp tcp-flags=syn connection-state=new comment="YT_MSS"; :put "Add mangle rules YT_MSS"}
+:if ([:len [find comment="YT_MSS"]] = 0) do={add action=change-mss chain=postrouting dst-address-list=YT in-interface=MihomoProxyRoS new-mss=88 protocol=tcp tcp-flags=syn connection-state=new comment="YT_MSS"; :put "Add mangle rules YT_MSS"}
 :if ([:len [find comment="Accept_no_mark"]] = 0) do={add action=accept chain=prerouting connection-mark=no-mark connection-state=established,related,untracked comment="Accept_no_mark"; :put "Add mangle rules 2"}
 :if ([:len [find comment="AcceptInWAN&Containers"]] = 0) do={add action=accept chain=prerouting in-interface-list=InAccept comment="AcceptInWAN&Containers"; :put "Add mangle rules 3"}
 :if ([:len [find comment="RoutingToMihomo2"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="RoutingToMihomo2"; :put "Add mangle rules 4"}
@@ -510,10 +514,11 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 :delay 1
 }
 
+:if ($dnsproxy=true) do={
 :set flagContainer false
 :while ($flagContainer = false) do={
 :if ([:len [/container/find comment="DNSProxy"]] = 0) do={
-/container/add remote-image="ghcr.io/medium1992/dns-proxy-ros" interface=DNSProxy cmd="--cache --hosts-files=/hosts --upstream \"[/www.youtube.com/]192.168.255.2:53\" --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel" root-dir=($pathPull . "Containers/DNSProxy") start-on-boot=yes comment="DNSProxy"
+/container/add remote-image="ghcr.io/medium1992/dns-proxy-ros" interface=DNSProxy cmd="--cache --hosts-files=/hosts --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel" root-dir=($pathPull . "Containers/DNSProxy") start-on-boot=yes comment="DNSProxy"
 :put "Start pull DNSProxy container, pls wait when container starting, pls wait"
 :delay 1
 }
@@ -548,44 +553,6 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 :delay 1
 }
 
-:set flagContainer false
-:while ($flagContainer = false) do={
-:if ([:len [/container/find comment="ByeDPI"]] = 0) do={
-/container/add remote-image="registry-1.docker.io/wiktorbgu/byedpi-mikrotik" interface=ByeDPI cmd="-Ku -a1 -An -d1 -s1+s -d3+s -s6+s -d9+s -s12+s -d15+s -s20+s -d25+s -s30+s -d35+s -At,r,s -s1 -q1 -At,r,s -s5 -o2 -At,r,s -o1 -d1 -r1+s -s1+s -d3+s -At,r,s -f-1 -r1+s -At,r,s -s1 -o1+s -s-1" root-dir=($pathPull . "Containers/ByeDPI") dns=192.168.255.10 start-on-boot=yes comment="ByeDPI"
-:put "Start pull ByeDPI container, pls wait when container starting, pls wait"
-:delay 1
-}
-:if ([:len [/container/find comment="ByeDPI" and stopped]] > 0) do={
-/container/start [find where comment="ByeDPI" and stopped]
-:put "Container ByeDPI started"
-:set $flagContainer true
-}
-:if ([:len [/container/find comment="ByeDPI" and download/extract failed]] > 0) do={
-/container/repull [find where comment="ByeDPI"]
-:put "Container ByeDPI extract failed, repull, pls wait"
-:delay 1
-}
-:if ([:len [/container/find comment="ByeDPI" and (stopped or running)]] > 0) do={
-/container/start [find where comment="ByeDPI" and stopped]
-:delay 3
-:if ([:len [/container/find comment="ByeDPI" and running]] > 0) do={
-:put "Container ByeDPI started"
-:set $flagContainer true
-}
-:if ([:len [/container/find comment="ByeDPI" and stopped]] > 0) do={
-/container/repull [find where comment="ByeDPI"]
-:put "Container ByeDPI extract failed, repull, pls wait"
-:delay 1
-}
-}
-:if ([:len [/container/find comment="ByeDPI" and download/extract failed]] > 0) do={
-/container/repull [find where comment="ByeDPI"]
-:put "Container ByeDPI extract failed, repull, pls wait"
-:delay 1
-}
-:delay 1
-}
-
 :if ([:len [/system/script/find name="changeDNS"]] = 0) do={
 /system script
 add name=changeDNS source=":if ([:len [/container/find comment=\"DNSProxy\" and running]] > 0 and [/ip/dns/get servers]!=192.168.255.10) d\
@@ -609,6 +576,7 @@ o={\r\
 add interval=10s name=DNSchange on-event=changeDNS
 :put "Add shedule DNSchange check every 10s"
 } on-error {} 
+}
 
 /system/script/environment/remove [find where ]
 :put "Script complete, enjoy, for use WG,AWG pls push conf files on Mikrotik to path /awg_conf/"
