@@ -97,21 +97,10 @@ foreach i in=$slotArray do={
 :do {/ip/dns/forwarders/add name=MihomoProxyRoS dns-servers=192.168.255.2 verify-doh-cert=no
 :put "Add DNS Forwarders MihomoProxyRoS"} on-error {}
 
-:do {/interface/veth/add name=DNSProxy address=192.168.255.10/30 gateway=192.168.255.9
-:put "Create VETH DNSProxy"} on-error {}
-:do {/interface/list/member/add interface=DNSProxy list=InAccept
-:put "Add in interfacelist InAccept interface DNSProxy"} on-error {}
-:do {/ip/address/add address=192.168.255.9/30 interface=DNSProxy
-:put "Add address Mikrotik for interface DNSProxy"} on-error {}
-:do {/ip/dns/forwarders/add name=DNSProxy dns-servers=192.168.255.10 verify-doh-cert=no
-:put "Add DNS Forwarders DNSProxy"} on-error {}
-
 :do {/interface/list/add name=Containers
 :put "Create interfacelist Containers"} on-error {}
 :do {/interface/list/member/add interface=MihomoProxyRoS list=Containers
 :put "Add in interfacelist Containers interface MihomoProxyRoS"} on-error {}
-:do {/interface/list/member/add interface=DNSProxy list=Containers
-:put "Add in interfacelist Containers interface DNSProxy"} on-error {}
 
 :do {
 /ip dns forwarders
@@ -518,6 +507,17 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 }
 
 :if ($dnsproxy=true) do={
+:do {/interface/veth/add name=DNSProxy address=192.168.255.10/30 gateway=192.168.255.9
+:put "Create VETH DNSProxy"} on-error {}
+:do {/interface/list/member/add interface=DNSProxy list=InAccept
+:put "Add in interfacelist InAccept interface DNSProxy"} on-error {}
+:do {/ip/address/add address=192.168.255.9/30 interface=DNSProxy
+:put "Add address Mikrotik for interface DNSProxy"} on-error {}
+:do {/ip/dns/forwarders/add name=DNSProxy dns-servers=192.168.255.10 verify-doh-cert=no
+:put "Add DNS Forwarders DNSProxy"} on-error {}
+:do {/interface/list/member/add interface=DNSProxy list=Containers
+:put "Add in interfacelist Containers interface DNSProxy"} on-error {}
+
 :set flagContainer false
 :while ($flagContainer = false) do={
 :if ([:len [/container/find comment="DNSProxy"]] = 0) do={
