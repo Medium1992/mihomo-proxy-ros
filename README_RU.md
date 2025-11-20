@@ -48,7 +48,7 @@
 | Переменная              | По умолчанию                         | Описание |
 |------------------------|---------------------------------------|---------|
 | `DNS_MODE`             | `fake-ip`                             | Режим работы DNS сервера [DOCs](https://wiki.metacubex.one/ru/config/dns/#enhanced-mode) |
-| `NAMESERVER_POLICY`    | —                                     | Указание какие домены откуда резолвить [DOCs](https://wiki.metacubex.one/ru/config/dns/#nameserver-policy). Пример ENV `domain1#dns1,domain2#dns2` |
+| `NAMESERVER_POLICY`    | —                                     | Указание какие домены откуда резолвить [DOCs](https://wiki.metacubex.one/ru/config/dns/#nameserver-policy). Пример оформления ENV `domain1#dns1,domain2#dns2` |
 | `SNIFFER`              | `true`                                | [Сниффер доменов](https://wiki.metacubex.one/ru/config/sniff). Применяется при роутинге по доменам, когда домен резолвил не mihomo |
 | `FAKE_IP_RANGE`        | `198.18.0.0/15`                       | Диапазон Fake-IP пула [DOCs](https://wiki.metacubex.one/ru/config/dns/#fake-ip-range) |
 | `FAKE_IP_FILTER`       | —                                     | Список доменов через запятую, исключённых из Fake-IP [DOCs](https://wiki.metacubex.one/ru/config/dns/#fake-ip-filter). При выполнении скрипта задается `www.youtube.com` из-за особенностей работы youtube на телевизорах через BYEDPI и необходимости изменять MSS |
