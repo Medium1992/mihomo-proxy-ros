@@ -44,7 +44,7 @@ first_iface() {
 # ------------------- DIRECT -------------------
 generate_direct_yaml() {
   local iface=$(first_iface)
-  log "Generating $DIRECT_YAML with interface: $iface"
+  echo "Generating $DIRECT_YAML with interface: $iface"
   cat > "$DIRECT_YAML" <<EOF
 proxies:
   - name: "direct"
@@ -58,7 +58,7 @@ EOF
 # ------------------- BYEDPI -------------------
 generate_byedpi_yaml() {
   [ "$BYEDPI" = "true" ] || return 0
-  log "Generating $BYEDPI_YAML"
+  echo "Generating $BYEDPI_YAML"
   cat > "$BYEDPI_YAML" <<EOF
 proxies:
   - name: "BYEDPI"
@@ -192,7 +192,7 @@ generate_nameserver_policy() {
 
 # ------------------- CONFIG -------------------
 config_file_mihomo() {
-  log "Generating $CONFIG_YAML"
+  echo "Generating $CONFIG_YAML"
   mkdir -p "$CONFIG_DIR"
 
   LAST_UI_URL=$(cat "$UI_URL_CHECK" 2>/dev/null || true)
@@ -728,7 +728,7 @@ EOF
 
 # ------------------- NFT -------------------
 nft_rules() {
-  log "Applying nftables..."
+  echo "Applying nftables..."
   iface=$(first_iface)
   iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
   nft flush ruleset || true
@@ -756,7 +756,7 @@ fi
 }
 
 iptables_rules() {
-  log "Applying iptables..."
+  echo "Applying iptables..."
   local iface=$(first_iface)
   iptables -F
   iptables -X
@@ -827,11 +827,8 @@ run() {
     config_file
     hs5t_file
     echo "Starting ByeDPI v.$(./byedpi --version) "
-    log "Starting ByeDPI v.$(./byedpi --version)"
     echo "Starting hev-socks5-tunnel $(./hs5t --version | head -n 2 | tail -n 1)"
-    log "Starting hev-socks5-tunnel $(./hs5t --version | head -n 2 | tail -n 1)"
     echo "Starting Mihomo $(./mihomo -v)"
-    log "Starting Mihomo $(./mihomo -v)"
     local cmd_udp=$(printenv "$BYEDPI_CMD_UDP" || echo "$BYEDPI_CMD")
     ./byedpi --port 1100 --transparent $BYEDPI_CMD &
     ./byedpi --port 1090 $cmd_udp &
@@ -839,7 +836,6 @@ run() {
     exec ./mihomo
   fi
   echo "Starting Mihomo $(./mihomo -v)"
-  log "Starting Mihomo $(./mihomo -v)"
   exec ./mihomo
 }
 
