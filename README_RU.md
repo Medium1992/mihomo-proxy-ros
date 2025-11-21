@@ -51,6 +51,7 @@
 | `NAMESERVER_POLICY`    | —                                     | Указание какие домены откуда резолвить [DOCs](https://wiki.metacubex.one/ru/config/dns/#nameserver-policy). Пример оформления ENV `domain1#dns1,domain2#dns2` |
 | `SNIFFER`              | `true`                                | [Сниффер доменов](https://wiki.metacubex.one/ru/config/sniff). Применяется при роутинге по доменам, когда домен резолвил не mihomo |
 | `FAKE_IP_RANGE`        | `198.18.0.0/15`                       | Диапазон Fake-IP пула [DOCs](https://wiki.metacubex.one/ru/config/dns/#fake-ip-range) |
+| `TTL_FAKEIP`           | `1`                                   | Время жизни записи с FakeIP в кеше DNS в секундах |
 | `FAKE_IP_FILTER`       | —                                     | Список доменов через запятую, исключённых из Fake-IP [DOCs](https://wiki.metacubex.one/ru/config/dns/#fake-ip-filter). При выполнении скрипта задается `www.youtube.com` из-за особенностей работы youtube на телевизорах через BYEDPI и необходимости изменять MSS |
 | `FAKE_IP_FILTER_MODE`  | `blacklist`                           | Режим работы fakeip filter [DOCs](https://wiki.metacubex.one/ru/config/dns/#fake-ip-filter-mode-blacklist) |
 | `EXTERNAL_UI_URL`      | [ссылка](https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip) | Ссылка на веб-интерфейс (zip-архив) [DOCs](https://wiki.metacubex.one/ru/config/general/#url) |
