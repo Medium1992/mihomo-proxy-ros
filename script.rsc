@@ -173,6 +173,8 @@ add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0
 :put "Add env FAKE_IP_RANGE value: 198.18.0.0/15"} on-error {}
 :do {add key=FAKE_IP_FILTER list=MihomoProxyRoS value=www.youtube.com
 :put "Add env FAKE_IP_FILTER value: www.youtube.com"} on-error {}
+:do {add key=NAMESERVER_POLICY list=MihomoProxyRoS value="tmdb-image-prod.b-cdn.net#https://dns.quad9.net/dns-query,+.themoviedb.org#https://dns.quad9.net/dns-query,+.tmdb.org#https://dns.quad9.net/dns-query,+.instagram.com#https://dns.quad9.net/dns-query,+.facebook.com#https://dns.quad9.net/dns-query,+.fbcdn.net#https://dns.quad9.net/dns-query"
+:put "Add env NAMESERVER_POLICY value: instagram, facebook, tmdb from Quad9"} on-error {}
 :do {add key=LOG_LEVEL list=MihomoProxyRoS value=error
 :put "Add env LOG_LEVEL value: error"} on-error {}
 :do {add key=TTL_FAKEIP list=MihomoProxyRoS value=10
@@ -260,11 +262,6 @@ add address=8.8.4.4 list=DNS
 :do {add list=YT comment=YT_MSS address=www.youtube.com} on-error {}
 :do {add list=MihomoProxyRoS comment=YT address=www.youtube.com} on-error {}
 :do {add list=MihomoProxyRoS comment=TelegramFromAS31500 address=109.239.140.0/24} on-error {}
-
-/ip dns static
-:if ([:len [find name="themoviedb.org"]] = 0) do={ add address-list=MihomoProxyRoS forward-to=Quad9 comment="tmdb" match-subdomain=yes type=FWD name="themoviedb.org" }
-:if ([:len [find name="tmdb.org"]] = 0) do={ add address-list=MihomoProxyRoS forward-to=Quad9 comment="tmdb" match-subdomain=yes type=FWD name="tmdb.org" }
-:if ([:len [find name="tmdb-image-prod.b-cdn.net"]] = 0) do={ add address-list=MihomoProxyRoS forward-to=Quad9 comment="tmdb" type=FWD name="tmdb-image-prod.b-cdn.net" }
 
 :if ([:len [/system/script/find name="IP_MihomoProxyRoS"]] = 0) do={
 /system script
@@ -397,6 +394,7 @@ add name=FWD_update source="# Define global variables\r\
 \n\"tidal\";\r\
 \n\"tiktok\";\r\
 \n\"music\";\r\
+\n\"tmdb\";\r\
 \n\"x\";\r\
 \n\"xhamster\";\r\
 \n\"porn\";\r\
