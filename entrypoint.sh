@@ -348,12 +348,15 @@ EOF
     [ -z "$x_device_model" ] && [ -n "$def_device_model" ] && x_device_model="$def_device_model"
     [ -z "$x_user_agent" ] && [ -n "$def_user_agent" ] && x_user_agent="$def_user_agent"
 
+    proxy="DIRECT"
+    eval "proxy=\"\${${name}_PROXY:-DIRECT}\"" 2>/dev/null
+
     cat >> "$CONFIG_YAML" <<EOF
   $name:
     type: http
     url: "$url"
     interval: 86400
-    proxy: DIRECT
+    proxy: $proxy
 EOF
     if [ -n "$x_hwid" ] || [ -n "$x_device_os" ] || [ -n "$x_ver_os" ] || [ -n "$x_device_model" ] || [ -n "$x_user_agent" ]; then
       cat >> "$CONFIG_YAML" <<EOF
