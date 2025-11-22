@@ -802,15 +802,8 @@ EOF
 hs5t_file() {
   cat > /hs5t.sh << 'EOF'
 #!/bin/sh
-mkdir -p /etc/iproute2
-if [ ! -f /etc/iproute2/rt_tables ]; then
-   touch /etc/iproute2/rt_tables
-fi
-if ! grep -Eq "^500[[:space:]]*byedpi_udp\b" /etc/iproute2/rt_tables; then
-   echo "500 byedpi_udp" >> /etc/iproute2/rt_tables
-fi
-ip rule show | grep -q 'fwmark 0x22b8 lookup 500' || ip rule add fwmark 8888 ipproto udp table 500
-ip route replace default via 100.64.0.1 dev hs5t table 500
+ip rule show | grep -q 'fwmark 0x22b8 lookup 8888' || ip rule add fwmark 8888 ipproto udp table 8888
+ip route replace default via 100.64.0.1 dev hs5t table 8888
 EOF
 chmod +x /hs5t.sh
 }
