@@ -83,9 +83,9 @@ FROM alpine:latest
 ARG TARGETARCH
 COPY --from=builder /final /
 RUN if [ "$TARGETARCH" = "arm64" ] || [ "$TARGETARCH" = "amd64" ]; then \
-        apk add --no-cache ca-certificates tzdata iproute2 iptables iptables-legacy nftables; \
+        apk add --no-cache ca-certificates tzdata iproute2-minimal iptables iptables-legacy nftables; \
     elif [ "$TARGETARCH" = "arm" ]; then \
-        apk add --no-cache ca-certificates tzdata iproute2 iptables iptables-legacy; \
+        apk add --no-cache ca-certificates tzdata iproute2-minimal iptables iptables-legacy; \
     else \
         echo "Unsupported architecture: $TARGETARCH" && exit 1; \
     fi && \
