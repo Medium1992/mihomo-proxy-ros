@@ -802,7 +802,7 @@ EOF
 hs5t_file() {
   cat > /hs5t.sh << 'EOF'
 #!/bin/sh
-ip rule show | grep -q 'fwmark 0x22b8 lookup 8888' || ip rule add fwmark 8888 ipproto udp table 8888
+ip rule show | grep -q 'fwmark 0x22b8 ipproto udp lookup 8888' || ip rule add fwmark 8888 ipproto udp table 8888
 ip route replace default via 100.64.0.1 dev hs5t table 8888
 EOF
 chmod +x /hs5t.sh
