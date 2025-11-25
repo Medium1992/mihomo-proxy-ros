@@ -142,9 +142,9 @@ add address=3.ru.pool.ntp.org
 #set api-ssl disabled=yes
 #:put "Disable services ftp, ssh, telnet, www, api, api-ssl"
 /ip route
-add blackhole comment=BlackHole disabled=no distance=254 dst-address=10.0.0.0/8 gateway="" routing-table=main scope=30 suppress-hw-offload=no
-add blackhole comment=BlackHole disabled=no distance=254 dst-address=172.16.0.0/12 gateway="" routing-table=main scope=30 suppress-hw-offload=no
-add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0/16 gateway="" routing-table=main scope=30 suppress-hw-offload=no
+add blackhole comment=BlackHole distance=254 dst-address=10.0.0.0/8 gateway="" routing-table=main
+add blackhole comment=BlackHole distance=254 dst-address=172.16.0.0/12 gateway="" routing-table=main
+add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway="" routing-table=main
 :put "Add BlackHole route into routing table main"
 :put "delay 10s for NTP sync"
 :delay 10
