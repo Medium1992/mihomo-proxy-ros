@@ -117,8 +117,34 @@ just **copy and paste** the snippet below into the **RouterOS terminal**,
 then the script **automatically downloads** from the repository and **starts installation**.
 
 ```bash
-:global r [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/script.rsc mode=https output=user as-value]
-:if (($r->"status")="finished") do={
+:global currentVersion [/system resource get version];
+:global currentMinor [:pick $currentVersion ([:find $currentVersion "."] + 1) ([:find $currentVersion "."] + 3)];
+:global r
+:global statusPackage false
+:global statusDeviceMode [/system/device-mode/get container]
+
+:if ([:len [/system/package/find name=container available=no disabled=no]] >0) do={
+:set statusPackage true
+} else={
+:put "Please check the installation of the container package and its"
+}
+:if ($statusDeviceMode=false) do={
+:put "Please check /system/device-mode/print container enable"
+}
+:if ($currentMinor >= 21) do={
+:put "Current version 7.$currentMinor"
+:set r [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/script21.rsc mode=https output=user as-value]
+}
+:if ($currentMinor = 20) do={
+:put "Current version 7.$currentMinor"
+:set r [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/script.rsc mode=https output=user as-value]
+}
+:if ($currentMinor < 20) do={
+:put "Current version $currentVersion"
+:put "Update to at least version 7.20"
+}
+
+:if (($r->"status")="finished" and $statusPackage=true and $statusDeviceMode=true) do={
 :global content ($r->"data")
 :if ([:len $content] > 0) do={
 :global s [:parse $content]
@@ -126,12 +152,9 @@ then the script **automatically downloads** from the repository and **starts ins
 :put "script loading completed and started"
 $s
 /system/script/environment/remove [find where ]
-} else={
-:log warning "Invalid or empty content, script don't start"
-:put "Invalid or empty content, script don't start"
-/system/script/environment/remove [find where ]
 }
 }
+
 ```
 ### Docker compose example
 
