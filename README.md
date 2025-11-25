@@ -132,16 +132,16 @@ then the script **automatically downloads** from the repository and **starts ins
 :put "Please check /system/device-mode/print container enable"
 }
 :if ($currentMinor >= 21) do={
-:put "Current version 7.$currentMinor"
+:put "Current version RouterOS 7.$currentMinor"
 :set r [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/script21.rsc mode=https output=user as-value]
 }
 :if ($currentMinor = 20) do={
-:put "Current version 7.$currentMinor"
+:put "Current version RouterOS 7.$currentMinor"
 :set r [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/script.rsc mode=https output=user as-value]
 }
 :if ($currentMinor < 20) do={
-:put "Current version $currentVersion"
-:put "Update to at least version 7.20"
+:put "Current version RouterOS $currentVersion"
+:put "Update to at least version RouterOS 7.20"
 }
 
 :if (($r->"status")="finished" and $statusPackage=true and $statusDeviceMode=true) do={
