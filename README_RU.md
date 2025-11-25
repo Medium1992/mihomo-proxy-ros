@@ -121,7 +121,7 @@
 :if ([:len [/system/package/find name=container available=no disabled=no]] >0) do={
 :set statusPackage true
 } else={
-:put "Please check the installation of the container package and its"
+:put "Please check the installation of the container package"
 }
 :if ($statusDeviceMode=false) do={
 :put "Please check /system/device-mode/print container enable"
