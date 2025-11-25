@@ -133,14 +133,6 @@ add address=3.ru.pool.ntp.org
 /ipv6 nd set [ find default=yes ] advertise-dns=yes disabled=yes
 /ipv6 settings set accept-redirects=no accept-router-advertisements=no allow-fast-path=no disable-ipv6=yes disable-link-local-address=yes forward=no
 :put "Disable ipv6"
-#/ip service
-#set ftp disabled=yes
-#set ssh disabled=yes
-#set telnet disabled=yes
-#set www disabled=yes
-#set api disabled=yes
-#set api-ssl disabled=yes
-#:put "Disable services ftp, ssh, telnet, www, api, api-ssl"
 /ip route
 add blackhole comment=BlackHole distance=254 dst-address=10.0.0.0/8 gateway="" routing-table=main
 add blackhole comment=BlackHole distance=254 dst-address=172.16.0.0/12 gateway="" routing-table=main
@@ -479,7 +471,7 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 :delay 3
 :if ([:len [/container/find comment="MihomoProxyRoS" and running]] > 0) do={
 :put "Container MihomoProxyRoS started"
-:set $flagContainer true
+:set flagContainer true
 } else={
 /container/repull [find where comment="MihomoProxyRoS"]
 :put "Container MihomoProxyRoS pull failed, repull, pls wait"
@@ -513,7 +505,7 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 :delay 3
 :if ([:len [/container/find comment="DNSProxy" and running]] > 0) do={
 :put "Container DNSProxy started"
-:set $flagContainer true
+:set flagContainer true
 } else={
 :if ([:len [/container/find comment="DNSProxy" and (stopped or download/extract failed)]] > 0) do={
 /container/repull [find where comment="DNSProxy"]
