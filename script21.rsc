@@ -158,9 +158,9 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :if ([:len [/ip/route/find comment="MihomoProxyRoS0"]] = 0) do={
 /ip route 
 add dst-address=0.0.0.0/0 gateway=192.168.255.2 routing-table=MihomoProxyRoS comment="MihomoProxyRoS0"
-add blackhole comment=BlackHole disabled=no distance=254 dst-address=10.0.0.0/8 gateway="" routing-table=MihomoProxyRoS scope=30 suppress-hw-offload=no
-add blackhole comment=BlackHole disabled=no distance=254 dst-address=172.16.0.0/12 gateway="" routing-table=MihomoProxyRoS scope=30 suppress-hw-offload=no
-add blackhole comment=BlackHole disabled=no distance=254 dst-address=192.168.0.0/16 gateway="" routing-table=MihomoProxyRoS scope=30 suppress-hw-offload=no
+add blackhole comment=BlackHole distance=254 dst-address=10.0.0.0/8 gateway="" routing-table=MihomoProxyRoS
+add blackhole comment=BlackHole distance=254 dst-address=172.16.0.0/12 gateway="" routing-table=MihomoProxyRoS
+add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway="" routing-table=MihomoProxyRoS
 :put "Add default route 0.0.0.0/0 into routing table MihomoProxyRoS & BlackHole route"}
 
 :local softid [/system/license/get software-id]
