@@ -511,6 +511,7 @@ EOF
     echo "    url: \"$g_url\""
     echo "    expected-status: $g_status"
     echo "    interval: $g_interval"
+    echo "    timeout: 1500"
     case "$g_type" in
       url-test)
         [ -n "$g_tol" ] && echo "    tolerance: $g_tol"
@@ -585,6 +586,7 @@ EOF
       echo "    url: \"$g_url\""
       echo "    expected-status: $g_status"
       echo "    interval: $g_interval"
+      echo "    timeout: 1500"
       case "$type" in
         url-test)
           [ -n "$g_tol" ] && echo "    tolerance: $g_tol"
