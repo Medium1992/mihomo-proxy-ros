@@ -481,6 +481,21 @@ $(health_check_block)
 EOF
   providers="$providers DIRECT"
 
+# REJECT,REJECT-DROP
+  cat >> "$CONFIG_YAML" <<EOF
+  REJECT:
+    type: inline
+    payload:
+      - name: "REJECT"
+        type: reject
+  REJECT-DROP:
+    type: inline
+    payload:
+      - name: "REJECT-DROP"
+        type: reject
+        drop: true
+EOF
+
 # === ГРУППЫ + ПРАВИЛА ===
   {
     g_type="${GLOBAL_TYPE:-select}"
