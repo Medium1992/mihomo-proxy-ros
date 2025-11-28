@@ -466,7 +466,7 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 :put "Start pull MihomoProxyRoS container, pls wait when container starting, pls wait"
 :delay 1
 }
-:if ([:len [/container/find comment="MihomoProxyRoS" and (stopped or running or download/extract failed)]] > 0) do={
+:if ([:len [/container/find comment="MihomoProxyRoS" and (stopped or running or "download/extract failed")]] > 0) do={
 /container/start [find where comment="MihomoProxyRoS" and stopped]
 :delay 3
 :if ([:len [/container/find comment="MihomoProxyRoS" and running]] > 0) do={
@@ -500,18 +500,16 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 :put "Start pull DNSProxy container, pls wait when container starting, pls wait"
 :delay 1
 }
-:if ([:len [/container/find comment="DNSProxy" and (stopped or running or download/extract failed)]] > 0) do={
+:if ([:len [/container/find comment="DNSProxy" and (stopped or running or "download/extract failed")]] > 0) do={
 /container/start [find where comment="DNSProxy" and stopped]
 :delay 3
 :if ([:len [/container/find comment="DNSProxy" and running]] > 0) do={
 :put "Container DNSProxy started"
 :set flagContainer true
 } else={
-:if ([:len [/container/find comment="DNSProxy" and (stopped or download/extract failed)]] > 0) do={
 /container/repull [find where comment="DNSProxy"]
 :put "Container DNSProxy pull failed, repull, pls wait"
 :delay 1
-}
 }
 :delay 1
 }
