@@ -252,7 +252,7 @@ generate_nameserver_policy >>  $CONFIG_YAML
     cat >> "$CONFIG_YAML" <<EOF
   nameserver:
     - https://dns.google/dns-query
-    - https://1.1.1.1/dns-query
+    - https://cloudflare-dns.com/dns-query
     - https://dns.quad9.net/dns-query
 hosts:
   dns.google: [8.8.8.8, 8.8.4.4]
