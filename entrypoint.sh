@@ -540,7 +540,6 @@ EOF
   
   # all interfaces
 i=200
-echo "=== Found real interfaces (kernel order) ==="
 for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo") print $2}'); do
     route_line=$(ip route list dev "$iface" proto kernel scope link | head -n1)
     [ -z "$route_line" ] && { echo "[$i] $iface → no route, skip"; i=$((i+1)); continue; }
