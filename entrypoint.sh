@@ -62,20 +62,6 @@ first_iface() {
   ip -o link show | awk -F': ' '/link\/ether/ {print $2}' | cut -d'@' -f1 | head -n1
 }
 
-# ------------------- DIRECT -------------------
-generate_direct_yaml() {
-  local iface=$(first_iface)
-  echo "Generating $DIRECT_YAML with interface: $iface"
-  cat > "$DIRECT_YAML" <<EOF
-proxies:
-  - name: "direct"
-    type: direct
-    udp: true
-    ip-version: ipv4
-    interface-name: "$iface"
-EOF
-}
-
 # ------------------- BYEDPI -------------------
 generate_byedpi_yaml() {
   [ "$BYEDPI" = "true" ] || return 0
@@ -551,15 +537,58 @@ EOF
 EOF
     providers="$providers BYEDPI"
   fi
+  
+  # all interfaces
+i=200
+echo "=== Found real interfaces (kernel order) ==="
+for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo") print $2}'); do
+    route_line=$(ip route list dev "$iface" proto kernel scope link | head -n1)
+    [ -z "$route_line" ] && { echo "[$i] $iface → no route, skip"; i=$((i+1)); continue; }
+    network=$(echo "$route_line" | awk '{print $1}')
+    mask=$(echo "$network" | cut -d/ -f2)
+    net_addr=$(echo "$network" | cut -d/ -f1)
+    if [ "$mask" -eq 31 ] || [ "$mask" -eq 32 ]; then
+        gw="$net_addr"
+    else
+        gw=$(echo "$net_addr" | awk -F. '{printf "%d.%d.%d.%d", $1, $2, $3, $4+1}')
+    fi
+    if [ $i = 200 ]; then
+        ip route del default 2>/dev/null || true
+        ip route replace default via "$gw" dev "$iface"
+    else
+        ip route replace default via "$gw" dev "$iface" table $i
+        ip rule add fwmark $i table $i 2>/dev/null || true
+    fi
+  if [ $i = 200 ]; then
+    ip route del default
+    ip route replace default via $gw dev $iface
+  else
+    ip route replace default via $gw dev $iface table $i
+    ip rule show | grep -q "lookup $i" || ip rule add fwmark $i table $i
+  fi
 
-# DIRECT
+  echo "Generating $CONFIG_DIR/$iface.yaml with interface: $iface"
+  
+  cat > "$CONFIG_DIR/$iface.yaml" <<EOF
+proxies:
+  - name: "$iface"
+    type: direct
+    udp: true
+    ip-version: ipv4
+    interface-name: "$iface"
+    routing-mark: $i
+EOF
+
   cat >> "$CONFIG_YAML" <<EOF
-  DIRECT:
+  $iface:
     type: file
-    path: $(basename "$DIRECT_YAML")
+    path: $iface.yaml
 $(health_check_block)
 EOF
-  providers="$providers DIRECT"
+ 
+  providers="$providers $iface"
+  i=$((i+1))
+done
 
 # REJECT,REJECT-DROP
   cat >> "$CONFIG_YAML" <<EOF
@@ -629,7 +658,6 @@ EOF
         done
 
         if ! $has_resource; then
-          # ЛОГ ТОЛЬКО В КОНСОЛЬ
           continue
         fi
 
@@ -929,7 +957,6 @@ chmod +x /hs5t.sh
 # ------------------- RUN -------------------
 run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR"
-  generate_direct_yaml
   generate_byedpi_yaml
   if lsmod | grep -q '^nft_tproxy'; then
     nft_rules
