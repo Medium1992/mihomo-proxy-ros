@@ -56,7 +56,7 @@ as well as **adding new links** and other parameters via environment variables (
 | `NAMESERVER_POLICY` | — | Specifies which domains should be resolved by which DNS servers [DOCs](https://wiki.metacubex.one/en/config/dns/#nameserver-policy). ENV example: `domain1#dns1,domain2#dns2` |
 | `SNIFFER` | `true` | [Domain sniffer](https://wiki.metacubex.one/en/config/sniff). Applied when routing by domains, when the domain is resolved not by mihomo |
 | `FAKE_IP_RANGE` | `198.18.0.0/15` | Fake-IP pool range [DOCs](https://wiki.metacubex.one/en/config/dns/#fake-ip-range) |
-| `TTL_FAKEIP` | `1` | Lifetime of FakeIP record in DNS cache in seconds |
+| `FAKEIP_TTL` | `1` | Lifetime of FakeIP record in DNS cache in seconds |
 | `FAKE_IP_FILTER` | — | Comma-separated list of domains excluded from Fake-IP [DOCs](https://wiki.metacubex.one/en/config/dns/#fake-ip-filter). When running the script, `www.youtube.com` is set due to YouTube specifics on TVs via BYEDPI and the need to modify MSS |
 | `FAKE_IP_FILTER_MODE` | `blacklist` | Fakeip filter operation mode [DOCs](https://wiki.metacubex.one/en/config/dns/#fake-ip-filter-mode-blacklist) |
 | `EXTERNAL_UI_URL` | [link](https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip) | Web interface link (zip archive) [DOCs](https://wiki.metacubex.one/en/config/general/#url) |
