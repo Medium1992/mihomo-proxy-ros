@@ -31,6 +31,7 @@ DIRECT_YAML="$CONFIG_DIR/direct.yaml"
 BYEDPI_YAML="$CONFIG_DIR/byedpi.yaml"
 UI_URL_CHECK="$CONFIG_DIR/.ui_url"
 FAKE_IP_RANGE="${FAKE_IP_RANGE:-198.18.0.0/15}"
+FAKEIP_TTL="${FAKEIP_TTL:-1}"
 FAKE_IP_FILTER="${FAKE_IP_FILTER:-}"
 BYEDPI="${BYEDPI:-false}"
 BYEDPI_CMD="${BYEDPI_CMD:-}"
@@ -311,7 +312,8 @@ dns:
     - 1.1.1.1
   enhanced-mode: ${DNS_MODE:-fake-ip}
   fake-ip-filter-mode: ${FAKE_IP_FILTER_MODE:-blacklist}
-  fake-ip-range: ${FAKE_IP_RANGE}${FAKE_IP_FILTER:+
+  fake-ip-range: ${FAKE_IP_RANGE}
+  fake-ip-ttl: ${FAKEIP_TTL}${FAKE_IP_FILTER:+
   fake-ip-filter:}${FAKE_IP_FILTER:+$(printf '\n    - %s' $(echo "$FAKE_IP_FILTER" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$'))}
 EOF
 generate_nameserver_policy >>  $CONFIG_YAML
