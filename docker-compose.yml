@@ -3,6 +3,7 @@ services:
     environment:
       FAKE_IP_RANGE: "198.18.0.0/15"
       FAKE_IP_FILTER: "www.youtube.com"
+      FAKE_IP_TTL: "10"
       LOG_LEVEL: "error"
       BYEDPI: "true"
       BYEDPI_CMD: "--disorder 1 --fake 0 --ttl 1 --auto=torst --tlsrec 1+s --debug 1" #paste your strategy BYEDPI
