@@ -565,7 +565,8 @@ for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2
     ip route replace default via $gw dev $iface
   else
     ip route replace default via $gw dev $iface table $i
-    ip rule show | grep -q "lookup $i" || ip rule add fwmark $i table $i
+    ip rule del table $i 2>/dev/null
+    ip rule add fwmark $i table $i
   fi
 
   echo "Generating $CONFIG_DIR/$iface.yaml with interface: $iface"
