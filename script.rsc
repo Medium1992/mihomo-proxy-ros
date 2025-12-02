@@ -164,7 +164,9 @@ add blackhole comment=BlackHole distance=254 dst-address=172.16.0.0/12 gateway="
 add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway="" routing-table=MihomoProxyRoS
 :put "Add default route 0.0.0.0/0 into routing table MihomoProxyRoS & BlackHole route"}
 
-:local softid [/system/license/get software-id]
+:local softid 
+:do {:set softid [/system/license/get software-id]} on-error={}
+:do {:set softid [/system/license/get system-id]} on-error={}
 :local model [/system/resource/get board-name]
 :local version [/system/resource/get version]
 
