@@ -40,6 +40,7 @@ BYEDPI_CMD_UDP="${BYEDPI_CMD_UDP:-}"
 HEALTHCHECK_INTERVAL="${HEALTHCHECK_INTERVAL:-120}"
 HEALTHCHECK_URL="${HEALTHCHECK_URL:-https://www.gstatic.com/generate_204}"
 HEALTHCHECK_URL_STATUS="${HEALTHCHECK_URL_STATUS:-204}"
+HEALTHCHECK_PROVIDER="${HEALTHCHECK_PROVIDER:-true}"
 GROUP_URL="${GROUP_URL:-https://www.gstatic.com/generate_204}"
 GROUP_URL_STATUS="${GROUP_URL_STATUS:-204}"
 GROUP_INTERVAL="${GROUP_INTERVAL:-60}"
@@ -254,9 +255,12 @@ generate_awg_providers() {
   ${awg_name}:
     type: file
     path: ${awg_name}.yaml
+EOF
+    if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+      cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
 EOF
-
+    fi
       awg_providers="${awg_providers} ${awg_name}"
     done
   fi
@@ -390,8 +394,12 @@ EOF
   $provider_name:
     type: file
     path: ${provider_name}.yaml
+EOF
+    if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+      cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
 EOF
+    fi
       providers="$providers $provider_name"
     done
   fi
@@ -460,8 +468,12 @@ EOF
       [ -n "$x_user_agent" ] &&   echo "      User-Agent:" >> "$CONFIG_YAML" &&     echo "      - \"$x_user_agent\"" >> "$CONFIG_YAML"
     fi
     cat >> "$CONFIG_YAML" <<EOF
+EOF
+    if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+      cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
 EOF
+    fi
     providers="$providers $name"
   done < <(env | grep -E '^SUB_LINK[0-9]*=' | sort -t '=' -k1)
 
@@ -520,8 +532,12 @@ EOF
   $name:
     type: file
     path: ${name}.yaml
+EOF
+    if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+      cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
 EOF
+    fi
     providers="$providers $name"
   done < <(env | grep -E '^SOCKS[0-9]+=' | sort -V)
 
@@ -531,6 +547,9 @@ EOF
   BYEDPI:
     type: file
     path: $(basename "$BYEDPI_YAML")
+EOF
+    if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+      cat >> "$CONFIG_YAML" <<EOF
     health-check:
       enable: true
       url: ${HEALTHCHECK_URL_BYEDPI:-https://www.facebook.com}
@@ -539,6 +558,7 @@ EOF
       lazy: false
       expected-status: ${HEALTHCHECK_URL_STATUS_BYEDPI:-200}
 EOF
+    fi
     providers="$providers BYEDPI"
   fi
   
@@ -587,8 +607,12 @@ EOF
   $iface:
     type: file
     path: $iface.yaml
+EOF
+    if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+      cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
 EOF
+    fi
  
   providers="$providers $iface"
   i=$((i+1))
@@ -621,9 +645,11 @@ EOF
     echo "proxy-groups:"
     echo "  - name: GLOBAL"
     echo "    type: ${GLOBAL_TYPE:-select}"
-    echo "    url: \"$g_url\""
-    echo "    expected-status: $g_status"
-    echo "    interval: $g_interval"
+    if [ "${HEALTHCHECK_PROVIDER}" = "false" ]; then
+      echo "    url: \"$g_url\""
+      echo "    expected-status: $g_status"
+      echo "    interval: $g_interval"
+    fi
     echo "    timeout: 1500"
     case "$g_type" in
       url-test)
@@ -695,9 +721,11 @@ EOF
       echo
       echo "  - name: $g"
       echo "    type: $type"
-      echo "    url: \"$g_url\""
-      echo "    expected-status: $g_status"
-      echo "    interval: $g_interval"
+      if [ "${HEALTHCHECK_PROVIDER}" = "false" ]; then
+        echo "    url: \"$g_url\""
+        echo "    expected-status: $g_status"
+        echo "    interval: $g_interval"
+      fi
       echo "    timeout: 1500"
       case "$type" in
         url-test)
