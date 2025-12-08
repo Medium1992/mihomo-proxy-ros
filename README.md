@@ -113,6 +113,18 @@ as well as **adding new links** and other parameters via environment variables (
 
 ### MikroTik Terminal Installation Example
 
+First, make sure you have the `container` package installed and that the necessary device-mode functions are enabled.
+```bash
+/system/device-mode/print
+```
+Enable device-mode if necessary.
+Follow the instructions after executing the command below. You have 5 minutes to reboot the power supply or briefly press any button on the device (I recommend using any button).
+```bash
+/system/device-mode/update mode=advanced container=yes
+```
+
+Translated with DeepL.com (free version)
+
 🧩 Installation is done **directly via MikroTik terminal** —  
 just **copy and paste** the snippet below into the **RouterOS terminal**,  
 then the script **automatically downloads** from the repository and **starts installation**.
