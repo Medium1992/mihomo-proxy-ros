@@ -175,7 +175,7 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env FAKE_IP_RANGE value: 198.18.0.0/15"} on-error {}
 :do {add key=FAKE_IP_FILTER list=MihomoProxyRoS value=www.youtube.com
 :put "Add env FAKE_IP_FILTER value: www.youtube.com"} on-error {}
-:do {add key=NAMESERVER_POLICY list=MihomoProxyRoS value="tmdb-image-prod.b-cdn.net#https://dns.quad9.net/dns-query,+.themoviedb.org#https://dns.quad9.net/dns-query,+.tmdb.org#https://dns.quad9.net/dns-query,+.instagram.com#https://dns.quad9.net/dns-query,+.facebook.com#https://dns.quad9.net/dns-query,+.fbcdn.net#https://dns.quad9.net/dns-query"
+:do {add key=NAMESERVER_POLICY list=MihomoProxyRoS value="tmdb-image-prod.b-cdn.net#https://dns.quad9.net/dns-query,+.themoviedb.org#https://dns.quad9.net/dns-query,+.tmdb.org#https://dns.quad9.net/dns-query,rule-set:meta_geosite_meta#https://dns.quad9.net/dns-query"
 :put "Add env NAMESERVER_POLICY value: instagram, facebook, tmdb from Quad9"} on-error {}
 :do {add key=LOG_LEVEL list=MihomoProxyRoS value=error
 :put "Add env LOG_LEVEL value: error"} on-error {}
@@ -185,24 +185,32 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env BYEDPI value: true"} on-error {}
 :do {add key=BYEDPI_CMD list=MihomoProxyRoS value="-Ku -a1 -An -d1 -s1+s -d3+s -s6+s -d9+s -s12+s -d15+s -s20+s -d25+s -s30+s -d35+s -At,r,s -s1 -q1 -At,r,s -s5 -o2 -At,r,s -o1 -d1 -r1+s -s1+s -d3+s -At,r,s -f-1 -r1+s -At,r,s -s1 -o1+s -s-1"
 :put "Add env BYEDPI_CMD"} on-error {}
-:do { add key=GROUP list=MihomoProxyRoS value=youtube,telegram,discord
-:put "Add env GROUP value: youtube,telegram,discord,amazon"} on-error {}
+:do { add key=GROUP list=MihomoProxyRoS value=youtube,telegram,discord,meta,roblox
+:put "Add env GROUP value: youtube,telegram,discord,meta,roblox"} on-error {}
 :do { add key=YOUTUBE_GEOSITE list=MihomoProxyRoS value=youtube
 :put "Add env YOUTUBE_GEOSITE value: youtube"} on-error {}
-:do { add key=YOUTUBE_PRIORITY list=MihomoProxyRoS value=1
-:put "Add env YOUTUBE_PRIORITY value: 1"} on-error {}
 :do { add key=TELEGRAM_GEOSITE list=MihomoProxyRoS value=telegram
 :put "Add env TELEGRAM_GEOSITE value: telegram"} on-error {}
 :do { add key=TELEGRAM_GEOIP list=MihomoProxyRoS value=telegram
 :put "Add env TELEGRAM_GEOIP value: telegram"} on-error {}
 :do { add key=TELEGRAM_AS list=MihomoProxyRoS value=AS62041,AS59930,AS62014,AS211157,AS44907
 :put "Add env TELEGRAM_AS value: AS62041,AS59930,AS62014,AS211157,AS44907"} on-error {}
-:do { add key=TELEGRAM_PRIORITY list=MihomoProxyRoS value=2
-:put "Add env TELEGRAM_PRIORITY value: 2"} on-error {}
+:do { add key=TELEGRAM_IPCIDR list=MihomoProxyRoS value=109.239.140.0/24
+:put "Add env TELEGRAM_IPCIDR value: 109.239.140.0/24"} on-error {}
 :do { add key=DISCORD_GEOSITE list=MihomoProxyRoS value=discord
 :put "Add env DISCORD_GEOSITE value: telegram"} on-error {}
 :do { add key=DISCORD_GEOIP list=MihomoProxyRoS value=discord
 :put "Add env DISCORD_GEOIP value: telegram"} on-error {}
+:do { add key=META_GEOSITE list=MihomoProxyRoS value=meta
+:put "Add env META_GEOSITE value: meta"} on-error {}
+:do { add key=META_GEOIP list=MihomoProxyRoS value=facebook
+:put "Add env META_GEOIP value: facebook"} on-error {}
+:do { add key=META_AS list=MihomoProxyRoS value=AS32934,AS54115
+:put "Add env META_AS value: AS32934,AS54115"} on-error {}
+:do { add key=ROBLOX_GEOSITE list=MihomoProxyRoS value=roblox
+:put "Add env ROBLOX_GEOSITE value: roblox"} on-error {}
+:do { add key=ROBLOX_AS list=MihomoProxyRoS value=AS22697,AS11281,AS136766
+:put "Add env ROBLOX_AS value: AS22697,AS11281,AS136766"} on-error {}
 :do { add key=SW_ID_FOR_HWID list=MihomoProxyRoS value=$softid
 :put "Add env SW_ID_FOR_HWID value: $softid"} on-error {}
 :do { add key=DEVICE_OS list=MihomoProxyRoS value=RouterOS
@@ -254,10 +262,10 @@ add address=8.8.4.4 list=DNS
 :if ([:len [find comment="Accept_no_mark"]] = 0) do={add action=accept chain=prerouting connection-mark=no-mark connection-state=established,related,untracked comment="Accept_no_mark"; :put "Add mangle rules 2"}
 :if ([:len [find comment="AcceptInWAN&Containers"]] = 0) do={add action=accept chain=prerouting in-interface-list=InAccept comment="AcceptInWAN&Containers"; :put "Add mangle rules 3"}
 :if ([:len [find comment="RoutingToMihomo2"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="RoutingToMihomo2"; :put "Add mangle rules 4"}
-:if ([:len [find comment="MarkConnAddressList"]] = 0) do={add action=mark-connection chain=prerouting connection-state=new dst-address-list=MihomoProxyRoS new-connection-mark=MihomoProxyRoS comment="MarkConnAddressList"; :put "Add mangle rules 5"}
-:if ([:len [find comment="Telegram_RTC"]] = 0) do={add action=mark-connection chain=prerouting connection-state=new content="\12\A4\42" dst-address-list=Telegram in-interface-list=LAN new-connection-mark=MihomoProxyRoS protocol=udp comment="Telegram_RTC"; :put "Add mangle rules 6"}
-:if ([:len [find comment="Discord_RTC"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=102 connection-state=new content="\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19294-19344,50000-50100 protocol=udp comment="Discord_RTC"; :put "Add mangle rules 7"}
-:if ([:len [find comment="Discord_WebRTC"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=128 connection-state=new content="\12\A4\42" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19294-19344,50000-50100 protocol=udp comment="Discord_WebRTC"; :put "Add mangle rules 8"}
+:if ([:len [find comment="MarkConnAddressList"]] = 0) do={add action=mark-connection chain=prerouting connection-mark=no-mark connection-state=new dst-address-list=MihomoProxyRoS new-connection-mark=MihomoProxyRoS comment="MarkConnAddressList"; :put "Add mangle rules 5"}
+:if ([:len [find comment="Telegram_RTC"]] = 0) do={add action=mark-connection chain=prerouting connection-mark=no-mark connection-state=new content="\12\A4\42" dst-address-list=Telegram in-interface-list=LAN new-connection-mark=MihomoProxyRoS protocol=udp comment="Telegram_RTC"; :put "Add mangle rules 6"}
+:if ([:len [find comment="Discord_RTC"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=102 connection-mark=no-mark connection-state=new content="\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19294-19344,50000-50100 protocol=udp comment="Discord_RTC"; :put "Add mangle rules 7"}
+:if ([:len [find comment="Discord_WebRTC"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=128 connection-mark=no-mark connection-state=new content="\12\A4\42" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19294-19344,50000-50100 protocol=udp comment="Discord_WebRTC"; :put "Add mangle rules 8"}
 :if ([:len [find comment="RoutingToMihomo1"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="RoutingToMihomo1"; :put "Add mangle rules 9"}
 
 /ip firewall address-list
@@ -272,15 +280,22 @@ add name=IP_MihomoProxyRoS source="# Define global variables\r\
 \n\r\
 \n# List of resources corresponding to RSC files\r\
 \n:global resources {\r\
+\n# Twitter\r\
 \n\"geoipv4/twitter\";\r\
 \n\"asnv4/AS13414\";\r\
 \n\"asnv4/AS63179\";\r\
 \n\"asnv4/AS35995\";\r\
+\n# Meta\r\
 \n\"geoipv4/facebook\";\r\
 \n\"asnv4/AS32934\";\r\
 \n\"asnv4/AS54115\";\r\
+\n# NetFlix\r\
 \n\"geoipv4/netflix\";\r\
 \n\"asnv4/AS2906\"\r\
+\n# Roblox\r\
+\n\"asnv4/AS22697\"\r\
+\n\"asnv4/AS11281\"\r\
+\n\"asnv4/AS136766\"\r\
 \n}\r\
 \n\r\
 \n# Base URL for RSC files\r\
@@ -327,6 +342,7 @@ add name=IP_Telegram source="# Define global variables\r\
 \n\r\
 \n# List of resources corresponding to RSC files\r\
 \n:global resources {\r\
+\n# Telegram\r\
 \n\"geoipv4/telegram\";\r\
 \n\"asnv4/AS62041\";\r\
 \n\"asnv4/AS59930\";\r\
@@ -384,8 +400,8 @@ add name=FWD_update source="# Define global variables\r\
 \n\"meta\";\r\
 \n\"netflix\";\r\
 \n\"discord\";\r\
-\n\"torrent\";\r\
 \n\"rutracker\";\r\
+\n\"torrent\";\r\
 \n\"adguard\";\r\
 \n\"anime\";\r\
 \n\"deepl\";\r\
@@ -399,16 +415,16 @@ add name=FWD_update source="# Define global variables\r\
 \n\"tmdb\";\r\
 \n\"x\";\r\
 \n\"xhamster\";\r\
+\n\"kinopub\";\r\
 \n\"porn\";\r\
 \n\"video\";\r\
-\n\"telegram\"\r\
 \n\"claude\";\r\
 \n\"xai\";\r\
 \n\"notion\";\r\
 \n\"twitch\";\r\
 \n\"supercell\";\r\
 \n\"xbox\";\r\
-\n\"playstation\";\r\
+\n\"roblox\";\r\
 \n\"pornhub\"\r\
 \n}\r\
 \n\r\
