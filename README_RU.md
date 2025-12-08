@@ -20,7 +20,7 @@
 
 - 🌍 Мультиархитектура: ARM, ARM64, AMD64v1-v3
 - ⚙️ Автоматизированная установка через терминал MikroTik с использованием скрипта в конце описания
-- 🔐 Обход DPI с помощью ByeDPI (спасибо за контейнер [wiktorbgu](https://hub.docker.com/r/wiktorbgu/byedpi-mikrotik), вы можете изменить стратегию в CMD контейнера)
+- 🔐 Обход DPI с помощью ByeDPI (спасибо за контейнер [wiktorbgu](https://hub.docker.com/r/wiktorbgu/byedpi-mikrotik), вы можете изменить стратегию в CMD контейнера, для подбора стратегий есть такой вариант [byedpi-orchestrator](https://hub.docker.com/r/vindibona/byedpi-orchestrator))
 - 🌐 DNSProxy: мультирезолв с нескольких DNS-серверов, поддержка всех протоколов DNS (Установка по желанию)
 - 🧩 Гибкая маршрутизация и управление пулом доменов, ip, AS через ENVs
 - 🛡️ Возможность добавления нескольких прокси-ссылок, а также подписок(включая подписки RemnaWave с HWID) через ENVs
