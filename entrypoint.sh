@@ -3,7 +3,7 @@
 if ! lsmod | grep nf_tables >/dev/null 2>&1; then
   if ! apk info -e iptables iptables-legacy >/dev/null 2>&1; then
     echo "Install iptables"
-    apk add --no-cache --no-scripts iptables iptables-legacy >/dev/null 2>&1
+    apk add --no-cache iptables iptables-legacy >/dev/null 2>&1
     rm -f /usr/sbin/iptables /usr/sbin/iptables-save /usr/sbin/iptables-restore
     ln -s /usr/sbin/iptables-legacy /usr/sbin/iptables
     ln -s /usr/sbin/iptables-legacy-save /usr/sbin/iptables-save
@@ -12,7 +12,7 @@ if ! lsmod | grep nf_tables >/dev/null 2>&1; then
 else
   if ! apk info -e nftables >/dev/null 2>&1; then
     echo "Install nftables"
-    apk add --no-cache --no-scripts nftables >/dev/null 2>&1
+    apk add --no-cache nftables >/dev/null 2>&1
   fi
   if apk info -e iptables iptables-legacy >/dev/null 2>&1; then
     echo "Delete iptables"
