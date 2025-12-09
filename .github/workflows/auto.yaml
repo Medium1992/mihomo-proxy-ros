@@ -66,9 +66,17 @@ jobs:
           echo "hev_socks5_tunnel=${{ env.hev_socks5_tunnel }}" >> VERSIONS
           echo "byedpi=${{ env.byedpi }}" >> VERSIONS    
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         if: steps.check_versions.outputs.build_needed == 'true'
         uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          driver-opts: |
+            image=moby/buildkit:master
+            network=host
 
       - name: Login to GitHub Container Registry
         if: steps.check_versions.outputs.build_needed == 'true'
