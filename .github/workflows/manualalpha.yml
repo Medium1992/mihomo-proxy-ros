@@ -29,9 +29,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+    
       # 3. Устанавливаем Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          driver-opts: |
+            image=moby/buildkit:master
+            network=host
 
       # 4. Логинимся в GHCR
       - name: Login to GitHub Container Registry
