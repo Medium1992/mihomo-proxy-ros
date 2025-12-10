@@ -265,10 +265,10 @@ add address=8.8.4.4 list=DNS
 :do {add list=MihomoProxyRoS comment=TelegramFromAS31500 address=109.239.140.0/24} on-error {}
 
 /ip dns static
-:do {add disabled=no name=mask.icloud.com ttl=1d type=NXDOMAIN} on-error {}
-:do {add disabled=no name=mask-h2.icloud.com ttl=1d type=NXDOMAIN} on-error {}
-:do {add disabled=no name=doh.dns.apple.com ttl=1d type=NXDOMAIN} on-error {}
-:do {add disabled=no name=dns.apple.com ttl=1d type=NXDOMAIN} on-error {}
+:if ([:len [find name="mask.icloud.com"]] = 0) do={ add name="mask.icloud.com" type=NXDOMAIN }
+:if ([:len [find name="mask-h2.icloud.com"]] = 0) do={ add name="mask-h2.icloud.com" type=NXDOMAIN }
+:if ([:len [find name="doh.dns.apple.com"]] = 0) do={ add name="doh.dns.apple.com" type=NXDOMAIN }
+:if ([:len [find name="dns.apple.com"]] = 0) do={ add name="dns.apple.com" type=NXDOMAIN }
 
 :if ([:len [/system/script/find name="IP_MihomoProxyRoS"]] = 0) do={
 /system script
