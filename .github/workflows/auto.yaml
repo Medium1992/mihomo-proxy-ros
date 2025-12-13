@@ -106,9 +106,6 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
-            TAG=${{ env.mihomo }}
-            BUILDTIME=${{ env.BUILDTIME }}
-            WITH_GVISOR=1
             AMD64VERSION=v1
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}
@@ -127,9 +124,6 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
-            TAG=${{ env.mihomo }}
-            BUILDTIME=${{ env.BUILDTIME }}
-            WITH_GVISOR=1
             AMD64VERSION=v2
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}
@@ -145,12 +139,9 @@ jobs:
         with:
           context: ./
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v5
           push: true
           build-args: |
-            TAG=${{ env.mihomo }}
-            BUILDTIME=${{ env.BUILDTIME }}
-            WITH_GVISOR=1
             AMD64VERSION=v3
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}
