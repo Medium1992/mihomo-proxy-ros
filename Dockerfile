@@ -51,7 +51,7 @@ FROM --platform=linux/amd64 alpine:latest AS linux-amd64
 FROM --platform=linux/arm64 alpine:latest AS linux-arm64
 FROM --platform=linux/arm/v7 alpine:latest AS linux-armv7
 FROM --platform=linux/arm/v5 scratch AS linux-armv5
-ADD rootfs/armv5/rootfs.tar /
+ADD rootfs.tar /
 
 FROM ${TARGETOS}-${TARGETARCH}${TARGETVARIANT}
 ARG TARGETARCH
