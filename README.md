@@ -23,7 +23,7 @@ which also If set installs and runs standalone dnsproxy from AdGuardHome **dnspr
 
 - 🌍 Multi-architecture: ARM, ARM64, AMD64v1-v3  
 - ⚙️ Automated installation via MikroTik terminal using the script at the end of this description  
-- 🔐 DPI bypass via ByeDPI (thanks to [wiktorbgu](https://hub.docker.com/r/wiktorbgu/byedpi-mikrotik), you can modify the strategy in the container CMD. For selecting strategies, there is an option called [byedpi-orchestrator](https://hub.docker.com/r/vindibona/byedpi-orchestrator).)  
+- 🔐 DPI bypass via ByeDPI (You can change the strategy in the container’s ENVs. For selecting strategies, there is an option called [byedpi-orchestrator](https://hub.docker.com/r/vindibona/byedpi-orchestrator).) 
 - 🌐 DNSProxy: multi-resolve from multiple DNS servers, supports all DNS protocols (Optional)
 - 🧩 Flexible routing and management of domain, IP, and AS pools via ENVs  
 - 🛡️ Ability to add multiple proxy links and subscriptions (including RemnaWave subscriptions with HWID) via ENVs  
