@@ -68,7 +68,7 @@ RUN if [ "$TARGETARCH" = "arm64" ] || [ "$TARGETARCH" = "amd64" ]; then \
     rm -f /usr/sbin/iptables /usr/sbin/iptables-save /usr/sbin/iptables-restore && \
     ln -s /usr/sbin/iptables-legacy /usr/sbin/iptables && \
     ln -s /usr/sbin/iptables-legacy-save /usr/sbin/iptables-save && \
-    ln -s /usr/sbin/iptables-legacy-restore /usr/sbin/iptables-restore;
+    ln -s /usr/sbin/iptables-legacy-restore /usr/sbin/iptables-restore; \
     fi
 
 ENTRYPOINT ["/entrypoint.sh"]
