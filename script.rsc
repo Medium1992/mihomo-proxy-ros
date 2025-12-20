@@ -297,11 +297,11 @@ add name=IP_MihomoProxyRoS source="# Define global variables\r\
 \n\"asnv4/AS54115\";\r\
 \n# NetFlix\r\
 \n\"geoipv4/netflix\";\r\
-\n\"asnv4/AS2906\"\r\
+\n\"asnv4/AS2906\";\r\
 \n# Roblox\r\
-\n\"asnv4/AS22697\"\r\
-\n\"asnv4/AS11281\"\r\
-\n\"asnv4/AS136766\"\r\
+\n\"asnv4/AS22697\";\r\
+\n\"asnv4/AS11281\";\r\
+\n\"asnv4/AS136766\";\r\
 \n}\r\
 \n\r\
 \n# Base URL for RSC files\r\
