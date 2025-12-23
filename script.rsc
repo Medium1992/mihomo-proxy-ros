@@ -164,12 +164,6 @@ add blackhole comment=BlackHole distance=254 dst-address=172.16.0.0/12 gateway="
 add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway="" routing-table=MihomoProxyRoS
 :put "Add default route 0.0.0.0/0 into routing table MihomoProxyRoS & BlackHole route"}
 
-:local softid 
-:do {:set softid [/system/license/get software-id]} on-error={}
-:do {:set softid [/system/license/get system-id]} on-error={}
-:local model [/system/resource/get board-name]
-:local version [/system/resource/get version]
-
 /container/envs
 :do {add key=FAKE_IP_RANGE list=MihomoProxyRoS value=198.18.0.0/15
 :put "Add env FAKE_IP_RANGE value: 198.18.0.0/15"} on-error {}
@@ -185,8 +179,8 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env BYEDPI value: true"} on-error {}
 :do {add key=BYEDPI_CMD list=MihomoProxyRoS value="-Ku -a1 -An -d1 -s1+s -d3+s -s6+s -d9+s -s12+s -d15+s -s20+s -d25+s -s30+s -d35+s -At,r,s -s1 -q1 -At,r,s -s5 -o2 -At,r,s -o1 -d1 -r1+s -s1+s -d3+s -At,r,s -f-1 -r1+s -At,r,s -s1 -o1+s -s-1"
 :put "Add env BYEDPI_CMD"} on-error {}
-:do { add key=GROUP list=MihomoProxyRoS value=youtube,telegram,discord,meta,roblox
-:put "Add env GROUP value: youtube,telegram,discord,meta,roblox"} on-error {}
+:do { add key=GROUP list=MihomoProxyRoS value=youtube,telegram,discord,meta,roblox,AI
+:put "Add env GROUP value: youtube,telegram,discord,meta,roblox,AI"} on-error {}
 :do { add key=YOUTUBE_GEOSITE list=MihomoProxyRoS value=youtube
 :put "Add env YOUTUBE_GEOSITE value: youtube"} on-error {}
 :do { add key=TELEGRAM_GEOSITE list=MihomoProxyRoS value=telegram
@@ -211,16 +205,8 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env ROBLOX_GEOSITE value: roblox"} on-error {}
 :do { add key=ROBLOX_AS list=MihomoProxyRoS value=AS22697,AS11281,AS136766
 :put "Add env ROBLOX_AS value: AS22697,AS11281,AS136766"} on-error {}
-:do { add key=SW_ID_FOR_HWID list=MihomoProxyRoS value=$softid
-:put "Add env SW_ID_FOR_HWID value: $softid"} on-error {}
-:do { add key=DEVICE_OS list=MihomoProxyRoS value=RouterOS
-:put "Add env DEVICE_OS value:RouterOS"} on-error {}
-:do { add key=VER_OS list=MihomoProxyRoS value=$version
-:put "Add env VER_OS value: $version"} on-error {}
-:do { add key=DEVICE_MODEL list=MihomoProxyRoS value=$model
-:put "Add env DEVICE_MODEL value: $model"} on-error {}
-:do { add key=USER_AGENT list=MihomoProxyRoS value=medium1992/mihomo-proxy-ros
-:put "Add env USER_AGENT value: medium1992/mihomo-proxy-ros"} on-error {}
+:do { add key=AI_GEOSITE list=MihomoProxyRoS value=category-ai-!cn
+:put "Add env AI_GEOSITE value: category-ai-!cn"} on-error {}
 :do {
 add key=LINK1 list=MihomoProxyRoS value=$inputLINK
 :put "Add env LINK1 value: $inputLINK"
@@ -411,6 +397,7 @@ add name=FWD_update source="# Define global variables\r\
 \n\"adguard\";\r\
 \n\"anime\";\r\
 \n\"deepl\";\r\
+\n\"category-ai-!cn\";\r\
 \n\"openai\";\r\
 \n\"google-gemini\";\r\
 \n\"canva\";\r\
@@ -492,10 +479,12 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 :while ($flagContainer = false) do={
 :if ([:len [/container/mounts/find comment="MihomoProxyRoSAWG"]] = 0) do={
 :do { /file/add name=awg_conf type=directory} on-error {}
+:do { /file/add name=proxies_yaml type=directory} on-error {}
 /container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ name=awg_conf comment="MihomoProxyRoSAWG"
+/container/mounts/add src=/proxies_yaml/ dst=/root/.config/mihomo/proxies_mount/ name=proxies_yaml comment="MihomoProxyRoSProxies"
 }
 :if ([:len [/container/find comment="MihomoProxyRoS"]] = 0) do={
-/container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mount=awg_conf interface=MihomoProxyRoS root-dir=($pathPull . "Containers/MihomoProxyRoS") start-on-boot=yes comment="MihomoProxyRoS"
+/container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mounts=awg_conf,proxies_yaml interface=MihomoProxyRoS root-dir=($pathPull . "Containers/MihomoProxyRoS") start-on-boot=yes comment="MihomoProxyRoS"
 :put "Start pull MihomoProxyRoS container, pls wait when container starting, pls wait"
 :delay 1
 }
