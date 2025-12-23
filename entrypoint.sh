@@ -26,9 +26,8 @@ EXTERNAL_UI_URL="${EXTERNAL_UI_URL:-https://github.com/MetaCubeX/metacubexd/arch
 UI_SECRET="${UI_SECRET:-}"
 CONFIG_DIR="/root/.config/mihomo"
 AWG_DIR="$CONFIG_DIR/awg"
-LINKS_YAML="$CONFIG_DIR/links.yaml"
+PROXIES_DIR="$CONFIG_DIR/proxies_mount"
 CONFIG_YAML="$CONFIG_DIR/config.yaml"
-DIRECT_YAML="$CONFIG_DIR/direct.yaml"
 BYEDPI_YAML="$CONFIG_DIR/byedpi.yaml"
 UI_URL_CHECK="$CONFIG_DIR/.ui_url"
 FAKE_IP_RANGE="${FAKE_IP_RANGE:-198.18.0.0/15}"
@@ -267,6 +266,32 @@ EOF
   echo "$awg_providers"
 }
 
+# ------------------- MOUNTED PROXIES -------------------
+generate_mounted_providers() {
+  local mounted_providers=""
+  if ls "$PROXIES_DIR"/*.yaml >/dev/null 2>&1 || ls "$PROXIES_DIR"/*.yml >/dev/null 2>&1; then
+    for yaml_file in "$PROXIES_DIR"/*.yaml "$PROXIES_DIR"/*.yml; do
+      [ ! -f "$yaml_file" ] && continue
+      local provider_name=$(basename "$yaml_file" .yaml)
+      [ "$provider_name" = "$(basename "$yaml_file")" ] && provider_name=$(basename "$yaml_file" .yml)
+      local target_yaml="${CONFIG_DIR}/${provider_name}.yaml"
+      cp "$yaml_file" "$target_yaml"
+      cat >> "$CONFIG_YAML" <<EOF
+  ${provider_name}:
+    type: file
+    path: ${provider_name}.yaml
+EOF
+      if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+        cat >> "$CONFIG_YAML" <<EOF
+$(health_check_block)
+EOF
+      fi
+      mounted_providers="${mounted_providers} ${provider_name}"
+    done
+  fi
+  echo "$mounted_providers"
+}
+
 #   NAMESERVER_POLICY="domain1#dns1,domain2#dns2"
 generate_nameserver_policy() {
   [ -z "${NAMESERVER_POLICY:-}" ] && return
@@ -403,53 +428,24 @@ EOF
       providers="$providers $provider_name"
     done
   fi
+  
+  # MOUNTED PROXIES from $PROXIES_DIR
+  mounted_provs=$(generate_mounted_providers)
+  providers="${providers}${mounted_provs}"
 
   # SUB_LINK
   while IFS= read -r var; do
     name=$(echo "$var" | cut -d '=' -f1)
-    value=$(echo "$var" | cut -d '=' -f2-)
-    url=$(echo "$value" | cut -d '#' -f1)
-    headers_raw=$(echo "$value" | cut -d '#' -f2-)
-    headers_clean=$(echo "$headers_raw" | sed 's/^[[:space:]]*#*[[:space:]]*//; s/[[:space:]]*$//' | tr -d '\r')
-
-    if [ -n "${SW_ID_FOR_HWID:-}" ]; then
-        def_hwid=$(printf '%s' "$SW_ID_FOR_HWID" | busybox sha256sum | busybox cut -c1-16)
-    else
-        def_hwid=""
-    fi
-    def_device_os="${DEVICE_OS:-}"
-    def_ver_os="${VER_OS:-}"
-    def_device_model="${DEVICE_MODEL:-}"
-    def_user_agent="${USER_AGENT:-}"
-    
-    x_hwid=""; x_device_os=""; x_ver_os=""; x_device_model=""; x_user_agent=""
-
-    if [ -n "$headers_clean" ]; then
-      OLDIFS=$IFS; IFS='#'
-      for pair in $headers_clean; do
-        [ -z "$pair" ] && continue
-        key=$(echo "$pair" | cut -d'=' -f1)
-        val=$(echo "$pair" | cut -d'=' -f2-)
-        case "$key" in
-          x-hwid) x_hwid="$val" ;;
-          x-device-os) x_device_os="$val" ;;
-          x-ver-os) x_ver_os="$val" ;;
-          x-device-model) x_device_model="$val" ;;
-          user-agent) x_user_agent="$val" ;;
-        esac
-      done
-      IFS=$OLDIFS
-    fi
-
-    [ -z "$x_hwid" ] && [ -n "$def_hwid" ] && x_hwid="$def_hwid"
-    [ -z "$x_device_os" ] && [ -n "$def_device_os" ] && x_device_os="$def_device_os"
-    [ -z "$x_ver_os" ] && [ -n "$def_ver_os" ] && x_ver_os="$def_ver_os"
-    [ -z "$x_device_model" ] && [ -n "$def_device_model" ] && x_device_model="$def_device_model"
-    [ -z "$x_user_agent" ] && [ -n "$def_user_agent" ] && x_user_agent="$def_user_agent"
-
+    url=$(echo "$var" | cut -d '=' -f2- | tr -d '\r')
     proxy="DIRECT"
     eval "proxy=\"\${${name}_PROXY:-DIRECT}\"" 2>/dev/null
-
+    headers_env_name="${name}_HEADERS"
+    headers_raw=$(eval "echo \"\${$headers_env_name+x}\"" 2>/dev/null)
+    if [ -n "$headers_raw" ]; then
+      headers_raw=$(eval "echo \"\${$headers_env_name}\"" | tr -d '\r')
+    else
+      headers_raw=""
+    fi
     cat >> "$CONFIG_YAML" <<EOF
   $name:
     type: http
@@ -457,15 +453,23 @@ EOF
     interval: 86400
     proxy: $proxy
 EOF
-    if [ -n "$x_hwid" ] || [ -n "$x_device_os" ] || [ -n "$x_ver_os" ] || [ -n "$x_device_model" ] || [ -n "$x_user_agent" ]; then
+    if [ -n "$headers_raw" ]; then
       cat >> "$CONFIG_YAML" <<EOF
     header:
 EOF
-      [ -n "$x_hwid" ] &&         echo "      x-hwid:" >> "$CONFIG_YAML" &&         echo "      - \"$x_hwid\"" >> "$CONFIG_YAML"
-      [ -n "$x_device_os" ] &&    echo "      x-device-os:" >> "$CONFIG_YAML" &&    echo "      - \"$x_device_os\"" >> "$CONFIG_YAML"
-      [ -n "$x_ver_os" ] &&       echo "      x-ver-os:" >> "$CONFIG_YAML" &&       echo "      - \"$x_ver_os\"" >> "$CONFIG_YAML"
-      [ -n "$x_device_model" ] && echo "      x-device-model:" >> "$CONFIG_YAML" && echo "      - \"$x_device_model\"" >> "$CONFIG_YAML"
-      [ -n "$x_user_agent" ] &&   echo "      User-Agent:" >> "$CONFIG_YAML" &&     echo "      - \"$x_user_agent\"" >> "$CONFIG_YAML"
+      OLDIFS=$IFS
+      IFS='#'
+      for pair in $headers_raw; do
+        [ -z "$pair" ] && continue
+        pair=$(echo "$pair" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        key=$(echo "$pair" | cut -d'=' -f1)
+        val=$(echo "$pair" | cut -d'=' -f2-)
+        [ -z "$key" ] || [ -z "$val" ] && continue
+        val_escaped=$(echo "$val" | sed 's/"/\\"/g')
+        echo "      $key:" >> "$CONFIG_YAML"
+        echo "      - \"$val_escaped\"" >> "$CONFIG_YAML"
+      done
+      IFS=$OLDIFS
     fi
     cat >> "$CONFIG_YAML" <<EOF
 EOF
@@ -475,7 +479,7 @@ $(health_check_block)
 EOF
     fi
     providers="$providers $name"
-  done < <(env | grep -E '^SUB_LINK[0-9]*=' | sort -t '=' -k1)
+  done < <(env | grep -E '^SUB_LINK[0-9]+=' | sort -V)
 
   # AWG
   awg_provs=$(generate_awg_providers)
@@ -988,7 +992,7 @@ chmod +x /hs5t.sh
 
 # ------------------- RUN -------------------
 run() {
-  mkdir -p "$CONFIG_DIR" "$AWG_DIR"
+  mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$PROXIES_DIR"
   generate_byedpi_yaml
   if lsmod | grep -q '^nft_tproxy'; then
     nft_rules
