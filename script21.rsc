@@ -196,8 +196,8 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env ROBLOX_GEOSITE value: roblox"} on-error {}
 :do { add key=ROBLOX_AS list=MihomoProxyRoS value=AS22697,AS11281,AS136766
 :put "Add env ROBLOX_AS value: AS22697,AS11281,AS136766"} on-error {}
-:do { add key=AI_GEOSITE list=MihomoProxyRoS value=category-ai-!cn
-:put "Add env AI_GEOSITE value: category-ai-!cn"} on-error {}
+:do { add key=AI_GEOSITE list=MihomoProxyRoS value=category-ai-!cn,openai,google-gemini
+:put "Add env AI_GEOSITE value: category-ai-!cn,openai,google-gemini"} on-error {}
 :do {
 add key=LINK1 list=MihomoProxyRoS value=$inputLINK
 :put "Add env LINK1 value: $inputLINK"
@@ -470,8 +470,10 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 :while ($flagContainer = false) do={
 :if ([:len [/container/mounts/find comment="MihomoProxyRoSAWG"]] = 0) do={
 :do { /file/add name=awg_conf type=directory} on-error {}
-:do { /file/add name=proxies_yaml type=directory} on-error {}
 /container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ list=awg_conf comment="MihomoProxyRoSAWG"
+}
+:if ([:len [/container/mounts/find comment="MihomoProxyRoSProxies"]] = 0) do={
+:do { /file/add name=proxies_yaml type=directory} on-error {}
 /container/mounts/add src=/proxies_yaml/ dst=/root/.config/mihomo/proxies_mount/ list=proxies_yaml comment="MihomoProxyRoSProxies"
 }
 :if ([:len [/container/find comment="MihomoProxyRoS"]] = 0) do={
