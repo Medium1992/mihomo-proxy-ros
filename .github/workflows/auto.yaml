@@ -37,9 +37,13 @@ jobs:
           MIHOMO=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r '.tag_name')
           HS5T=$(curl -s https://api.github.com/repos/heiher/hev-socks5-tunnel/releases/latest | jq -r '.tag_name')
           BYEDPI=$(curl -s https://api.github.com/repos/hufrea/byedpi/releases/latest | jq -r '.tag_name')
+          ZAPRET=$(curl -s https://api.github.com/repos/bol-van/zapret/releases/latest | jq -r '.tag_name')
+          ZAPRET2=$(curl -s https://api.github.com/repos/bol-van/zapret2/releases/latest | jq -r '.tag_name')
           echo "mihomo=$MIHOMO" >> $GITHUB_ENV
           echo "hev_socks5_tunnel=$HS5T" >> $GITHUB_ENV
           echo "byedpi=$BYEDPI" >> $GITHUB_ENV
+          echo "zapret=$ZAPRET" >> $GITHUB_ENV
+          echo "zapret2=$ZAPRET2" >> $GITHUB_ENV
       
       - name: Compare with VERSIONS
         id: check_versions
@@ -64,7 +68,9 @@ jobs:
         run: |
           echo "mihomo=${{ env.mihomo }}" > VERSIONS
           echo "hev_socks5_tunnel=${{ env.hev_socks5_tunnel }}" >> VERSIONS
-          echo "byedpi=${{ env.byedpi }}" >> VERSIONS    
+          echo "byedpi=${{ env.byedpi }}" >> VERSIONS
+          echo "zapret=${{ env.zapret }}" >> VERSIONS
+          echo "zapret2=${{ env.zapret2 }}" >> VERSIONS
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -108,10 +114,10 @@ jobs:
           build-args: |
             AMD64VERSION=v1
           tags: |
-            ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v1
-            medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}
+            medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}
             medium1992/mihomo-proxy-ros:amd64v1
  
@@ -126,10 +132,10 @@ jobs:
           build-args: |
             AMD64VERSION=v2
           tags: |
-            ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v2
-            medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}
+            medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}
             medium1992/mihomo-proxy-ros:amd64v2
 
@@ -144,10 +150,10 @@ jobs:
           build-args: |
             AMD64VERSION=v3
           tags: |
-            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}
+            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}
             ghcr.io/medium1992/mihomo-proxy-ros:latest
-            medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}
+            medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             medium1992/mihomo-proxy-ros:${{ env.mihomo }}
             medium1992/mihomo-proxy-ros:latest
           
