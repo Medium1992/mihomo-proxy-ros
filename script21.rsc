@@ -166,8 +166,6 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env LOG_LEVEL value: error"} on-error {}
 :do {add key=FAKE_IP_TTL list=MihomoProxyRoS value=10
 :put "Add env FAKE_IP_TTL value: 10"} on-error {}
-:do {add key=BYEDPI list=MihomoProxyRoS value=true
-:put "Add env BYEDPI value: true"} on-error {}
 :do {add key=BYEDPI_CMD list=MihomoProxyRoS value="-Ku -a1 -An -d1 -s1+s -d3+s -s6+s -d9+s -s12+s -d15+s -s20+s -d25+s -s30+s -d35+s -At,r,s -s1 -q1 -At,r,s -s5 -o2 -At,r,s -o1 -d1 -r1+s -s1+s -d3+s -At,r,s -f-1 -r1+s -At,r,s -s1 -o1+s -s-1"
 :put "Add env BYEDPI_CMD"} on-error {}
 :do { add key=GROUP list=MihomoProxyRoS value=youtube,telegram,discord,meta,roblox,AI
