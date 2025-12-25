@@ -29,13 +29,16 @@ AWG_DIR="$CONFIG_DIR/awg"
 PROXIES_DIR="$CONFIG_DIR/proxies_mount"
 CONFIG_YAML="$CONFIG_DIR/config.yaml"
 BYEDPI_YAML="$CONFIG_DIR/byedpi.yaml"
+ZAPRET_YAML="$CONFIG_DIR/zapret.yaml"
+ZAPRET2_YAML="$CONFIG_DIR/zapret2.yaml"
 UI_URL_CHECK="$CONFIG_DIR/.ui_url"
 FAKE_IP_RANGE="${FAKE_IP_RANGE:-198.18.0.0/15}"
 FAKE_IP_TTL="${FAKE_IP_TTL:-1}"
 FAKE_IP_FILTER="${FAKE_IP_FILTER:-}"
-BYEDPI="${BYEDPI:-false}"
 BYEDPI_CMD="${BYEDPI_CMD:-}"
 BYEDPI_CMD_UDP="${BYEDPI_CMD_UDP:-}"
+ZAPRET_CMD="${ZAPRET_CMD:-}"
+ZAPRET2_CMD="${ZAPRET2_CMD:-}"
 HEALTHCHECK_INTERVAL="${HEALTHCHECK_INTERVAL:-120}"
 HEALTHCHECK_URL="${HEALTHCHECK_URL:-https://www.gstatic.com/generate_204}"
 HEALTHCHECK_URL_STATUS="${HEALTHCHECK_URL_STATUS:-204}"
@@ -45,6 +48,17 @@ GROUP_URL_STATUS="${GROUP_URL_STATUS:-204}"
 GROUP_INTERVAL="${GROUP_INTERVAL:-60}"
 GROUP_TOLERANCE="${GROUP_TOLERANCE:-20}"
 GROUP_STRATEGY="${GROUP_STRATEGY:-consistent-hashing}"
+[ -n "$BYEDPI_CMD" ] && BYEDPI=true || BYEDPI=false
+if [ -n "$ZAPRET_CMD" ] && lsmod | grep -q '^nft_tproxy'; then
+  ZAPRET=true
+else
+  ZAPRET=false
+fi
+if [ -n "$ZAPRET2_CMD" ] && lsmod | grep -q '^nft_tproxy'; then
+  ZAPRET2=true
+else
+  ZAPRET2=false
+fi
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
@@ -74,7 +88,35 @@ proxies:
     type: direct
     udp: true
     ip-version: ipv4
-    routing-mark: 8888
+    routing-mark: 131
+EOF
+}
+
+# ------------------- ZAPRET -------------------
+generate_zapret_yaml() {
+  [ "$ZAPRET" = "true" ] || return 0
+  echo "Generating $ZAPRET_YAML"
+  cat > "$ZAPRET_YAML" <<EOF
+proxies:
+  - name: "ZAPRET"
+    type: direct
+    udp: true
+    ip-version: ipv4
+    routing-mark: 132
+EOF
+}
+
+# ------------------- ZAPRET2 -------------------
+generate_zapret2_yaml() {
+  [ "$ZAPRET2" = "true" ] || return 0
+  echo "Generating $ZAPRET2_YAML"
+  cat > "$ZAPRET2_YAML" <<EOF
+proxies:
+  - name: "ZAPRET2"
+    type: direct
+    udp: true
+    ip-version: ipv4
+    routing-mark: 133
 EOF
 }
 
@@ -545,6 +587,48 @@ EOF
     providers="$providers $name"
   done < <(env | grep -E '^SOCKS[0-9]+=' | sort -V)
 
+  # ZAPRET
+  if [ "$ZAPRET" = "true" ]; then
+    cat >> "$CONFIG_YAML" <<EOF
+  ZAPRET:
+    type: file
+    path: $(basename "$ZAPRET_YAML")
+EOF
+    if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+      cat >> "$CONFIG_YAML" <<EOF
+    health-check:
+      enable: true
+      url: ${HEALTHCHECK_URL_ZAPRET:-https://www.facebook.com}
+      interval: $HEALTHCHECK_INTERVAL
+      timeout: 1500
+      lazy: false
+      expected-status: ${HEALTHCHECK_URL_STATUS_ZAPRET:-200}
+EOF
+    fi
+    providers="$providers ZAPRET"
+  fi
+
+  # ZAPRET2
+  if [ "$ZAPRET2" = "true" ]; then
+    cat >> "$CONFIG_YAML" <<EOF
+  ZAPRET2:
+    type: file
+    path: $(basename "$ZAPRET2_YAML")
+EOF
+    if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+      cat >> "$CONFIG_YAML" <<EOF
+    health-check:
+      enable: true
+      url: ${HEALTHCHECK_URL_ZAPRET2:-https://www.facebook.com}
+      interval: $HEALTHCHECK_INTERVAL
+      timeout: 1500
+      lazy: false
+      expected-status: ${HEALTHCHECK_URL_STATUS_ZAPRET2:-200}
+EOF
+    fi
+    providers="$providers ZAPRET2"
+  fi
+
   # BYEDPI
   if [ "$BYEDPI" = "true" ]; then
     cat >> "$CONFIG_YAML" <<EOF
@@ -931,10 +1015,20 @@ table inet mihomo {
     }
 }
 EOF
+if [ "${ZAPRET}" = "true" ]; then
+  nft create table inet zapret
+  nft add chain inet zapret post "{type filter hook postrouting priority mangle;}"
+  nft add rule inet zapret post meta l4proto { tcp, udp } mark 0x00000084 ct original packets 1-12 queue num 132 bypass
+fi
+if [ "${ZAPRET2}" = "true" ]; then
+  nft create table inet zapret2
+  nft add chain inet zapret2 post "{type filter hook postrouting priority mangle;}"
+  nft add rule inet zapret2 post meta l4proto { tcp, udp } mark 0x00000085 ct original packets 1-12 queue num 133 bypass
+fi
 if [ "${BYEDPI}" = "true" ]; then
   nft add table nat
   nft add chain nat output '{ type nat hook output priority -100; }'
-  nft add rule nat output meta l4proto tcp mark 0x000022b8 redirect to 1100
+  nft add rule nat output meta l4proto tcp mark 0x00000083 redirect to 1100
 fi
   ip rule show | grep -q 'fwmark 0x00000001 lookup 100' || ip rule add fwmark 1 table 100
   ip route replace local 0.0.0.0/0 dev lo table 100
@@ -954,7 +1048,7 @@ iptables_rules() {
   iptables -t nat -A PREROUTING -j mihomo-prerouting
   iptables -t nat -A OUTPUT -j mihomo-output
   if [ "${BYEDPI}" = "true" ]; then
-  iptables -t nat -A mihomo-output -p tcp -m mark --mark 8888 -j REDIRECT --to-port 1100
+  iptables -t nat -A mihomo-output -p tcp -m mark --mark 131 -j REDIRECT --to-port 1100
   fi
   iptables -t nat -A mihomo-output -o Meta -p tcp -j REDIRECT --to-ports 12345
   iptables -t nat -A mihomo-prerouting -i Meta -j RETURN
@@ -984,8 +1078,8 @@ EOF
 hs5t_file() {
   cat > /hs5t.sh << 'EOF'
 #!/bin/sh
-ip rule show | grep -q 'fwmark 0x22b8 ipproto udp lookup 8888' || ip rule add fwmark 8888 ipproto udp table 8888
-ip route replace default via 100.64.0.1 dev hs5t table 8888
+ip rule show | grep -q 'fwmark 0x83 ipproto udp lookup 131' || ip rule add fwmark 131 ipproto udp table 131
+ip route replace default via 100.64.0.1 dev hs5t table 131
 EOF
 chmod +x /hs5t.sh
 }
@@ -993,26 +1087,40 @@ chmod +x /hs5t.sh
 # ------------------- RUN -------------------
 run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$PROXIES_DIR"
-  generate_byedpi_yaml
   if lsmod | grep -q '^nft_tproxy'; then
     nft_rules
   else
     iptables_rules
   fi
-  config_file_mihomo
+  if [ "${ZAPRET}" = "true" ]; then
+    generate_zapret_yaml
+    echo "Starting zapret nfqws $(./nfqws --version) "
+  fi
+  if [ "${ZAPRET2}" = "true" ]; then
+    generate_zapret2_yaml
+    echo "Starting zapret nfqws2 $(./nfqws2 --version) "
+  fi
   if [ "${BYEDPI}" = "true" ]; then
+    generate_byedpi_yaml
     config_file
     hs5t_file
     echo "Starting ByeDPI v.$(./byedpi --version) "
     echo "Starting hev-socks5-tunnel $(./hs5t --version | head -n 2 | tail -n 1)"
-    echo "Starting Mihomo $(./mihomo -v)"
     local cmd_udp=$(printenv "$BYEDPI_CMD_UDP" || echo "$BYEDPI_CMD")
+  fi
+  config_file_mihomo
+  echo "Starting Mihomo $(./mihomo -v)"
+  if [ "${ZAPRET}" = "true" ]; then
+    ./nfqws --qnum 132 --user=root $ZAPRET_CMD &
+  fi
+  if [ "${ZAPRET2}" = "true" ]; then
+    ./nfqws2 --qnum 133 --user=root $ZAPRET2_CMD &
+  fi
+  if [ "${BYEDPI}" = "true" ]; then
     ./byedpi --port 1100 --transparent $BYEDPI_CMD &
     ./byedpi --port 1090 $cmd_udp &
     ./hs5t ./hs5t.yml &
-    exec ./mihomo
   fi
-  echo "Starting Mihomo $(./mihomo -v)"
   exec ./mihomo
 }
 
