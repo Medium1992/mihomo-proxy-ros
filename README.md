@@ -113,6 +113,7 @@ as well as **adding new links** and other parameters via environment variables (
 
 > Any [proxy](https://wiki.metacubex.one/en/config/proxies/) can be formatted in a `.yaml` file according to the documentation and mounted in the folder `/root/.config/mihomo/proxies_mount/`.
 
+> Multiple VETH interfaces can be added to the container; they will appear as proxy outbounds in mihomo. You can choose which interface to send traffic through, and then, in RouterOS, use mangle to route it as desired, but traffic must be sent to the mihomo container only through the first interface in the list.
 ---
 
 ### MikroTik Terminal Installation Example
