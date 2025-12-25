@@ -21,6 +21,22 @@ RUN curl -s https://api.github.com/repos/hufrea/byedpi/releases/latest | \
 RUN for f in *.tar.gz; do tar -xzf "$f"; done
 RUN for f in *.gz; do gunzip "$f"; done
 
+RUN curl -s https://api.github.com/repos/bol-van/zapret/releases/latest | \
+    jq -r '.tag_name as $tag | .assets[].browser_download_url | select(endswith(".tar.gz") and (contains("openwrt-embedded") | not))' | \
+    head -1 | \
+    xargs -I {} curl -L {} -o zapret.tar.gz && \
+    mkdir /zapret && \
+    tar -xzf zapret.tar.gz -C /zapret --strip-components=1 && \
+    rm zapret.tar.gz
+
+RUN curl -s https://api.github.com/repos/bol-van/zapret2/releases/latest | \
+    jq -r '.tag_name as $tag | .assets[].browser_download_url | select(endswith(".tar.gz") and (contains("openwrt-embedded") | not))' | \
+    head -1 | \
+    xargs -I {} curl -L {} -o zapret2.tar.gz && \
+    mkdir /zapret2 && \
+    tar -xzf zapret2.tar.gz -C /zapret2 --strip-components=1 && \
+    rm zapret2.tar.gz
+
 RUN mkdir -p /final
 
 RUN if [ "$TARGETARCH" = "amd64" ]; then mv $(ls mihomo-linux-amd64-${AMD64VERSION}-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1) /final/mihomo; \
@@ -38,6 +54,12 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then mv ciadpi-x86_64 /final/byedpi; \
     elif [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v7" ]; then mv ciadpi-armv7l /final/byedpi; \
     else mv ciadpi-armv6 /final/byedpi; fi
 
+RUN if [ "$TARGETARCH" = "amd64" ]; then mv zapret/binaries/linux-x86_64/nfqws /final/nfqws; \
+    elif [ "$TARGETARCH" = "arm64" ]; then mv zapret/binaries/linux-arm64/nfqws /final/nfqws; fi
+
+RUN if [ "$TARGETARCH" = "amd64" ]; then mv zapret2/binaries/linux-x86_64/nfqws2 /final/nfqws2; \
+    elif [ "$TARGETARCH" = "arm64" ]; then mv zapret2/binaries/linux-arm64/nfqws2 /final/nfqws2; fi
+
 COPY entrypoint.sh entrypoint_armv5.sh /final/
 
 RUN if [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v5" ]; then \
@@ -45,7 +67,11 @@ RUN if [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v5" ]; then \
     else \
         rm -f /final/entrypoint_armv5.sh; \
     fi && \
-    chmod +x /final/entrypoint.sh /final/mihomo /final/byedpi /final/hs5t
+    if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
+    chmod +x /final/entrypoint.sh /final/mihomo /final/byedpi /final/hs5t /final/nfqws /final/nfqws2; \
+    else \
+    chmod +x /final/entrypoint.sh /final/mihomo /final/byedpi /final/hs5t; \
+    fi
 
 FROM --platform=linux/amd64 alpine:latest AS linux-amd64
 FROM --platform=linux/arm64 alpine:latest AS linux-arm64
