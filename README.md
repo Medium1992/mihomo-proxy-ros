@@ -4,7 +4,7 @@
 
 👉 Please read the [Code of Conduct](./CODE_OF_CONDUCT.md) before participating in the project.
 
-**mihomo-proxy-ros** is a multi-architecture Docker container based on **Mihomo** and **byedpi**,  
+**mihomo-proxy-ros** is a multi-architecture Docker container based on  Mihomo, byedpi, zapret(nfqws; only amd64 and arm64) and zapret2(nfqws2; only amd64 and arm64)  
 supporting platforms **ARM**, **ARM64**, **AMD64v1**, **AMD64v2**, and **AMD64v3**.  
 The `latest` tag includes **ARM**, **ARM64**, and **AMD64v3**.  
 If you have **AMD64v1** or **AMD64v2**, you need to pull the corresponding tag.
@@ -23,7 +23,9 @@ which also If set installs and runs standalone dnsproxy from AdGuardHome **dnspr
 
 - 🌍 Multi-architecture: ARM, ARM64, AMD64v1-v3  
 - ⚙️ Automated installation via MikroTik terminal using the script at the end of this description  
-- 🔐 DPI bypass via ByeDPI (You can change the strategy in the container’s ENVs. For selecting strategies, there is an option called [byedpi-orchestrator](https://hub.docker.com/r/vindibona/byedpi-orchestrator).) 
+- 🔐 DPI bypass via ByeDPI (You can change the strategy in the container’s ENVs. For selecting strategies, there is an option called [byedpi-orchestrator](https://hub.docker.com/r/vindibona/byedpi-orchestrator).)
+- 🔐 DPI bypass using Zapret (nfqws) (amd64 and arm64 only) — strategies must be selected separately from the container according to the instructions from the author of [zapret](https://github.com/bol-van/zapret)
+- 🔐 DPI bypass using Zapret2 (nfqws2) (amd64 and arm64 only) — strategies must be selected separately from the container according to the instructions from the author of [zapret2](https://github.com/bol-van/zapret2)
 - 🌐 DNSProxy: multi-resolve from multiple DNS servers, supports all DNS protocols (Optional)
 - 🧩 Flexible routing and management of domain, IP, and AS pools via ENVs  
 - 🛡️ Ability to add multiple proxy links and subscriptions (including RemnaWave subscriptions with HWID) via ENVs  
@@ -64,12 +66,17 @@ as well as **adding new links** and other parameters via environment variables (
 | `HEALTHCHECK_URL` | `https://www.gstatic.com/generate_204`| [Health-check URL](https://wiki.metacubex.one/en/config/proxy-providers/#health-checkurl) |
 | `HEALTHCHECK_URL_STATUS`| `204` | Expected health-checked status [DOCs](https://wiki.metacubex.one/en/config/proxy-groups/#expected-status) |
 | `HEALTHCHECK_INTERVAL` | `120` | Health-check interval in seconds [DOCs](https://wiki.metacubex.one/en/config/proxy-providers/#health-checkinterval) |
-| `HEALTHCHECK_URL_BYEDPI` | `https://www.facebook.com`| [Health-check URL](https://wiki.metacubex.one/en/config/proxy-providers/#health-checkurl) for BYEDPI proxy provider |
-| `HEALTHCHECK_URL_STATUS_BYEDPI`| `200` | Expected health-check status [DOCs](https://wiki.metacubex.one/en/config/proxy-groups/#expected-status) for BYEDPI proxy provider |
+| `HEALTHCHECK_URL_BYEDPI` | `https://www.facebook.com`| [Health-check URL](https://wiki.metacubex.one/en/config/proxy-providers/#health-checkurl) for `BYEDPI` proxy provider |
+| `HEALTHCHECK_URL_STATUS_BYEDPI`| `200` | Expected health-check status [DOCs](https://wiki.metacubex.one/en/config/proxy-groups/#expected-status) for `BYEDPI` proxy provider |
+| `HEALTHCHECK_URL_ZAPRETI` | `https://www.facebook.com`| [Health-check URL](https://wiki.metacubex.one/en/config/proxy-providers/#health-checkurl) for `ZAPRET` proxy provider |
+| `HEALTHCHECK_URL_STATUS_ZAPRET`| `200` | Expected health-check status [DOCs](https://wiki.metacubex.one/en/config/proxy-groups/#expected-status) for `ZAPRET` proxy provider |
+| `HEALTHCHECK_URL_ZAPRET2` | `https://www.facebook.com`| [Health-check URL](https://wiki.metacubex.one/en/config/proxy-providers/#health-checkurl) for `ZAPRET2` proxy provider |
+| `HEALTHCHECK_URL_STATUS_ZAPRET2`| `200` | Expected health-check status [DOCs](https://wiki.metacubex.one/en/config/proxy-groups/#expected-status) for `ZAPRET2` proxy provider |
 | `HEALTHCHECK_PROVIDER` | `true` | If `true` — health checks use `HEALTHCHECK_URL`, `HEALTHCHECK_INTERVAL`, `HEALTHCHECK_URL_STATUS`. If `false` — health checks use `GROUP_URL`, `XXX_URL`, `GROUP_URL_STATUS`, `XXX_URL_STATUS`, `GROUP_INTERVAL`, `XXX_INTERVAL` |
-| `BYEDPI` | `false` | Enable proxy via byeDPI (`true`/`false`). Adds a [proxy provider](https://wiki.metacubex.one/en/config/proxy-providers) of type [DIRECT](https://wiki.metacubex.one/en/config/proxies/direct) named `BYEDPI` |
-| `BYEDPI_CMD`       | —                     | Enables [BYEDPI](https://github.com/hufrea/byedpi) DPI bypass strategy **only for TCP** traffic going through mihomo (Clash Meta kernel) |
+| `BYEDPI_CMD`       | —                     | Enables [BYEDPI](https://github.com/hufrea/byedpi) DPI bypass strategy **only for TCP** traffic going through mihomo (Clash Meta kernel); when set, the `BYEDPI` proxy outbound appears |
 | `BYEDPI_CMD_UDP`   | Same as `BYEDPI_CMD`  | Enables [BYEDPI](https://github.com/hufrea/byedpi) DPI bypass strategy **only for UDP** through mihomo **and** additionally starts a socks5 proxy on port **:1090** that handles both TCP and UDP via byedpi |
+| `ZAPRET_CMD` | — | The [Zapret(nfqws)](https://github.com/bol-van/zapret) strategy; when set, the `ZAPRET` proxy outbound appears |
+| `ZAPRET2_CMD` | — | The [Zapret2(nfqws2)](https://github.com/bol-van/zapret) strategy; when set, the `ZAPRET2` proxy outbound appears |
 | `LINK0`, `LINK1`... | — | Proxy links `vless://`, `vmess://`, `ss://`, `trojan://`... For each proxy link, a separate [proxy provider](https://wiki.metacubex.one/en/config/proxy-providers) is created |
 | `SUB_LINK0`, `SUB_LINK1`... | — | Subscriptions of type `http(s)://`... For each subscription, a separate [proxy provider](https://wiki.metacubex.one/en/config/proxy-providers) is created. Supports setting [HWID](https://docs.rw/docs/features/hwid-device-limit) individually for each subscription |
 | `SUB_LINKxx_PROXY` | `DIRECT` | Specifies through which [proxy](https://wiki.metacubex.one/en/config/proxy-providers/#proxy) the subscription should be fetched. Example: `SUB_LINK1_PROXY` with value `proxies1` → the subscription will be downloaded via the proxy `proxies1` |
