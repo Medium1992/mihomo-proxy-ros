@@ -2,7 +2,7 @@
 
 👉 Ознакомьтесь с [Кодексом поведения](./CODE_OF_CONDUCT.md) перед участием в проекте.
 
-**mihomo-proxy-ros** — это мультиархитектурный Docker-контейнер на базе **Mihomo** и **byedpi** в одном контейнере,  
+**mihomo-proxy-ros** — это мультиархитектурный Docker-контейнер на базе **Mihomo**, **byedpi**, **zapret(nfqws; только amd64 и arm64)** и **zapret2(nfqws2; только amd64 и arm64)** в одном контейнере,  
 поддерживающий платформы **ARM**, **ARM64**, **AMD64v1**, **AMD64v2** и **AMD64v3**.  
 Тег latest включает в себя **ARM**, **ARM64**, **AMD64v3**.  
 Если у вас **AMD64v1**,**AMD64v2** то необходимо запулить соответствующий тэг.
@@ -21,6 +21,8 @@
 - 🌍 Мультиархитектура: ARM, ARM64, AMD64v1-v3
 - ⚙️ Автоматизированная установка через терминал MikroTik с использованием скрипта в конце описания
 - 🔐 Обход DPI с помощью ByeDPI (вы можете изменить стратегию в ENVs для контейнера, для подбора стратегий есть такой вариант [byedpi-orchestrator](https://hub.docker.com/r/vindibona/byedpi-orchestrator))
+- 🔐 Обход DPI с помощью Zapret(nfqws) (только на amd64 и arm64) - стратегии подбирать отдельно от контейнера по инструкциям от создателя [zapret](https://github.com/bol-van/zapret)
+- 🔐 Обход DPI с помощью Zapret2(nfqws2) (только на amd64 и arm64) - стратегии подбирать отдельно от контейнера по инструкциям от создателя [zapret2](https://github.com/bol-van/zapret2)
 - 🌐 DNSProxy: мультирезолв с нескольких DNS-серверов, поддержка всех протоколов DNS (Установка по желанию)
 - 🧩 Гибкая маршрутизация и управление пулом доменов, ip, AS через ENVs
 - 🛡️ Возможность добавления нескольких прокси-ссылок, а также подписок(включая подписки RemnaWave с HWID) через ENVs
@@ -60,12 +62,17 @@
 | `HEALTHCHECK_URL`      | `https://www.gstatic.com/generate_204`| [URL health-check](https://wiki.metacubex.one/ru/config/proxy-providers/#health-checkurl) |
 | `HEALTHCHECK_URL_STATUS`| `204`                                | Ожидаемый статус health-check [DOCs](https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status) |
 | `HEALTHCHECK_INTERVAL` | `120`                                 | Интервал health-check в секундах [DOCs](https://wiki.metacubex.one/ru/config/proxy-providers/#health-checkinterval) |
-| `HEALTHCHECK_URL_BYEDPI`| `https://www.facebook.com`           | [URL health-check](https://wiki.metacubex.one/ru/config/proxy-providers/#health-checkurl) для прокси-провайдера BYEDPI |
-| `HEALTHCHECK_URL_STATUS_BYEDPI`| `200`                         | Ожидаемый статус health-check [DOCs](https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status) для прокси-провайдера BYEDPI |
+| `HEALTHCHECK_URL_BYEDPI`| `https://www.facebook.com`           | [URL health-check](https://wiki.metacubex.one/ru/config/proxy-providers/#health-checkurl) для прокси-провайдера `BYEDPI` |
+| `HEALTHCHECK_URL_STATUS_BYEDPI`| `200`                         | Ожидаемый статус health-check [DOCs](https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status) для прокси-провайдера `BYEDPI` |
+| `HEALTHCHECK_URL_ZAPRET`| `https://www.facebook.com`           | [URL health-check](https://wiki.metacubex.one/ru/config/proxy-providers/#health-checkurl) для прокси-провайдера `ZAPRET` |
+| `HEALTHCHECK_URL_STATUS_ZAPRET`| `200`                         | Ожидаемый статус health-check [DOCs](https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status) для прокси-провайдера `ZAPRET` |
+| `HEALTHCHECK_URL_ZAPRET2`| `https://www.facebook.com`           | [URL health-check](https://wiki.metacubex.one/ru/config/proxy-providers/#health-checkurl) для прокси-провайдера `ZAPRET2` |
+| `HEALTHCHECK_URL_STATUS_ZAPRET2`| `200`                         | Ожидаемый статус health-check [DOCs](https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status) для прокси-провайдера `ZAPRET2` |
 | `HEALTHCHECK_PROVIDER`| `true`                         | Если `true` для проверки доступности url используются параметры `HEALTHCHECK_URL`,`HEALTHCHECK_INTERVAL`,`HEALTHCHECK_URL_STATUS`, если `false` используются `GROUP_URL`,`XXX_URL`,`GROUP_URL_STATUS`,`XXX_URL_STATUS`,`GROUP_INTERVAL`,`XXX_INTERVAL` |
-| `BYEDPI`               | `false`                               | Включить прокси через byeDPI (`true`/`false`). Добавляет [прокси-провайдера](https://wiki.metacubex.one/ru/config/proxy-providers) типа [DIRECT](https://wiki.metacubex.one/ru/config/proxies/direct) с именем `BYEDPI` |
-| `BYEDPI_CMD`           | —                                     | Стратегия [BYEDPI](https://github.com/hufrea/byedpi) работает только для TCP через mihomo |
+| `BYEDPI_CMD`           | —                                     | Стратегия [BYEDPI](https://github.com/hufrea/byedpi) работает только для TCP через mihomo, если задана появляется прокси-выход `BYEDPI` |
 | `BYEDPI_CMD_UDP`       | ENV `BYEDPI_CMD`                      | Стратегия [BYEDPI](https://github.com/hufrea/byedpi) работает только для UDP через mihomo а также для TCP и UDP по socks5 порт :1090 |
+| `ZAPRET_CMD`           | —                                     | Стратегия [Zapret(nfqws)](https://github.com/bol-van/zapret), если задана появляется прокси-выход `ZAPRET` |
+| `ZAPRET2_CMD`          | —                                     | Стратегия [Zapret2(nfqws2)](https://github.com/bol-van/zapret2), если задана появляется прокси-выход `ZAPRET2` |
 | `LINK0`, `LINK1`...    | —                                     | Прокси-ссылки `vless://`, `vmess://`, `ss://`, `trojan://`... Для каждой прокси-ссылке создается отдельный [прокси-провайдер](https://wiki.metacubex.one/ru/config/proxy-providers) |
 | `SUB_LINK0`, `SUB_LINK1`... | —                                | Подписки типа `http(s)://`... Для каждой подписки создается отдельный [прокси-провайдер](https://wiki.metacubex.one/ru/config/proxy-providers). Имеется поддержка задания [HWID](https://docs.rw/docs/features/hwid-device-limit) каждой подписке отдельно|
 | `SUB_LINKxx_PROXY`     | `DIRECT`                              | Указание через какой [прокси](https://wiki.metacubex.one/ru/config/proxy-providers/#proxy) запрашивать подписку. Пример `SUB_LINK1_PROXY` со значнием `proxies1` будет запрашивать подписку через прокси `proxies1` |
