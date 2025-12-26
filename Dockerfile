@@ -60,6 +60,10 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then mv zapret/binaries/linux-x86_64/nfqws /
 RUN if [ "$TARGETARCH" = "amd64" ]; then mv zapret2/binaries/linux-x86_64/nfqws2 /final/nfqws2; \
     elif [ "$TARGETARCH" = "arm64" ]; then mv zapret2/binaries/linux-arm64/nfqws2 /final/nfqws2; fi
 
+RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then mkdir -p /final/lua && \
+    cp zapret2/lua/*.lua /final/lua/; \
+    fi
+    
 COPY entrypoint.sh entrypoint_armv5.sh /final/
 
 RUN if [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v5" ]; then \
