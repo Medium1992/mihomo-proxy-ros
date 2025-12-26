@@ -3,7 +3,7 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
 ARG AMD64VERSION
-RUN apk add --no-cache curl jq gzip tar
+RUN apk add --no-cache curl jq gzip tar unzip
 RUN mkdir -p /final
 
 RUN curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | \
@@ -37,6 +37,14 @@ RUN curl -s https://api.github.com/repos/bol-van/zapret2/releases/latest | \
     tar -xzf zapret2.tar.gz -C /zapret2 --strip-components=1 && \
     rm zapret2.tar.gz
 
+RUN curl -s https://api.github.com/repos/Flowseal/zapret-discord-youtube/releases/latest | \
+    jq -r '.assets[].browser_download_url | select(endswith(".zip"))' | \
+    head -1 | \
+    xargs -I {} curl -L {} -o zapret-discord-youtube.zip && \
+    mkdir -p /zapret-discord-youtube && \
+    unzip zapret-discord-youtube.zip -d /zapret-discord-youtube && \
+    rm zapret-discord-youtube.zip
+
 RUN mkdir -p /final
 
 RUN if [ "$TARGETARCH" = "amd64" ]; then mv $(ls mihomo-linux-amd64-${AMD64VERSION}-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1) /final/mihomo; \
@@ -61,7 +69,9 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then mv zapret2/binaries/linux-x86_64/nfqws2
     elif [ "$TARGETARCH" = "arm64" ]; then mv zapret2/binaries/linux-arm64/nfqws2 /final/nfqws2; fi
 
 RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then mkdir -p /final/lua && \
-    cp zapret2/lua/*.lua /final/lua/; \
+    cp zapret2/lua/*.lua /final/lua/ && \
+    mkdir -p /final/zapret-fakebin && \
+    cp zapret-discord-youtube/bin/*.bin /final/zapret-fakebin; \
     fi
     
 COPY entrypoint.sh entrypoint_armv5.sh /final/
