@@ -71,7 +71,9 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then mv zapret2/binaries/linux-x86_64/nfqws2
 RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then mkdir -p /final/lua && \
     cp zapret2/lua/*.lua /final/lua/ && \
     mkdir -p /final/zapret-fakebin && \
-    cp zapret-discord-youtube/bin/*.bin /final/zapret-fakebin; \
+    cp zapret-discord-youtube/bin/*.bin /final/zapret-fakebin && \
+    mkdir -p /final/zapret-lists && \
+    cp zapret-discord-youtube/lists/*.txt /final/zapret-lists; \
     fi
     
 COPY entrypoint.sh entrypoint_armv5.sh /final/
