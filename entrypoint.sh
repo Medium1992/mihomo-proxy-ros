@@ -1018,12 +1018,18 @@ EOF
 if [ "${ZAPRET}" = "true" ]; then
   nft create table inet zapret
   nft add chain inet zapret post "{type filter hook postrouting priority mangle;}"
+  nft add rule inet zapret post meta l4proto { tcp, udp } mark 0x00000084 ct state new ct mark set 0x00000084
   nft add rule inet zapret post meta l4proto { tcp, udp } mark 0x00000084 ct original packets 1-12 queue num 132 bypass
+  nft add chain inet zapret pre "{type filter hook prerouting priority mangle;}"
+  nft add rule inet zapret pre meta l4proto { tcp, udp } ct reply packets 1-12 ct mark 0x00000084 queue num 132 bypass
 fi
 if [ "${ZAPRET2}" = "true" ]; then
   nft create table inet zapret2
   nft add chain inet zapret2 post "{type filter hook postrouting priority mangle;}"
+  nft add rule inet zapret2 post meta l4proto { tcp, udp } mark 0x00000085 ct state new ct mark set 0x00000085
   nft add rule inet zapret2 post meta l4proto { tcp, udp } mark 0x00000085 ct original packets 1-12 queue num 133 bypass
+  nft add chain inet zapret2 pre "{type filter hook prerouting priority mangle;}"
+  nft add rule inet zapret2 pre meta l4proto { tcp, udp } ct reply packets 1-12 ct mark 0x00000085 queue num 133 bypass
 fi
 if [ "${BYEDPI}" = "true" ]; then
   nft add table nat
@@ -1098,6 +1104,10 @@ run() {
   fi
   if [ "${ZAPRET2}" = "true" ]; then
     generate_zapret2_yaml
+    LUA_INIT_ARGS=""
+    for f in /lua/*.lua; do
+      LUA_INIT_ARGS="$LUA_INIT_ARGS --lua-init=@$f"
+    done    
     echo "Starting zapret nfqws2 $(./nfqws2 --version) "
   fi
   if [ "${BYEDPI}" = "true" ]; then
@@ -1114,7 +1124,7 @@ run() {
     ./nfqws --qnum 132 --user=root $ZAPRET_CMD &
   fi
   if [ "${ZAPRET2}" = "true" ]; then
-    ./nfqws2 --qnum 133 --user=root $ZAPRET2_CMD &
+    ./nfqws2 --qnum 133 --user=root $LUA_INIT_ARGS $ZAPRET2_CMD &
   fi
   if [ "${BYEDPI}" = "true" ]; then
     ./byedpi --port 1100 --transparent $BYEDPI_CMD &
