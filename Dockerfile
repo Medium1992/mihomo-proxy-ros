@@ -72,6 +72,7 @@ RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then mkdir -p
     cp zapret2/lua/*.lua /final/lua/ && \
     mkdir -p /final/zapret-fakebin && \
     cp zapret-discord-youtube/bin/*.bin /final/zapret-fakebin && \
+    cp zapret2/files/fake/*.bin /final/zapret-fakebin && \
     mkdir -p /final/zapret-lists && \
     cp zapret-discord-youtube/lists/*.txt /final/zapret-lists; \
     fi
