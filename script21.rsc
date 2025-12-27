@@ -174,8 +174,8 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :do {add key=ZAPRET2_CMD list=MihomoProxyRoS value=""
 :put "Add env ZAPRET2_CMD"} on-error {}
 }
-:do { add key=GROUP list=MihomoProxyRoS value=youtube,telegram,discord,meta,roblox,AI
-:put "Add env GROUP value: youtube,telegram,discord,meta,roblox,AI"} on-error {}
+:do { add key=GROUP list=MihomoProxyRoS value=YouTube,Telegram,Discord,META,Roblox,SuperCell,AI
+:put "Add env GROUP value: YouTube,Telegram,Discord,META,Roblox,SuperCell,AI"} on-error {}
 :do { add key=YOUTUBE_GEOSITE list=MihomoProxyRoS value=youtube
 :put "Add env YOUTUBE_GEOSITE value: youtube"} on-error {}
 :do { add key=TELEGRAM_GEOSITE list=MihomoProxyRoS value=telegram
@@ -200,6 +200,8 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env ROBLOX_GEOSITE value: roblox"} on-error {}
 :do { add key=ROBLOX_AS list=MihomoProxyRoS value=AS22697,AS11281,AS136766
 :put "Add env ROBLOX_AS value: AS22697,AS11281,AS136766"} on-error {}
+:do { add key=SUPERCELL_GEOSITE list=MihomoProxyRoS value=supercell
+:put "Add env SUPERCELL_GEOSITE value: supercell"} on-error {}
 :do { add key=AI_GEOSITE list=MihomoProxyRoS value=category-ai-!cn,openai,google-gemini
 :put "Add env AI_GEOSITE value: category-ai-!cn,openai,google-gemini"} on-error {}
 :do {
