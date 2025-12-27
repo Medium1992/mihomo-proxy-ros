@@ -479,16 +479,12 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 :put "Start pull MihomoProxyRoS container, pls wait when container starting, pls wait"
 :delay 1
 }
-:if ([:len [/container/find comment="MihomoProxyRoS" and (stopped or running or "download/extract failed")]] > 0) do={
+:if ([:len [/container/find comment="MihomoProxyRoS" and (stopped or running)]] > 0) do={
 /container/start [find where comment="MihomoProxyRoS" and stopped]
 :delay 3
 :if ([:len [/container/find comment="MihomoProxyRoS" and running]] > 0) do={
 :put "Container MihomoProxyRoS started"
 :set flagContainer true
-} else={
-/container/repull [find where comment="MihomoProxyRoS"]
-:put "Container MihomoProxyRoS pull failed, repull, pls wait"
-:delay 1
 }
 }
 :delay 1
@@ -511,21 +507,17 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 :if ([:len [/container/find comment="DNSProxy"]] = 0) do={
 /container/add remote-image="ghcr.io/medium1992/dns-proxy-ros" interface=DNSProxy cmd="--cache --hosts-files=/hosts --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel" root-dir=($pathPull . "Containers/DNSProxy") start-on-boot=yes comment="DNSProxy"
 :put "Start pull DNSProxy container, pls wait when container starting, pls wait"
-:delay 1
+:delay 5
 }
-:if ([:len [/container/find comment="DNSProxy" and (stopped or running or "download/extract failed")]] > 0) do={
+:if ([:len [/container/find comment="DNSProxy" and (stopped or running)]] > 0) do={
 /container/start [find where comment="DNSProxy" and stopped]
 :delay 3
 :if ([:len [/container/find comment="DNSProxy" and running]] > 0) do={
 :put "Container DNSProxy started"
 :set flagContainer true
-} else={
-/container/repull [find where comment="DNSProxy"]
-:put "Container DNSProxy pull failed, repull, pls wait"
-:delay 1
+}
 }
 :delay 1
-}
 }
 
 :if ([:len [/system/script/find name="changeDNS"]] = 0) do={
