@@ -160,7 +160,7 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env FAKE_IP_RANGE value: 198.18.0.0/15"} on-error {}
 :do {add key=FAKE_IP_FILTER list=MihomoProxyRoS value=www.youtube.com
 :put "Add env FAKE_IP_FILTER value: www.youtube.com"} on-error {}
-:do {add key=NAMESERVER_POLICY list=MihomoProxyRoS value="tmdb-image-prod.b-cdn.net#https://dns.quad9.net/dns-query,+.themoviedb.org#https://dns.quad9.net/dns-query,+.tmdb.org#https://dns.quad9.net/dns-query,rule-set:meta_geosite_meta#https://dns.quad9.net/dns-query"
+:do {add key=NAMESERVER_POLICY list=MihomoProxyRoS value="tmdb-image-prod.b-cdn.net#https://dns.quad9.net/dns-query,+.themoviedb.org#https://dns.quad9.net/dns-query,+.tmdb.org#https://dns.quad9.net/dns-query,rule-set:META_geosite_meta#https://dns.quad9.net/dns-query"
 :put "Add env NAMESERVER_POLICY value: instagram, facebook, tmdb from Quad9"} on-error {}
 :do {add key=LOG_LEVEL list=MihomoProxyRoS value=error
 :put "Add env LOG_LEVEL value: error"} on-error {}
