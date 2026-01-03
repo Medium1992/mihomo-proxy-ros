@@ -1056,7 +1056,7 @@ EOF
 
 hs5t_file() {
   cat > /hs5t.sh << 'EOF'
-#!/bin/sh
+#!/usr/bin/sh
 ip rule show | grep -q 'fwmark 0x83 ipproto udp lookup 131' || ip rule add fwmark 131 ipproto udp table 131
 ip route replace default via 100.64.0.1 dev hs5t table 131
 EOF
