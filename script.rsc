@@ -177,7 +177,7 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env FAKE_IP_TTL value: 10"} on-error {}
 :do {add key=BYEDPI_CMD list=MihomoProxyRoS value="-Ku -a1 -An -d1 -s1+s -d3+s -s6+s -d9+s -s12+s -d15+s -s20+s -d25+s -s30+s -d35+s -At,r,s -s1 -q1 -At,r,s -s5 -o2 -At,r,s -o1 -d1 -r1+s -s1+s -d3+s -At,r,s -f-1 -r1+s -At,r,s -s1 -o1+s -s-1"
 :put "Add env BYEDPI_CMD"} on-error {}
-:do { add key=GROUP list=MihomoProxyRoS value=YouTube,Telegram,Discord,META,Roblox,SuperCell,AI
+:do { add key=GROUP list=MihomoProxyRoS value=YouTube,Telegram,Discord,META,Roblox,SuperCell,AI,Twitch
 :put "Add env GROUP value: YouTube,Telegram,Discord,META,Roblox,SuperCell,AI"} on-error {}
 :do { add key=YOUTUBE_GEOSITE list=MihomoProxyRoS value=youtube
 :put "Add env YOUTUBE_GEOSITE value: youtube"} on-error {}
@@ -207,6 +207,10 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env SUPERCELL_GEOSITE value: supercell"} on-error {}
 :do { add key=AI_GEOSITE list=MihomoProxyRoS value=category-ai-!cn,openai,google-gemini
 :put "Add env AI_GEOSITE value: category-ai-!cn,openai,google-gemini"} on-error {}
+:do { add key=TWITCH_GEOSITE list=MihomoProxyRoS value=twitch
+:put "Add env TWITCH_GEOSITE value: twitch"} on-error {}
+:do { add key=RULES1 list=MihomoProxyRoS value=AND,((NETWORK,udp),(DST-PORT,443)),REJECT
+:put "Add env RULES1 value: AND,((NETWORK,udp),(DST-PORT,443)),REJECT"} on-error {}
 :do {
 add key=LINK1 list=MihomoProxyRoS value=$inputLINK
 :put "Add env LINK1 value: $inputLINK"
@@ -261,9 +265,12 @@ add address=8.8.4.4 list=DNS
 
 /ip dns static
 :if ([:len [find name="mask.icloud.com"]] = 0) do={ add name="mask.icloud.com" type=NXDOMAIN }
+:if ([:len [find name="mask.icloud.com"]] = 0) do={ add name="mask.icloud.com" type=NXDOMAIN }
 :if ([:len [find name="mask-h2.icloud.com"]] = 0) do={ add name="mask-h2.icloud.com" type=NXDOMAIN }
 :if ([:len [find name="doh.dns.apple.com"]] = 0) do={ add name="doh.dns.apple.com" type=NXDOMAIN }
-:if ([:len [find name="dns.apple.com"]] = 0) do={ add name="dns.apple.com" type=NXDOMAIN }
+:if ([:len [find name="usher.ttvnw.net"]] = 0) do={ add comment=twitch forward-to=MihomoProxyRoS match-subdomain=yes name=usher.ttvnw.net type=FWD }
+:if ([:len [find name="gql.twitch.tv"]] = 0) do={ add comment=twitch forward-to=MihomoProxyRoS match-subdomain=yes name=gql.twitch.tv type=FWD }
+:if ([:len [find name="ntc.party"]] = 0) do={ add comment=NTCParty forward-to=MihomoProxyRoS match-subdomain=no name=ntc.party type=FWD }
 
 :if ([:len [/system/script/find name="IP_MihomoProxyRoS"]] = 0) do={
 /system script
@@ -414,7 +421,6 @@ add name=FWD_update source="# Define global variables\r\
 \n\"claude\";\r\
 \n\"xai\";\r\
 \n\"notion\";\r\
-\n\"twitch\";\r\
 \n\"supercell\";\r\
 \n\"xbox\";\r\
 \n\"roblox\";\r\
