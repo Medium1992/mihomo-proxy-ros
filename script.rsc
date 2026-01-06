@@ -106,7 +106,7 @@ foreach i in=$slotArray do={
 /ip dns forwarders
 add doh-servers=https://dns.google/dns-query name=Google
 add doh-servers=https://cloudflare-dns.com/dns-query name=CloudFlare
-add doh-servers=https://dns.quad9.net/dns-query name=Quad9
+add dns-servers=9.9.9.9,149.112.112.112 name=Quad9
 add dns-servers=176.99.11.77,80.78.247.254 name=XBOX
 add dns-servers=77.88.8.8,77.88.8.1 name=Yandex verify-doh-cert=no
 add dns-servers=8.8.8.8 name=Google8 verify-doh-cert=no
@@ -178,7 +178,7 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :do {add key=BYEDPI_CMD list=MihomoProxyRoS value="-Ku -a1 -An -d1 -s1+s -d3+s -s6+s -d9+s -s12+s -d15+s -s20+s -d25+s -s30+s -d35+s -At,r,s -s1 -q1 -At,r,s -s5 -o2 -At,r,s -o1 -d1 -r1+s -s1+s -d3+s -At,r,s -f-1 -r1+s -At,r,s -s1 -o1+s -s-1"
 :put "Add env BYEDPI_CMD"} on-error {}
 :do { add key=GROUP list=MihomoProxyRoS value=YouTube,Telegram,Discord,META,Roblox,SuperCell,AI,Twitch
-:put "Add env GROUP value: YouTube,Telegram,Discord,META,Roblox,SuperCell,AI"} on-error {}
+:put "Add env GROUP value: YouTube,Telegram,Discord,META,Roblox,SuperCell,AI,Twitch"} on-error {}
 :do { add key=YOUTUBE_GEOSITE list=MihomoProxyRoS value=youtube
 :put "Add env YOUTUBE_GEOSITE value: youtube"} on-error {}
 :do { add key=TELEGRAM_GEOSITE list=MihomoProxyRoS value=telegram
@@ -265,9 +265,9 @@ add address=8.8.4.4 list=DNS
 
 /ip dns static
 :if ([:len [find name="mask.icloud.com"]] = 0) do={ add name="mask.icloud.com" type=NXDOMAIN }
-:if ([:len [find name="mask.icloud.com"]] = 0) do={ add name="mask.icloud.com" type=NXDOMAIN }
 :if ([:len [find name="mask-h2.icloud.com"]] = 0) do={ add name="mask-h2.icloud.com" type=NXDOMAIN }
 :if ([:len [find name="doh.dns.apple.com"]] = 0) do={ add name="doh.dns.apple.com" type=NXDOMAIN }
+:if ([:len [find name="dns.apple.com"]] = 0) do={ add name="dns.apple.com" type=NXDOMAIN }
 :if ([:len [find name="usher.ttvnw.net"]] = 0) do={ add comment=twitch forward-to=MihomoProxyRoS match-subdomain=yes name=usher.ttvnw.net type=FWD }
 :if ([:len [find name="gql.twitch.tv"]] = 0) do={ add comment=twitch forward-to=MihomoProxyRoS match-subdomain=yes name=gql.twitch.tv type=FWD }
 :if ([:len [find name="ntc.party"]] = 0) do={ add comment=NTCParty forward-to=MihomoProxyRoS match-subdomain=no name=ntc.party type=FWD }
