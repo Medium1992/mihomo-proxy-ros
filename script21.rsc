@@ -106,7 +106,7 @@ foreach i in=$slotArray do={
 /ip dns forwarders
 add doh-servers=https://dns.google/dns-query name=Google
 add doh-servers=https://cloudflare-dns.com/dns-query name=CloudFlare
-add doh-servers=https://dns.quad9.net/dns-query name=Quad9
+add dns-servers=9.9.9.9,149.112.112.112 name=Quad9
 add dns-servers=176.99.11.77,80.78.247.254 name=XBOX
 add dns-servers=77.88.8.8,77.88.8.1 name=Yandex verify-doh-cert=no
 add dns-servers=8.8.8.8 name=Google8 verify-doh-cert=no
@@ -174,8 +174,8 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :do {add key=ZAPRET2_CMD list=MihomoProxyRoS value=""
 :put "Add env ZAPRET2_CMD"} on-error {}
 }
-:do { add key=GROUP list=MihomoProxyRoS value=YouTube,Telegram,Discord,META,Roblox,SuperCell,AI
-:put "Add env GROUP value: YouTube,Telegram,Discord,META,Roblox,SuperCell,AI"} on-error {}
+:do { add key=GROUP list=MihomoProxyRoS value=YouTube,Telegram,Discord,META,Roblox,SuperCell,AI,Twitch
+:put "Add env GROUP value: YouTube,Telegram,Discord,META,Roblox,SuperCell,AI,Twitch"} on-error {}
 :do { add key=YOUTUBE_GEOSITE list=MihomoProxyRoS value=youtube
 :put "Add env YOUTUBE_GEOSITE value: youtube"} on-error {}
 :do { add key=TELEGRAM_GEOSITE list=MihomoProxyRoS value=telegram
@@ -204,6 +204,10 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env SUPERCELL_GEOSITE value: supercell"} on-error {}
 :do { add key=AI_GEOSITE list=MihomoProxyRoS value=category-ai-!cn,openai,google-gemini
 :put "Add env AI_GEOSITE value: category-ai-!cn,openai,google-gemini"} on-error {}
+:do { add key=TWITCH_GEOSITE list=MihomoProxyRoS value=twitch
+:put "Add env TWITCH_GEOSITE value: twitch"} on-error {}
+:do { add key=RULES1 list=MihomoProxyRoS value=AND,((NETWORK,udp),(DST-PORT,443)),REJECT
+:put "Add env RULES1 value: AND,((NETWORK,udp),(DST-PORT,443)),REJECT"} on-error {}
 :do {
 add key=LINK1 list=MihomoProxyRoS value=$inputLINK
 :put "Add env LINK1 value: $inputLINK"
@@ -261,6 +265,9 @@ add address=8.8.4.4 list=DNS
 :if ([:len [find name="mask-h2.icloud.com"]] = 0) do={ add name="mask-h2.icloud.com" type=NXDOMAIN }
 :if ([:len [find name="doh.dns.apple.com"]] = 0) do={ add name="doh.dns.apple.com" type=NXDOMAIN }
 :if ([:len [find name="dns.apple.com"]] = 0) do={ add name="dns.apple.com" type=NXDOMAIN }
+:if ([:len [find name="usher.ttvnw.net"]] = 0) do={ add comment=twitch forward-to=MihomoProxyRoS match-subdomain=yes name=usher.ttvnw.net type=FWD }
+:if ([:len [find name="gql.twitch.tv"]] = 0) do={ add comment=twitch forward-to=MihomoProxyRoS match-subdomain=yes name=gql.twitch.tv type=FWD }
+:if ([:len [find name="ntc.party"]] = 0) do={ add comment=NTCParty forward-to=MihomoProxyRoS match-subdomain=no name=ntc.party type=FWD }
 
 :if ([:len [/system/script/find name="IP_MihomoProxyRoS"]] = 0) do={
 /system script
@@ -411,7 +418,6 @@ add name=FWD_update source="# Define global variables\r\
 \n\"claude\";\r\
 \n\"xai\";\r\
 \n\"notion\";\r\
-\n\"twitch\";\r\
 \n\"supercell\";\r\
 \n\"xbox\";\r\
 \n\"roblox\";\r\
