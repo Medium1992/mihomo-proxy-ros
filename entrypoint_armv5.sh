@@ -1,4 +1,5 @@
 #!/usr/bin/sh
+
 set -eu
 
 EXTERNAL_UI_URL="${EXTERNAL_UI_URL:-https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip}"
@@ -22,6 +23,11 @@ HEALTHCHECK_INTERVAL="${HEALTHCHECK_INTERVAL:-120}"
 HEALTHCHECK_URL="${HEALTHCHECK_URL:-https://www.gstatic.com/generate_204}"
 HEALTHCHECK_URL_STATUS="${HEALTHCHECK_URL_STATUS:-204}"
 HEALTHCHECK_PROVIDER="${HEALTHCHECK_PROVIDER:-true}"
+GROUP_TYPE="${GROUP_TYPE:-select}"
+GROUP_USE="${GROUP_USE:-}"
+GROUP_FILTER="${GROUP_FILTER:-}"
+GROUP_EXCLUDE="${GROUP_EXCLUDE:-}"
+GROUP_EXCLUDE_TYPE="${GROUP_EXCLUDE_TYPE:-}"
 GROUP_URL="${GROUP_URL:-https://www.gstatic.com/generate_204}"
 GROUP_URL_STATUS="${GROUP_URL_STATUS:-204}"
 GROUP_INTERVAL="${GROUP_INTERVAL:-60}"
@@ -700,9 +706,20 @@ done
         drop: true
 EOF
 
+
+GROUP_TYPE="${GROUP_TYPE:-select}"
+GROUP_USE="${GROUP_USE:-}"
+GROUP_FILTER="${GROUP_FILTER:-}"
+GROUP_EXCLUDE="${GROUP_EXCLUDE:-}"
+GROUP_EXCLUDE_TYPE="${GROUP_EXCLUDE_TYPE:-}"
+
 # === ГРУППЫ + ПРАВИЛА ===
   {
-    g_type="${GLOBAL_TYPE:-select}"
+    type="${GLOBAL_TYPE:-$GROUP_TYPE}"
+    filter="${GLOBAL_FILTER:-$GROUP_FILTER}"
+    exclude="${GLOBAL_EXCLUDE:-$GROUP_EXCLUDE}"
+    exclude_type="${GLOBAL_EXCLUDE_TYPE:-$GROUP_EXCLUDE_TYPE}"
+    use="${GLOBAL_USE:-$GROUP_USE}"
     g_tol="${GLOBAL_TOLERANCE:-$GROUP_TOLERANCE}"
     g_url="${GLOBAL_URL:-$GROUP_URL}"
     g_status="${GLOBAL_URL_STATUS:-$GROUP_URL_STATUS}"
@@ -711,14 +728,14 @@ EOF
     echo
     echo "proxy-groups:"
     echo "  - name: GLOBAL"
-    echo "    type: ${GLOBAL_TYPE:-select}"
+    echo "    type: $type"
     if [ "${HEALTHCHECK_PROVIDER}" = "false" ]; then
       echo "    url: \"$g_url\""
       echo "    expected-status: $g_status"
       echo "    interval: $g_interval"
     fi
     echo "    timeout: 1500"
-    case "$g_type" in
+    case "$type" in
       url-test)
         [ -n "$g_tol" ] && echo "    tolerance: $g_tol"
         ;;
@@ -726,18 +743,18 @@ EOF
         [ -n "$g_strategy" ] && echo "    strategy: $g_strategy"
         ;;
     esac
-    echo "    lazy: false"
-    [ -n "${GLOBAL_FILTER:-}" ] && echo "    filter: $GLOBAL_FILTER"
-    [ -n "${GLOBAL_EXCLUDE:-}" ] && echo "    exclude-filter: $GLOBAL_EXCLUDE"
-    [ -n "${GLOBAL_EXCLUDE_TYPE:-}" ] && echo "    exclude-type: $GLOBAL_EXCLUDE_TYPE"
-    echo "    use:"
-    if [ -n "${GLOBAL_USE:-}" ]; then
-      echo "$GLOBAL_USE" | tr ',' '\n' | sed 's/^/      - /'
-    else
+      echo "    lazy: false"
+      [ -n "$filter" ] && echo "    filter: $filter"
+      [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
+      [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
+      echo "    use:"
+      if [ -n "$use" ]; then
+        echo "$use" | tr ',' '\n' | sed 's/^/      - /'
+      else
       for p in $providers; do echo "      - $p"; done
     fi
 
-    # === Сбор групп с приоритетами (ЛОГИ ВНЕ БЛОКА) ===
+    # === Сбор групп с приоритетами ===
     group_prio_list=""
     idx=0
     if [ -n "${GROUP:-}" ]; then
@@ -765,7 +782,7 @@ EOF
       done
     fi
 
-    # === Сортировка по приоритету ===
+    # === Сортировка групп по приоритету ===
     sorted_groups=""
     if [ -n "$group_prio_list" ]; then
       sorted_groups=$(echo "$group_prio_list" | tr ' ' '\n' | sort -t'|' -k2 -n | cut -d'|' -f1)
@@ -774,11 +791,11 @@ EOF
     # === proxy-groups ===
     for g in $sorted_groups; do
       env_name=$(echo "$g" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
-      type=$(printenv "${env_name}_TYPE" || echo "select")
-      filter=$(printenv "${env_name}_FILTER" || true)
-      exclude=$(printenv "${env_name}_EXCLUDE" || true)
-      exclude_type=$(printenv "${env_name}_EXCLUDE_TYPE" || true)
-      use=$(printenv "${env_name}_USE" || true)
+      type=$(printenv "${env_name}_TYPE" || echo "$GROUP_TYPE")
+      filter=$(printenv "${env_name}_FILTER" || echo "$GROUP_FILTER")
+      exclude=$(printenv "${env_name}_EXCLUDE" || echo "$GROUP_EXCLUDE")
+      exclude_type=$(printenv "${env_name}_EXCLUDE_TYPE" || echo "$GROUP_EXCLUDE_TYPE")
+      use=$(printenv "${env_name}_USE" || echo "$GROUP_USE")
       g_tol=$(printenv "${env_name}_TOLERANCE" || echo "$GROUP_TOLERANCE")
       g_url=$(printenv "${env_name}_URL" || echo "$GROUP_URL")
       g_status=$(printenv "${env_name}_URL_STATUS" || echo "$GROUP_URL_STATUS")
@@ -814,19 +831,40 @@ EOF
       fi
     done
 
-    # === rule-providers + rules ===
+    #ENV RULES*
+
+    all_rules=""
+
+    for var in $(env | grep -E '^RULES[0-9]+=' | sort -V | cut -d= -f1); do
+      prio=${var#RULES}
+      content=$(printenv "$var")
+
+      OLDIFS=$IFS
+      IFS=';'
+      for line in $content; do
+        line=$(echo "$line" | xargs)
+        [ -z "$line" ] && continue
+        all_rules="$all_rules
+    $prio|$line"
+      done
+      IFS=$OLDIFS
+    done
+
+    # === rule-providers ===
     echo
     echo "rule-providers:"
 
-    rule_accum=""
+    idx=0
 
     for g in $sorted_groups; do
       env_name=$(echo "$g" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
 
+      group_prio=$(printenv "${env_name}_PRIORITY" 2>/dev/null)
+      [ -z "$group_prio" ] && group_prio=$((1000 + idx))
+
       # GEOSITE
       geosite_list=$(printenv "${env_name}_GEOSITE" || echo "")
-      for gs in $(echo "$geosite_list" | tr ',' ' '); do
-        gs=$(echo "$gs" | xargs)
+      for gs in $(echo "$geosite_list" | tr ',' ' ' | xargs -n1); do
         [ -z "$gs" ] && continue
         cat <<EOF
   ${g}_geosite_$gs:
@@ -836,18 +874,16 @@ EOF
     url: "https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/$gs.mrs"
     interval: 86400
 EOF
-        rule_accum="$rule_accum
-- RULE-SET,${g}_geosite_$gs,$g"
+        all_rules="$all_rules
+$group_prio|RULE-SET,${g}_geosite_$gs,$g"
       done
 
-# GEOIP
+      # GEOIP
       geoip_list=$(printenv "${env_name}_GEOIP" || echo "")
-      for gi in $(echo "$geoip_list" | tr ',' ' '); do
-        gi=$(echo "$gi" | xargs)
+      for gi in $(echo "$geoip_list" | tr ',' ' ' | xargs -n1); do
         [ -z "$gi" ] && continue
 
         if [ "$gi" = "discord" ]; then
-          # Специальный случай для DISCORD_GEOIP
           cat <<EOF
   ${g}_geoip_$gi:
     type: http
@@ -856,10 +892,9 @@ EOF
     url: "https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/custom_list/discord.list"
     interval: 86400
 EOF
-          rule_accum="$rule_accum
-- AND,((RULE-SET,${g}_geoip_$gi),(NETWORK,UDP),(DST-PORT,19294-19344/50000-50100)),$g"
+          all_rules="$all_rules
+$group_prio|AND,((RULE-SET,${g}_geoip_$gi),(NETWORK,UDP),(DST-PORT,19294-19344/50000-50100)),$g"
         else
-          # Обычный случай для всех остальных GEOIP
           cat <<EOF
   ${g}_geoip_$gi:
     type: http
@@ -868,15 +903,14 @@ EOF
     url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/meta/geo/geoip/$gi.mrs"
     interval: 86400
 EOF
-          rule_accum="$rule_accum
-- RULE-SET,${g}_geoip_$gi,$g"
+          all_rules="$all_rules
+$group_prio|RULE-SET,${g}_geoip_$gi,$g"
         fi
       done
 
       # AS
       as_list=$(printenv "${env_name}_AS" || echo "")
-      for asn in $(echo "$as_list" | tr ',' ' '); do
-        asn=$(echo "$asn" | xargs)
+      for asn in $(echo "$as_list" | tr ',' ' ' | xargs -n1); do
         [ -z "$asn" ] && continue
         as_num=$(echo "$asn" | sed 's/^AS//')
         [ "$as_num" = "$asn" ] && continue
@@ -888,52 +922,42 @@ EOF
     url: "https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/asn/AS$as_num.mrs"
     interval: 86400
 EOF
-        rule_accum="$rule_accum
-- RULE-SET,${g}_as_$asn,$g"
+        all_rules="$all_rules
+$group_prio|RULE-SET,${g}_as_$asn,$g"
       done
-      
+
+      # Custom правила
       custom_payload=""
-      
-      # DOMAIN
       domain_list=$(printenv "${env_name}_DOMAIN" || echo "")
-      for dm in $(echo "$domain_list" | tr ',' ' '); do
-        dm=$(echo "$dm" | xargs)
+      for dm in $(echo "$domain_list" | tr ',' ' ' | xargs -n1); do
         [ -z "$dm" ] && continue
         custom_payload="$custom_payload
       - DOMAIN,$dm"
       done
 
-      # DOMAIN-SUFFIX
       suffix_list=$(printenv "${env_name}_SUFFIX" || echo "")
-      for sf in $(echo "$suffix_list" | tr ',' ' '); do
-        sf=$(echo "$sf" | xargs)
+      for sf in $(echo "$suffix_list" | tr ',' ' ' | xargs -n1); do
         [ -z "$sf" ] && continue
         custom_payload="$custom_payload
       - DOMAIN-SUFFIX,$sf"
       done
 
-      # DOMAIN-KEYWORD
       keyword_list=$(printenv "${env_name}_KEYWORD" || echo "")
-      for kw in $(echo "$keyword_list" | tr ',' ' '); do
-        kw=$(echo "$kw" | xargs)
+      for kw in $(echo "$keyword_list" | tr ',' ' ' | xargs -n1); do
         [ -z "$kw" ] && continue
         custom_payload="$custom_payload
       - DOMAIN-KEYWORD,$kw"
       done
 
-      # IP-CIDR
       ipcidr_list=$(printenv "${env_name}_IPCIDR" || echo "")
-      for ipcidr in $(echo "$ipcidr_list" | tr ',' ' '); do
-        ipcidr=$(echo "$ipcidr" | xargs)
+      for ipcidr in $(echo "$ipcidr_list" | tr ',' ' ' | xargs -n1); do
         [ -z "$ipcidr" ] && continue
         custom_payload="$custom_payload
       - IP-CIDR,$ipcidr,no-resolve"
       done
 
-      # SRC-IP-CIDR
       srcipcidr_list=$(printenv "${env_name}_SRCIPCIDR" || echo "")
-      for srcipcidr in $(echo "$srcipcidr_list" | tr ',' ' '); do
-        srcipcidr=$(echo "$srcipcidr" | xargs)
+      for srcipcidr in $(echo "$srcipcidr_list" | tr ',' ' ' | xargs -n1); do
         [ -z "$srcipcidr" ] && continue
         custom_payload="$custom_payload
       - SRC-IP-CIDR,$srcipcidr"
@@ -947,22 +971,20 @@ EOF
     format: text
     payload:$custom_payload
 EOF
-        rule_accum="$rule_accum
-- RULE-SET,${g}_custom_rules,$g"
+        all_rules="$all_rules
+$group_prio|RULE-SET,${g}_custom_rules,$g"
       fi
+
+      idx=$((idx + 1))
     done
+
+    # Сортируем все правила по приоритету
+    sorted_all_rules=$(echo "$all_rules" | grep -v '^$' | sort -t'|' -k1 -n | cut -d'|' -f2- | sed 's/^/  - /')
 
     # === rules ===
     echo
     echo "rules:"
-    if ! lsmod | grep -q '^nft_tproxy'; then
-      echo "  - AND,((NETWORK,udp),(DST-PORT,443),(DOMAIN-SUFFIX,googlevideo.com)),REJECT"
-    fi
-
-    if [ -n "$rule_accum" ]; then
-      echo "$rule_accum" | sed '1d' | sed 's/^/  /'
-    fi
-
+    echo "$sorted_all_rules"
     if lsmod | grep -q '^nft_tproxy'; then
       echo "  - IN-NAME,tproxy-in,GLOBAL"
     else
@@ -997,12 +1019,18 @@ EOF
 if [ "${ZAPRET}" = "true" ]; then
   nft create table inet zapret
   nft add chain inet zapret post "{type filter hook postrouting priority mangle;}"
+  nft add rule inet zapret post meta l4proto { tcp, udp } mark 0x00000084 ct state new ct mark set 0x00000084
   nft add rule inet zapret post meta l4proto { tcp, udp } mark 0x00000084 ct original packets 1-12 queue num 132 bypass
+  nft add chain inet zapret pre "{type filter hook prerouting priority mangle;}"
+  nft add rule inet zapret pre meta l4proto { tcp, udp } ct reply packets 1-12 ct mark 0x00000084 queue num 132 bypass
 fi
 if [ "${ZAPRET2}" = "true" ]; then
   nft create table inet zapret2
   nft add chain inet zapret2 post "{type filter hook postrouting priority mangle;}"
+  nft add rule inet zapret2 post meta l4proto { tcp, udp } mark 0x00000085 ct state new ct mark set 0x00000085
   nft add rule inet zapret2 post meta l4proto { tcp, udp } mark 0x00000085 ct original packets 1-12 queue num 133 bypass
+  nft add chain inet zapret2 pre "{type filter hook prerouting priority mangle;}"
+  nft add rule inet zapret2 pre meta l4proto { tcp, udp } ct reply packets 1-12 ct mark 0x00000085 queue num 133 bypass
 fi
 if [ "${BYEDPI}" = "true" ]; then
   nft add table nat
@@ -1077,6 +1105,10 @@ run() {
   fi
   if [ "${ZAPRET2}" = "true" ]; then
     generate_zapret2_yaml
+    LUA_INIT_ARGS=""
+    for f in /lua/*.lua; do
+      LUA_INIT_ARGS="$LUA_INIT_ARGS --lua-init=@$f"
+    done    
     echo "Starting zapret nfqws2 $(./nfqws2 --version) "
   fi
   if [ "${BYEDPI}" = "true" ]; then
@@ -1093,7 +1125,7 @@ run() {
     ./nfqws --qnum 132 --user=root $ZAPRET_CMD &
   fi
   if [ "${ZAPRET2}" = "true" ]; then
-    ./nfqws2 --qnum 133 --user=root $ZAPRET2_CMD &
+    ./nfqws2 --qnum 133 --user=root $LUA_INIT_ARGS $ZAPRET2_CMD &
   fi
   if [ "${BYEDPI}" = "true" ]; then
     ./byedpi --port 1100 --transparent $BYEDPI_CMD &
@@ -1102,12 +1134,5 @@ run() {
   fi
   exec ./mihomo
 }
-
-# ------------------- ENTRY -------------------
-if ! env | grep -qE '^LINK[0-9]*=' \
-   && ! env | grep -qE '^SUB_LINK[0-9]*=' \
-   && ! find "$AWG_DIR" -name "*.conf" | grep -q . 2>/dev/null; then
-  log "Warning: no sources → minimal config"
-fi
 
 run || exit 1
