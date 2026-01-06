@@ -384,6 +384,7 @@ hosts:
   dns.google: [8.8.8.8, 8.8.4.4]
   dns.quad9.net: [9.9.9.9, 149.112.112.112]
   cloudflare-dns.com: [104.16.248.249, 104.16.249.249]
+  ntc.party: [130.255.77.28]
 
 sniffer:
   enable: ${SNIFFER:-true}
