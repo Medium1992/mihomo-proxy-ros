@@ -206,7 +206,7 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env AI_GEOSITE value: category-ai-!cn,openai,google-gemini"} on-error {}
 :do { add key=TWITCH_GEOSITE list=MihomoProxyRoS value=twitch
 :put "Add env TWITCH_GEOSITE value: twitch"} on-error {}
-:do { add key=RULES1 list=MihomoProxyRoS value=AND,((NETWORK,udp),(DST-PORT,443)),REJECT
+:do { add key=RULES1 list=MihomoProxyRoS value="AND,((NETWORK,udp),(DST-PORT,443)),REJECT"
 :put "Add env RULES1 value: AND,((NETWORK,udp),(DST-PORT,443)),REJECT"} on-error {}
 :do {
 add key=LINK1 list=MihomoProxyRoS value=$inputLINK
