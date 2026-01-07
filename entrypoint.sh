@@ -727,13 +727,6 @@ done
         drop: true
 EOF
 
-
-GROUP_TYPE="${GROUP_TYPE:-select}"
-GROUP_USE="${GROUP_USE:-}"
-GROUP_FILTER="${GROUP_FILTER:-}"
-GROUP_EXCLUDE="${GROUP_EXCLUDE:-}"
-GROUP_EXCLUDE_TYPE="${GROUP_EXCLUDE_TYPE:-}"
-
 # === ГРУППЫ + ПРАВИЛА ===
   {
     type="${GLOBAL_TYPE:-$GROUP_TYPE}"
