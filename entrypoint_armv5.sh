@@ -1018,17 +1018,17 @@ if [ "${ZAPRET}" = "true" ]; then
   nft create table inet zapret
   nft add chain inet zapret post "{type filter hook postrouting priority mangle;}"
   nft add rule inet zapret post meta l4proto { tcp, udp } mark 0x00000084 ct state new ct mark set 0x00000084
-  nft add rule inet zapret post meta l4proto { tcp, udp } mark 0x00000084 ct original packets 1-12 queue num 132 bypass
+  nft add rule inet zapret post meta l4proto { tcp, udp } ct mark 0x00000084 ct original packets 1-6 queue num 132
   nft add chain inet zapret pre "{type filter hook prerouting priority mangle;}"
-  nft add rule inet zapret pre meta l4proto { tcp, udp } ct reply packets 1-12 ct mark 0x00000084 queue num 132 bypass
+  nft add rule inet zapret pre meta l4proto { tcp, udp } ct reply packets 1-6 ct mark 0x00000084 queue num 132
 fi
 if [ "${ZAPRET2}" = "true" ]; then
   nft create table inet zapret2
   nft add chain inet zapret2 post "{type filter hook postrouting priority mangle;}"
   nft add rule inet zapret2 post meta l4proto { tcp, udp } mark 0x00000085 ct state new ct mark set 0x00000085
-  nft add rule inet zapret2 post meta l4proto { tcp, udp } mark 0x00000085 ct original packets 1-12 queue num 133 bypass
+  nft add rule inet zapret2 post meta l4proto { tcp, udp } ct mark 0x00000085 ct original packets 1-12 queue num 133
   nft add chain inet zapret2 pre "{type filter hook prerouting priority mangle;}"
-  nft add rule inet zapret2 pre meta l4proto { tcp, udp } ct reply packets 1-12 ct mark 0x00000085 queue num 133 bypass
+  nft add rule inet zapret2 pre meta l4proto { tcp, udp } ct reply packets 1-12 ct mark 0x00000085 queue num 133
 fi
 if [ "${BYEDPI}" = "true" ]; then
   nft add table nat
