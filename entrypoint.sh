@@ -694,8 +694,12 @@ proxies:
     udp: true
     ip-version: ipv4
     interface-name: "$iface"
+EOF
+  if [ $i -gt 200 ]; then
+  cat >> "$CONFIG_DIR/$iface.yaml" <<EOF    
     routing-mark: $i
 EOF
+  fi
 
   cat >> "$CONFIG_YAML" <<EOF
   $iface:
