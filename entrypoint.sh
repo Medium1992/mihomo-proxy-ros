@@ -22,6 +22,7 @@ fi
 
 set -eu
 
+TPROXY="${TPROXY:-true}"
 EXTERNAL_UI_URL="${EXTERNAL_UI_URL:-https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip}"
 UI_SECRET="${UI_SECRET:-}"
 CONFIG_DIR="/root/.config/mihomo"
@@ -416,7 +417,7 @@ sniffer:
 listeners:
 EOF
 
-  if lsmod | grep -q '^nft_tproxy'; then
+  if lsmod | grep -q '^nft_tproxy' && [ "$TPROXY" = "true" ]; then
     cat >> "$CONFIG_YAML" <<EOF
   - name: tproxy-in
     type: tproxy
@@ -1018,29 +1019,38 @@ $group_prio|RULE-SET,${g}_custom_rules,$g"
 nft_rules() {
   echo "Applying nftables..."
   iface=$(first_iface)
+  iface_cidr=$(ip -4 -o addr show dev "$iface" scope global | awk '{print $4}')
   iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
   nft flush ruleset || true
-  nft -f - <<EOF
-table inet mihomo {
-    chain prerouting {
-        type filter hook prerouting priority filter; policy accept;
-        ip daddr ${FAKE_IP_RANGE} meta l4proto { tcp, udp } iifname "$iface" meta mark set 0x00000001 tproxy ip to 127.0.0.1:12345 accept
-        ip daddr { $iface_ip, 0.0.0.0/8, 127.0.0.0/8, 224.0.0.0/4, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, 192.0.0.0/24, 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, 192.88.99.0/24, 198.18.0.0/15, 224.0.0.0/3 } return
-        meta l4proto { tcp, udp } iifname "$iface" meta mark set 0x00000001 tproxy ip to 127.0.0.1:12345 accept
-    }
-    chain divert {
-        type filter hook prerouting priority mangle; policy accept;
-        meta l4proto tcp socket transparent 1 meta mark set 0x00000001 accept
-    }
-}
-EOF
+if [ "${TPROXY}" = "true" ]; then
+  nft create table inet mihomo
+  nft add chain inet mihomo pre "{type filter hook prerouting priority filter; policy accept;}"
+  nft add rule inet mihomo pre tcp option mptcp exists drop
+  nft add rule inet mihomo pre ip daddr ${FAKE_IP_RANGE} meta l4proto { tcp, udp } iifname "$iface" meta mark set 0x00000001 tproxy ip to 127.0.0.1:12345 accept
+  nft add rule inet mihomo pre ip daddr { $iface_cidr, 127.0.0.0/8, 224.0.0.0/4, 255.255.255.255 } return
+  nft add rule inet mihomo pre meta l4proto { tcp, udp } iifname "$iface" meta mark set 0x00000001 tproxy ip to 127.0.0.1:12345 accept
+  nft add chain inet mihomo divert "{type filter hook prerouting priority mangle; policy accept;}"
+  nft add rule inet mihomo divert meta l4proto tcp socket transparent 1 meta mark set 0x00000001 accept
+  ip rule show | grep -q 'fwmark 0x00000001 lookup 100' || ip rule add fwmark 1 table 100
+  ip route replace local 0.0.0.0/0 dev lo table 100
+  echo "Mode inbound TProxy(tcp,udp) interface $iface"
+else
+  nft create table inet mihomo
+  nft add chain inet mihomo pre "{type nat hook prerouting priority -99; policy accept;}"
+  nft add rule inet mihomo pre meta iifname != "$iface" return 
+  nft add rule inet mihomo pre meta l4proto { tcp, udp } th dport 53 iifname "$iface" dnat ip to 198.19.0.2
+  nft add rule inet mihomo pre ip daddr { $iface_cidr, 127.0.0.0/8, 198.19.0.0/30, 224.0.0.0/4, 255.255.255.255 } return
+  nft add rule inet mihomo pre tcp option mptcp 1 drop
+  nft add rule inet mihomo pre meta nfproto 2 meta l4proto tcp redirect to 12345
+  echo "Mode inbound Redirect(tcp)+TUN(udp) interface $iface"
+fi
 if [ "${ZAPRET}" = "true" ]; then
   nft create table inet zapret
   nft add chain inet zapret post "{type filter hook postrouting priority mangle;}"
   nft add rule inet zapret post meta l4proto { tcp, udp } mark 0x00000084 ct state new ct mark set 0x00000084
-  nft add rule inet zapret post meta l4proto { tcp, udp } ct mark 0x00000084 ct original packets 1-6 queue num 132
+  nft add rule inet zapret post meta l4proto { tcp, udp } ct mark 0x00000084 ct original packets 1-12 queue num 132
   nft add chain inet zapret pre "{type filter hook prerouting priority mangle;}"
-  nft add rule inet zapret pre meta l4proto { tcp, udp } ct reply packets 1-6 ct mark 0x00000084 queue num 132
+  nft add rule inet zapret pre meta l4proto { tcp, udp } ct reply packets 1-12 ct mark 0x00000084 queue num 132
 fi
 if [ "${ZAPRET2}" = "true" ]; then
   nft create table inet zapret2
@@ -1050,13 +1060,16 @@ if [ "${ZAPRET2}" = "true" ]; then
   nft add chain inet zapret2 pre "{type filter hook prerouting priority mangle;}"
   nft add rule inet zapret2 pre meta l4proto { tcp, udp } ct reply packets 1-12 ct mark 0x00000085 queue num 133
 fi
-if [ "${BYEDPI}" = "true" ]; then
+if [ "${BYEDPI}" = "true" ] || [ "${TPROXY}" = "false" ]; then
   nft add table nat
   nft add chain nat output '{ type nat hook output priority -100; }'
-  nft add rule nat output meta l4proto tcp mark 0x00000083 redirect to 1100
+  if [ "${BYEDPI}" = "true" ]; then
+    nft add rule nat output meta l4proto tcp mark 0x00000083 redirect to 1100
+  fi
+  if [ "${TPROXY}" = "false" ]; then  
+    nft add rule nat output meta l4proto tcp oifname "Meta" redirect to 12345
+  fi
 fi
-  ip rule show | grep -q 'fwmark 0x00000001 lookup 100' || ip rule add fwmark 1 table 100
-  ip route replace local 0.0.0.0/0 dev lo table 100
 }
 
 iptables_rules() {
@@ -1080,7 +1093,9 @@ iptables_rules() {
   iptables -t nat -A mihomo-prerouting -i $iface -p udp -m udp --dport 53 -j DNAT --to-destination 198.19.0.2
   iptables -t nat -A mihomo-prerouting -i $iface -p tcp -m tcp --dport 53 -j DNAT --to-destination 198.19.0.2
   iptables -t nat -A mihomo-prerouting -m addrtype --dst-type LOCAL -j RETURN
+  iptables -t nat -A mihomo-prerouting -m addrtype ! --dst-type UNICAST -j RETURN
   iptables -t nat -A mihomo-prerouting -i $iface -p tcp -j REDIRECT --to-ports 12345
+  echo "Mode inbound Redirect(tcp)+TUN(udp) interface $iface"
 }
 
 config_file() {
