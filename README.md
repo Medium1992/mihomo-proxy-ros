@@ -1,5 +1,7 @@
 [English](/README.md) | [Русский](/README_RU.md)
 
+[Telegram group](https://t.me/+96HVPF3Ww6o3YTNi)
+
 # 🇬🇧 Description in English
 
 👉 Please read the [Code of Conduct](./CODE_OF_CONDUCT.md) before participating in the project.
