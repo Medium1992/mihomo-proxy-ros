@@ -984,7 +984,7 @@ $group_prio|RULE-SET,${g}_custom_rules,$g"
     echo
     echo "rules:"
     echo "$sorted_all_rules"
-    if lsmod | grep -q '^nft_tproxy'; then
+    if lsmod | grep -q '^nft_tproxy' && [ "$TPROXY" = "true" ]; then
       echo "  - IN-NAME,tproxy-in,GLOBAL"
     else
       echo "  - IN-NAME,redir-in,GLOBAL"
