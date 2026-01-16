@@ -132,8 +132,6 @@ Follow the instructions after executing the command below. You have 5 minutes to
 /system/device-mode/update mode=advanced container=yes
 ```
 
-Translated with DeepL.com (free version)
-
 🧩 Installation is done **directly via MikroTik terminal** —  
 just **copy and paste** the snippet below into the **RouterOS terminal**,  
 then the script **automatically downloads** from the repository and **starts installation**.
