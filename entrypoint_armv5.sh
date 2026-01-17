@@ -1,5 +1,25 @@
 #!/usr/bin/sh
 
+if ! lsmod | grep nf_tables >/dev/null 2>&1; then
+  if ! apk info -e iptables iptables-legacy >/dev/null 2>&1; then
+    echo "Install iptables"
+    apk add --no-cache iptables iptables-legacy >/dev/null 2>&1
+    rm -f /usr/sbin/iptables /usr/sbin/iptables-save /usr/sbin/iptables-restore
+    ln -s /usr/sbin/iptables-legacy /usr/sbin/iptables
+    ln -s /usr/sbin/iptables-legacy-save /usr/sbin/iptables-save
+    ln -s /usr/sbin/iptables-legacy-restore /usr/sbin/iptables-restore
+  fi
+else
+  if ! apk info -e nftables >/dev/null 2>&1; then
+    echo "Install nftables"
+    apk add --no-cache nftables >/dev/null 2>&1
+  fi
+  if apk info -e iptables iptables-legacy >/dev/null 2>&1; then
+    echo "Delete iptables"
+    apk del iptables iptables-legacy >/dev/null 2>&1
+  fi
+fi
+
 echo 180  > /proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream
 
 set -eu
@@ -10,6 +30,7 @@ UI_SECRET="${UI_SECRET:-}"
 CONFIG_DIR="/root/.config/mihomo"
 AWG_DIR="$CONFIG_DIR/awg"
 PROXIES_DIR="$CONFIG_DIR/proxies_mount"
+RULE_SET_DIR="$CONFIG_DIR/rule_set_list"
 CONFIG_YAML="$CONFIG_DIR/config.yaml"
 BYEDPI_YAML="$CONFIG_DIR/byedpi.yaml"
 ZAPRET_YAML="$CONFIG_DIR/zapret.yaml"
@@ -20,8 +41,6 @@ FAKE_IP_TTL="${FAKE_IP_TTL:-1}"
 FAKE_IP_FILTER="${FAKE_IP_FILTER:-}"
 BYEDPI_CMD="${BYEDPI_CMD:-}"
 BYEDPI_CMD_UDP="${BYEDPI_CMD_UDP:-}"
-ZAPRET_CMD="${ZAPRET_CMD:-}"
-ZAPRET2_CMD="${ZAPRET2_CMD:-}"
 ZAPRET_PACKETS="${ZAPRET_PACKETS:-12}"
 ZAPRET2_PACKETS="${ZAPRET2_PACKETS:-12}"
 HEALTHCHECK_INTERVAL="${HEALTHCHECK_INTERVAL:-120}"
@@ -40,28 +59,19 @@ GROUP_INTERVAL="${GROUP_INTERVAL:-60}"
 GROUP_TOLERANCE="${GROUP_TOLERANCE:-20}"
 GROUP_STRATEGY="${GROUP_STRATEGY:-consistent-hashing}"
 [ -n "$BYEDPI_CMD" ] && BYEDPI=true || BYEDPI=false
-if [ -n "$ZAPRET_CMD" ] && lsmod | grep -q '^nft_tproxy'; then
-  ZAPRET=true
-else
-  ZAPRET=false
-fi
-if [ -n "$ZAPRET2_CMD" ] && lsmod | grep -q '^nft_tproxy'; then
-  ZAPRET2=true
-else
-  ZAPRET2=false
-fi
 
-if echo "$ZAPRET_PACKETS" | grep -Eq '^[0-9]+$' && [ "$ZAPRET_PACKETS" -ge 1 ]; then
-    ZAPRET_PACKETS_RANGE="1-$ZAPRET_PACKETS"
-else
-    ZAPRET_PACKETS_RANGE=""
-fi
+collect_cmds() {
+  prefix="$1"
+  list=""
+  for v in $(env | grep -E "^${prefix}_CMD([0-9]+)?=" | cut -d= -f1 | sort -V); do
+    val=$(printenv "$v")
+    [ -n "$val" ] && list="$list $v"
+  done
+  echo "$list"
+}
 
-if echo "$ZAPRET2_PACKETS" | grep -Eq '^[0-9]+$' && [ "$ZAPRET2_PACKETS" -ge 1 ]; then
-    ZAPRET2_PACKETS_RANGE="1-$ZAPRET2_PACKETS"
-else
-    ZAPRET2_PACKETS_RANGE=""
-fi
+ZAPRET_LIST=$(collect_cmds ZAPRET)
+ZAPRET2_LIST=$(collect_cmds ZAPRET2)
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
@@ -96,31 +106,139 @@ EOF
 }
 
 # ------------------- ZAPRET -------------------
-generate_zapret_yaml() {
-  [ "$ZAPRET" = "true" ] || return 0
-  echo "Generating $ZAPRET_YAML"
-  cat > "$ZAPRET_YAML" <<EOF
+generate_zapret_proxies() {
+  base_mark="$1"     # 300 или 400
+  prefix="$2"        # ZAPRET / ZAPRET2
+  list="$3"
+
+  idx=0
+  for var in $list; do
+    base="${var%%_CMD*}"      
+    idx="${var#${base}_CMD}"   
+
+    if [ -n "$idx" ]; then
+      name="${base}_${idx}"
+    else
+      name="${base}"
+    fi
+    mark=$((base_mark + idx))
+    yaml="$CONFIG_DIR/${name}.yaml"
+
+    cat > "$yaml" <<EOF
 proxies:
-  - name: "ZAPRET"
+  - name: "$name"
     type: direct
     udp: true
     ip-version: ipv4
-    routing-mark: 132
+    routing-mark: $mark
 EOF
+
+    cat >> "$CONFIG_YAML" <<EOF
+  $name:
+    type: file
+    path: ${name}.yaml
+EOF
+    if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+      cat >> "$CONFIG_YAML" <<EOF
+    health-check:
+      enable: true
+      url: ${HEALTHCHECK_URL_ZAPRET:-https://www.facebook.com}
+      interval: $HEALTHCHECK_INTERVAL
+      timeout: 1500
+      lazy: false
+      expected-status: ${HEALTHCHECK_URL_STATUS_ZAPRET:-200}
+EOF
+    fi
+    providers="$providers $name"
+    idx=$((idx + 1))
+  done
 }
 
-# ------------------- ZAPRET2 -------------------
-generate_zapret2_yaml() {
-  [ "$ZAPRET2" = "true" ] || return 0
-  echo "Generating $ZAPRET2_YAML"
-  cat > "$ZAPRET2_YAML" <<EOF
-proxies:
-  - name: "ZAPRET2"
-    type: direct
-    udp: true
-    ip-version: ipv4
-    routing-mark: 133
-EOF
+get_packets_range() {
+  var="$1"        # ZAPRET_CMD1
+  base="$2"       # ZAPRET or ZAPRET2
+  def="$3"        # дефолт (например 12)
+
+  idx="${var#${base}_CMD}"
+  packets_var="${base}_PACKETS${idx}"
+
+  packets=$(printenv "$packets_var" 2>/dev/null || true)
+  [ -z "$packets" ] && packets="$def"
+
+  if echo "$packets" | grep -Eq '^[0-9]+$' && [ "$packets" -ge 1 ]; then
+    echo "1-$packets"
+  else
+    echo ""
+  fi
+}
+
+get_cmd_index() {
+  var="$1"        # ZAPRET_CMD2
+  base="$2"       # ZAPRET / ZAPRET2
+
+  idx="${var#${base}_CMD}"
+  [ "$idx" = "$var" ] && idx=""   # защита
+
+  if [ -z "$idx" ]; then
+    echo 0
+  else
+    echo "$idx"
+  fi
+}
+
+apply_zapret_nft() {
+  base_mark="$1"
+  base_queue="$2"
+  list="$3"
+  prefix="$4"
+  base_env="$5"
+  default_packets="$6"
+
+  for var in $list; do
+    idx=$(get_cmd_index "$var" "$base_env")
+
+    mark=$((base_mark + idx))
+    queue=$((base_queue + idx))
+    table="${prefix}_${idx}"
+
+    packets_range=$(get_packets_range "$var" "$base_env" "$default_packets")
+
+    nft add table inet "$table"
+    nft add chain inet "$table" pre  "{ type filter hook prerouting priority mangle; }"
+    nft add chain inet "$table" post "{ type filter hook postrouting priority mangle; }"
+
+    nft add rule inet "$table" post meta l4proto { tcp, udp } \
+      mark $mark ct state new ct mark set $mark
+
+    nft add rule inet "$table" post meta l4proto { tcp, udp } \
+      ct mark $mark ${packets_range:+ct original packets $packets_range} \
+      queue num $queue
+
+    nft add rule inet "$table" pre meta l4proto { tcp, udp } \
+      ct mark $mark ${packets_range:+ct reply packets $packets_range} \
+      queue num $queue
+  done
+}
+
+start_zapret_processes() {
+  base_queue="$1"
+  bin="$2"
+  list="$3"
+  LUA_INIT_ARGS=""
+  if [ "${bin}" = "nfqws2" ]; then
+    for f in /lua/*.lua; do
+      LUA_INIT_ARGS="$LUA_INIT_ARGS --lua-init=@$f"
+    done   
+  fi
+  for var in $list; do
+    idx=$(get_cmd_index "$var" "$(echo "$var" | sed 's/_CMD.*//')")
+
+    queue=$((base_queue + idx))
+    cmd=$(printenv "$var")
+
+    echo "Starting $var on queue $queue"
+    ./$bin --qnum $queue --user=root $LUA_INIT_ARGS $cmd &
+  done
 }
 
 # ------------------- AWG / WG -------------------
@@ -379,7 +497,7 @@ dns:
   cache-algorithm: arc
   prefer-h3: false
   use-system-hosts: false
-  respect-rules: false
+  respect-rules: true
   listen: 0.0.0.0:53
   ipv6: false
   default-nameserver:
@@ -403,6 +521,10 @@ EOF
 generate_nameserver_policy >>  $CONFIG_YAML
     cat >> "$CONFIG_YAML" <<EOF
   nameserver:
+    - https://dns.google/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://cloudflare-dns.com/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://dns.quad9.net/dns-query#disable-qtype-65=true&disable-ipv6=true
+  proxy-server-nameserver:
     - https://dns.google/dns-query#disable-qtype-65=true&disable-ipv6=true
     - https://cloudflare-dns.com/dns-query#disable-qtype-65=true&disable-ipv6=true
     - https://dns.quad9.net/dns-query#disable-qtype-65=true&disable-ipv6=true
@@ -460,6 +582,10 @@ proxy-providers:
 EOF
 
   providers=""
+  dns_providers=""
+  dns_ifaces=""
+  dns_zapret=""
+  dns_other=""
 
   # LINK
   if env | grep -qE '^LINK[0-9]*='; then
@@ -479,6 +605,7 @@ $(health_check_block)
 EOF
     fi
       providers="$providers $provider_name"
+      dns_other="$dns_other $provider_name"
     done
   fi
   
@@ -533,11 +660,13 @@ $(health_check_block)
 EOF
     fi
     providers="$providers $name"
+    dns_other="$dns_other $name"
   done < <(env | grep -E '^SUB_LINK[0-9]+=' | sort -V)
 
   # AWG
   awg_provs=$(generate_awg_providers)
   providers="${providers}${awg_provs}"
+  dns_other="${dns_other}${awg_provs}"
 
 # SOCKS5
   while IFS= read -r var; do
@@ -597,49 +726,12 @@ $(health_check_block)
 EOF
     fi
     providers="$providers $name"
+    dns_other="$dns_other $name"
   done < <(env | grep -E '^SOCKS[0-9]+=' | sort -V)
 
   # ZAPRET
-  if [ "$ZAPRET" = "true" ]; then
-    cat >> "$CONFIG_YAML" <<EOF
-  ZAPRET:
-    type: file
-    path: $(basename "$ZAPRET_YAML")
-EOF
-    if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
-      cat >> "$CONFIG_YAML" <<EOF
-    health-check:
-      enable: true
-      url: ${HEALTHCHECK_URL_ZAPRET:-https://www.facebook.com}
-      interval: $HEALTHCHECK_INTERVAL
-      timeout: 1500
-      lazy: false
-      expected-status: ${HEALTHCHECK_URL_STATUS_ZAPRET:-200}
-EOF
-    fi
-    providers="$providers ZAPRET"
-  fi
-
-  # ZAPRET2
-  if [ "$ZAPRET2" = "true" ]; then
-    cat >> "$CONFIG_YAML" <<EOF
-  ZAPRET2:
-    type: file
-    path: $(basename "$ZAPRET2_YAML")
-EOF
-    if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
-      cat >> "$CONFIG_YAML" <<EOF
-    health-check:
-      enable: true
-      url: ${HEALTHCHECK_URL_ZAPRET2:-https://www.facebook.com}
-      interval: $HEALTHCHECK_INTERVAL
-      timeout: 1500
-      lazy: false
-      expected-status: ${HEALTHCHECK_URL_STATUS_ZAPRET2:-200}
-EOF
-    fi
-    providers="$providers ZAPRET2"
-  fi
+  generate_zapret_proxies 300 ZAPRET "$ZAPRET_LIST"
+  generate_zapret_proxies 400 ZAPRET2 "$ZAPRET2_LIST"
 
   # BYEDPI
   if [ "$BYEDPI" = "true" ]; then
@@ -670,6 +762,11 @@ for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2
     network=$(echo "$route_line" | awk '{print $1}')
     mask=$(echo "$network" | cut -d/ -f2)
     net_addr=$(echo "$network" | cut -d/ -f1)
+    if [ "$i" -eq 200 ]; then
+      dns_ifaces="$iface $dns_ifaces"
+    else
+      dns_ifaces="$dns_ifaces $iface"
+    fi
     if [ "$mask" -eq 31 ] || [ "$mask" -eq 32 ]; then
         gw="$net_addr"
     else
@@ -722,6 +819,29 @@ EOF
   i=$((i+1))
 done
 
+for var in $ZAPRET_LIST; do
+  base="${var%%_CMD*}"
+  idx="${var#${base}_CMD}"
+  if [ -n "$idx" ]; then
+    name="${base}_${idx}"
+  else
+    name="${base}"
+  fi
+  dns_zapret="$dns_zapret $name"
+done
+for var in $ZAPRET2_LIST; do
+  base="${var%%_CMD*}"
+  idx="${var#${base}_CMD}"
+  if [ -n "$idx" ]; then
+    name="${base}_${idx}"
+  else
+    name="${base}"
+  fi
+  dns_zapret="$dns_zapret $name"
+done
+[ "$BYEDPI"  = "true" ] && dns_zapret="$dns_zapret BYEDPI"
+dns_providers="$(echo "$dns_ifaces $dns_zapret $dns_other" | xargs)"
+
 # REJECT,REJECT-DROP
   cat >> "$CONFIG_YAML" <<EOF
   REJECT:
@@ -740,7 +860,6 @@ EOF
 # === ГРУППЫ + ПРАВИЛА ===
   {
 
-    # Инициализируем переменные заранее, чтобы set -eu не ругался
 custom_rules_payloads=""
     custom_rules_idx=0
 
@@ -759,7 +878,6 @@ custom_rules_payloads=""
           ;;
       esac
 
-      # trim + sanitize name
       name=$(echo "$raw_name" | xargs | sed 's/[^a-zA-Z0-9_-]//g')
 
       if [ -z "$name" ]; then
@@ -772,8 +890,6 @@ custom_rules_payloads=""
         continue
       fi
 
-      # Приоритет НЕ берём из строки, оставляем только name и payload
-      # Приоритет будет читаться позже, как у обычных групп
       ruleset_file="$CONFIG_DIR/${name}_ruleset_payload.txt"
       payload=$(printf '%s' "$base64_part" | tr -d '\r\n ' | base64 -d 2>/dev/null || true)
 
@@ -787,6 +903,39 @@ custom_rules_payloads=""
       ${custom_rules_idx}|${name}|${ruleset_file}"
       custom_rules_idx=$((custom_rules_idx + 1))
     done
+
+    # ------------------- RULE_SET files (non-base64) -------------------
+    if [ -d "$RULE_SET_DIR" ]; then
+      for f in "$RULE_SET_DIR"/*; do
+        [ -f "$f" ] || continue
+
+        raw_name=$(basename "$f")
+        name="${raw_name%.*}"
+
+        name=$(echo "$name" | xargs | sed 's/[^a-zA-Z0-9_-]//g')
+
+        [ -z "$name" ] && {
+          log "Skipping rule-set file $f — invalid name"
+          continue
+        }
+
+        if [ ! -s "$f" ]; then
+          log "Skipping rule-set file $f — empty file"
+          continue
+        fi
+
+        ruleset_file="$CONFIG_DIR/${name}_ruleset_payload.txt"
+
+        cp "$f" "$ruleset_file"
+
+        custom_rules_payloads="$custom_rules_payloads
+    ${custom_rules_idx}|${name}|${ruleset_file}"
+
+        custom_rules_idx=$((custom_rules_idx + 1))
+      done
+    fi
+
+    # GLOBAL
 
     type="${GLOBAL_TYPE:-$GROUP_TYPE}"
     filter="${GLOBAL_FILTER:-$GROUP_FILTER}"
@@ -827,6 +976,48 @@ custom_rules_payloads=""
         echo "$use" | tr ',' '\n' | sed 's/^/      - /'
       else
       for p in $providers; do echo "      - $p"; done
+    fi
+
+    # DNS
+
+    type="${DNS_TYPE:-select}"
+    filter="${DNS_FILTER:-}"
+    exclude="${DNS_EXCLUDE:-}"
+    exclude_type="${DNS_EXCLUDE_TYPE:-}"
+    use="${DNS_USE:-}"
+    g_tol="${DNS_TOLERANCE:-$GROUP_TOLERANCE}"
+    g_url="${DNS_URL:-$GROUP_URL}"
+    g_status="${DNS_URL_STATUS:-$GROUP_URL_STATUS}"
+    g_interval="${DNS_INTERVAL:-$GROUP_INTERVAL}"
+    g_strategy="${DNS_STRATEGY:-$GROUP_STRATEGY}"
+    g_icon="${DNS_ICON:-}"
+    echo
+    echo "  - name: DNS"
+    echo "    type: $type"
+    if [ "${HEALTHCHECK_PROVIDER}" = "false" ]; then
+      echo "    url: \"$g_url\""
+      echo "    expected-status: $g_status"
+      echo "    interval: $g_interval"
+    fi
+    echo "    timeout: 1500"
+    case "$type" in
+      url-test)
+        [ -n "$g_tol" ] && echo "    tolerance: $g_tol"
+        ;;
+      load-balance)
+        [ -n "$g_strategy" ] && echo "    strategy: $g_strategy"
+        ;;
+    esac
+      echo "    lazy: false"
+      [ -n "$g_icon" ] && echo "    icon: $g_icon"
+      [ -n "$filter" ] && echo "    filter: $filter"
+      [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
+      [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
+      echo "    use:"
+      if [ -n "$use" ]; then
+        echo "$use" | tr ',' '\n' | sed 's/^/      - /'
+      else
+      for p in $dns_providers; do echo "      - $p"; done
     fi
 
     # === Сбор групп с приоритетами ===
@@ -1020,6 +1211,16 @@ custom_rules_payloads=""
       geosite_list=$(printenv "${env_name}_GEOSITE" || echo "")
       for gs in $(echo "$geosite_list" | tr ',' ' ' | xargs -n1); do
         [ -z "$gs" ] && continue
+        if case "$gs" in anime|art|casino|education|games|messengers|music|news|porn|socials|tools|torrent|video) true ;; *) false ;; esac; then
+        cat <<EOF
+  ${g}_geosite_$gs:
+    type: http
+    behavior: domain
+    format: text
+    url: "https://iplist.opencck.org/?format=text&data=domains&group=$gs"
+    interval: 86400
+EOF
+        else
         cat <<EOF
   ${g}_geosite_$gs:
     type: http
@@ -1028,6 +1229,7 @@ custom_rules_payloads=""
     url: "https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/$gs.mrs"
     interval: 86400
 EOF
+        fi 
         all_rules="$all_rules
 $group_prio|RULE-SET,${g}_geosite_$gs,$g"
       done
@@ -1149,6 +1351,17 @@ EOF
   done
 fi
 
+    cat <<EOF
+  DNS_ruleset:
+    type: inline
+    behavior: classical
+    format: text
+    payload:
+      - DOMAIN,dns.google
+      - DOMAIN,dns.quad9.net
+      - DOMAIN,cloudflare-dns.com
+EOF
+
 # Добавляем RULE-SET в all_rules (с приоритетом группы)
 if [ -n "$custom_rules_payloads" ]; then
 while IFS='|' read -r idx name payload; do
@@ -1169,6 +1382,7 @@ fi
     # === rules ===
     echo
     echo "rules:"
+    echo "  - RULE-SET,DNS_ruleset,DNS"
     echo "$sorted_all_rules"
     if lsmod | grep -q '^nft_tproxy' && [ "$TPROXY" = "true" ]; then
       echo "  - IN-NAME,tproxy-in,GLOBAL"
@@ -1210,22 +1424,8 @@ else
   nft add rule inet mihomo pre meta nfproto 2 meta l4proto tcp redirect to 12345
   echo "Mode inbound Redirect(tcp)+TUN(udp) interface $iface"
 fi
-if [ "${ZAPRET}" = "true" ]; then
-  nft create table inet zapret
-  nft add chain inet zapret post "{type filter hook postrouting priority mangle;}"
-  nft add rule inet zapret post meta l4proto { tcp, udp } mark 0x00000084 ct state new ct mark set 0x00000084
-  nft add rule inet zapret post meta l4proto { tcp, udp } ct mark 0x00000084 ${ZAPRET_PACKETS_RANGE:+ct original packets $ZAPRET_PACKETS_RANGE} queue num 132
-  nft add chain inet zapret pre "{type filter hook prerouting priority mangle;}"
-  nft add rule inet zapret pre meta l4proto { tcp, udp } ct mark 0x00000084 ${ZAPRET_PACKETS_RANGE:+ct reply packets $ZAPRET_PACKETS_RANGE} queue num 132
-fi
-if [ "${ZAPRET2}" = "true" ]; then
-  nft create table inet zapret2
-  nft add chain inet zapret2 post "{type filter hook postrouting priority mangle;}"
-  nft add rule inet zapret2 post meta l4proto { tcp, udp } mark 0x00000085 ct state new ct mark set 0x00000085
-  nft add rule inet zapret2 post meta l4proto { tcp, udp } ct mark 0x00000085 ${ZAPRET_PACKETS_RANGE:+ct original packets $ZAPRET2_PACKETS_RANGE} queue num 133
-  nft add chain inet zapret2 pre "{type filter hook prerouting priority mangle;}"
-  nft add rule inet zapret2 pre meta l4proto { tcp, udp } ct mark 0x00000085 ${ZAPRET_PACKETS_RANGE:+ct reply packets $ZAPRET2_PACKETS_RANGE} queue num 133
-fi
+[ -n "$ZAPRET_LIST" ] && apply_zapret_nft 300 300 "$ZAPRET_LIST"  zapret  ZAPRET  "$ZAPRET_PACKETS"
+[ -n "$ZAPRET2_LIST" ] && apply_zapret_nft 400 400 "$ZAPRET2_LIST" zapret2 ZAPRET2 "$ZAPRET2_PACKETS"
 if [ "${BYEDPI}" = "true" ] || [ "${TPROXY}" = "false" ]; then
   nft add table nat
   nft add chain nat output '{ type nat hook output priority -100; }'
@@ -1292,23 +1492,11 @@ chmod +x /hs5t.sh
 
 # ------------------- RUN -------------------
 run() {
-  mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$PROXIES_DIR"
+  mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$PROXIES_DIR" "$RULE_SET_DIR"
   if lsmod | grep -q '^nft_tproxy'; then
     nft_rules
   else
     iptables_rules
-  fi
-  if [ "${ZAPRET}" = "true" ]; then
-    generate_zapret_yaml
-    echo "Starting zapret nfqws $(./nfqws --version) "
-  fi
-  if [ "${ZAPRET2}" = "true" ]; then
-    generate_zapret2_yaml
-    LUA_INIT_ARGS=""
-    for f in /lua/*.lua; do
-      LUA_INIT_ARGS="$LUA_INIT_ARGS --lua-init=@$f"
-    done    
-    echo "Starting zapret nfqws2 $(./nfqws2 --version) "
   fi
   if [ "${BYEDPI}" = "true" ]; then
     generate_byedpi_yaml
@@ -1320,11 +1508,9 @@ run() {
   fi
   config_file_mihomo
   echo "Starting Mihomo $(./mihomo -v)"
-  if [ "${ZAPRET}" = "true" ]; then
-    ./nfqws --qnum 132 --user=root $ZAPRET_CMD &
-  fi
-  if [ "${ZAPRET2}" = "true" ]; then
-    ./nfqws2 --qnum 133 --user=root $LUA_INIT_ARGS $ZAPRET2_CMD &
+  if lsmod | grep -q '^nft_tproxy'; then
+  start_zapret_processes 300 nfqws  "$ZAPRET_LIST"
+  start_zapret_processes 400 nfqws2 "$ZAPRET2_LIST"
   fi
   if [ "${BYEDPI}" = "true" ]; then
     ./byedpi --port 1100 --transparent $BYEDPI_CMD &
