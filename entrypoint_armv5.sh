@@ -1,5 +1,27 @@
 #!/usr/bin/sh
 
+if ! lsmod | grep nf_tables >/dev/null 2>&1; then
+  if ! apk info -e iptables iptables-legacy >/dev/null 2>&1; then
+    echo "Install iptables"
+    apk add --no-cache iptables iptables-legacy >/dev/null 2>&1
+    rm -f /usr/sbin/iptables /usr/sbin/iptables-save /usr/sbin/iptables-restore
+    ln -s /usr/sbin/iptables-legacy /usr/sbin/iptables
+    ln -s /usr/sbin/iptables-legacy-save /usr/sbin/iptables-save
+    ln -s /usr/sbin/iptables-legacy-restore /usr/sbin/iptables-restore
+  fi
+else
+  if ! apk info -e nftables >/dev/null 2>&1; then
+    echo "Install nftables"
+    apk add --no-cache nftables >/dev/null 2>&1
+  fi
+  if apk info -e iptables iptables-legacy >/dev/null 2>&1; then
+    echo "Delete iptables"
+    apk del iptables iptables-legacy >/dev/null 2>&1
+  fi
+fi
+
+echo 180  > /proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream
+
 set -eu
 
 TPROXY="${TPROXY:-true}"
@@ -20,10 +42,13 @@ BYEDPI_CMD="${BYEDPI_CMD:-}"
 BYEDPI_CMD_UDP="${BYEDPI_CMD_UDP:-}"
 ZAPRET_CMD="${ZAPRET_CMD:-}"
 ZAPRET2_CMD="${ZAPRET2_CMD:-}"
+ZAPRET_PACKETS="${ZAPRET_PACKETS:-12}"
+ZAPRET2_PACKETS="${ZAPRET2_PACKETS:-12}"
 HEALTHCHECK_INTERVAL="${HEALTHCHECK_INTERVAL:-120}"
 HEALTHCHECK_URL="${HEALTHCHECK_URL:-https://www.gstatic.com/generate_204}"
 HEALTHCHECK_URL_STATUS="${HEALTHCHECK_URL_STATUS:-204}"
 HEALTHCHECK_PROVIDER="${HEALTHCHECK_PROVIDER:-true}"
+SUB_LINK_INTERVAL="${SUB_LINK_INTERVAL:-3600}"
 GROUP_TYPE="${GROUP_TYPE:-select}"
 GROUP_USE="${GROUP_USE:-}"
 GROUP_FILTER="${GROUP_FILTER:-}"
@@ -44,6 +69,18 @@ if [ -n "$ZAPRET2_CMD" ] && lsmod | grep -q '^nft_tproxy'; then
   ZAPRET2=true
 else
   ZAPRET2=false
+fi
+
+if echo "$ZAPRET_PACKETS" | grep -Eq '^[0-9]+$' && [ "$ZAPRET_PACKETS" -ge 1 ]; then
+    ZAPRET_PACKETS_RANGE="1-$ZAPRET_PACKETS"
+else
+    ZAPRET_PACKETS_RANGE=""
+fi
+
+if echo "$ZAPRET2_PACKETS" | grep -Eq '^[0-9]+$' && [ "$ZAPRET2_PACKETS" -ge 1 ]; then
+    ZAPRET2_PACKETS_RANGE="1-$ZAPRET2_PACKETS"
+else
+    ZAPRET2_PACKETS_RANGE=""
 fi
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
@@ -378,9 +415,9 @@ EOF
 generate_nameserver_policy >>  $CONFIG_YAML
     cat >> "$CONFIG_YAML" <<EOF
   nameserver:
-    - https://dns.google/dns-query
-    - https://cloudflare-dns.com/dns-query
-    - https://dns.quad9.net/dns-query
+    - https://dns.google/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://cloudflare-dns.com/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://dns.quad9.net/dns-query#disable-qtype-65=true&disable-ipv6=true
 hosts:
   dns.google: [8.8.8.8, 8.8.4.4]
   dns.quad9.net: [9.9.9.9, 149.112.112.112]
@@ -466,6 +503,7 @@ EOF
   while IFS= read -r var; do
     name=$(echo "$var" | cut -d '=' -f1)
     url=$(echo "$var" | cut -d '=' -f2- | tr -d '\r')
+    interval=$(printenv "${name}_INTERVAL" || echo "$SUB_LINK_INTERVAL")
     proxy="DIRECT"
     eval "proxy=\"\${${name}_PROXY:-DIRECT}\"" 2>/dev/null
     headers_env_name="${name}_HEADERS"
@@ -479,7 +517,7 @@ EOF
   $name:
     type: http
     url: "$url"
-    interval: 86400
+    interval: $interval
     proxy: $proxy
 EOF
     if [ -n "$headers_raw" ]; then
@@ -714,6 +752,56 @@ EOF
 
 # === ГРУППЫ + ПРАВИЛА ===
   {
+
+    # Инициализируем переменные заранее, чтобы set -eu не ругался
+custom_rules_payloads=""
+    custom_rules_idx=0
+
+    for var in $(env | grep -E '^RULE_SET[0-9]+_BASE64=' | sort -V | cut -d= -f1); do
+      value=$(printenv "$var" || continue)
+
+      value=$(printenv "$var" || true)
+
+      case "$value" in
+        *"#"*)
+          base64_part="${value%%#*}"
+          raw_name="${value#*#}"
+          ;;
+        *)
+          echo "ERROR: $var has invalid format. Expected BASE64#name" >&2
+          continue
+          ;;
+      esac
+
+      # trim + sanitize name
+      name=$(echo "$raw_name" | xargs | sed 's/[^a-zA-Z0-9_-]//g')
+
+      if [ -z "$name" ]; then
+        echo "ERROR: $var has empty or invalid name after '#'" >&2
+        exit 1
+      fi
+
+      if [ -z "$base64_part" ]; then
+        echo "ERROR: $var has empty BASE64 payload" >&2
+        exit 1
+      fi
+
+      # Приоритет НЕ берём из строки, оставляем только name и payload
+      # Приоритет будет читаться позже, как у обычных групп
+      ruleset_file="$CONFIG_DIR/${name}_ruleset_payload.txt"
+      payload=$(printf '%s' "$base64_part" | tr -d '\r\n ' | base64 -d 2>/dev/null || true)
+
+      if [ -z "$payload" ]; then
+        log "Skipping $var — BASE64 decode failed"
+        continue
+      fi      
+      printf '%s\n' "$payload" > "$ruleset_file"
+
+      custom_rules_payloads="$custom_rules_payloads
+      ${custom_rules_idx}|${name}|${ruleset_file}"
+      custom_rules_idx=$((custom_rules_idx + 1))
+    done
+
     type="${GLOBAL_TYPE:-$GROUP_TYPE}"
     filter="${GLOBAL_FILTER:-$GROUP_FILTER}"
     exclude="${GLOBAL_EXCLUDE:-$GROUP_EXCLUDE}"
@@ -724,6 +812,7 @@ EOF
     g_status="${GLOBAL_URL_STATUS:-$GROUP_URL_STATUS}"
     g_interval="${GLOBAL_INTERVAL:-$GROUP_INTERVAL}"
     g_strategy="${GLOBAL_STRATEGY:-$GROUP_STRATEGY}"
+    g_icon="${GLOBAL_ICON:-}"
     echo
     echo "proxy-groups:"
     echo "  - name: GLOBAL"
@@ -743,6 +832,7 @@ EOF
         ;;
     esac
       echo "    lazy: false"
+      [ -n "$g_icon" ] && echo "    icon: $g_icon"
       [ -n "$filter" ] && echo "    filter: $filter"
       [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
       [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
@@ -787,6 +877,16 @@ EOF
       sorted_groups=$(echo "$group_prio_list" | tr ' ' '\n' | sort -t'|' -k2 -n | cut -d'|' -f1)
     fi
 
+    # === Добавляем RULE_SET*_BASE64 группы как обычные группы ===
+    if [ -n "$custom_rules_payloads" ]; then
+      for name in $(echo "$custom_rules_payloads" | cut -d'|' -f2 | sort -u); do
+        case " $sorted_groups " in
+          *" $name "*) ;;
+          *) sorted_groups="$sorted_groups $name" ;;
+        esac
+      done
+    fi
+
     # === proxy-groups ===
     for g in $sorted_groups; do
       env_name=$(echo "$g" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
@@ -800,7 +900,7 @@ EOF
       g_status=$(printenv "${env_name}_URL_STATUS" || echo "$GROUP_URL_STATUS")
       g_interval=$(printenv "${env_name}_INTERVAL" || echo "$GROUP_INTERVAL")
       g_strategy=$(printenv "${env_name}_STRATEGY" || echo "$GROUP_STRATEGY")
-
+      g_icon=$(printenv "${env_name}_ICON" || echo "")
       echo
       echo "  - name: $g"
       echo "    type: $type"
@@ -819,6 +919,7 @@ EOF
           ;;
       esac
       echo "    lazy: false"
+      [ -n "$g_icon" ] && echo "    icon: $g_icon"
       [ -n "$filter" ] && echo "    filter: $filter"
       [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
       [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
@@ -830,6 +931,74 @@ EOF
       fi
     done
 
+# Сбор приоритетов для custom rule-set групп (по аналогии с GROUP)
+    custom_group_prio_list=""
+    custom_idx=0
+
+    # Проходим по уже собранным custom name
+    if [ -n "$custom_rules_payloads" ]; then
+      echo "$custom_rules_payloads" | grep -v '^$' | sort -t'|' -k1 -n | while IFS='|' read -r idx name payload_file; do
+        env_name=$(echo "$name" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
+        prio=$(printenv "${env_name}_PRIORITY" 2>/dev/null || echo "")
+        [ -z "$prio" ] && prio=$((2000 + custom_idx))   # дефолт, если нет ENV
+        custom_group_prio_list="$custom_group_prio_list $name|$prio"
+        custom_idx=$((custom_idx + 1))
+      done
+    fi
+
+    # Сортировка custom групп по приоритету
+    sorted_custom_groups=""
+    if [ -n "$custom_group_prio_list" ]; then
+      sorted_custom_groups=$(echo "$custom_group_prio_list" | tr ' ' '\n' | sort -t'|' -k2 -n | cut -d'|' -f1)
+    fi
+
+    # Добавляем группы для custom rule-set'ов (сортировка по приоритету)
+    if [ -n "$sorted_custom_groups" ]; then
+      for name in $sorted_custom_groups; do
+        env_name=$(echo "$name" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
+        type=$(printenv "${env_name}_TYPE" || echo "${GROUP_TYPE:-select}")
+        filter=$(printenv "${env_name}_FILTER" || echo "$GROUP_FILTER")
+        exclude=$(printenv "${env_name}_EXCLUDE" || echo "$GROUP_EXCLUDE")
+        exclude_type=$(printenv "${env_name}_EXCLUDE_TYPE" || echo "$GROUP_EXCLUDE_TYPE")
+        use=$(printenv "${env_name}_USE" || echo "$GROUP_USE")
+        g_tol=$(printenv "${env_name}_TOLERANCE" || echo "$GROUP_TOLERANCE")
+        g_url=$(printenv "${env_name}_URL" || echo "$GROUP_URL")
+        g_status=$(printenv "${env_name}_URL_STATUS" || echo "$GROUP_URL_STATUS")
+        g_interval=$(printenv "${env_name}_INTERVAL" || echo "$GROUP_INTERVAL")
+        g_strategy=$(printenv "${env_name}_STRATEGY" || echo "$GROUP_STRATEGY")
+        g_icon=$(printenv "${env_name}_ICON" || echo "")
+
+        echo
+        echo "  - name: $name"
+        echo "    type: $type"
+        if [ "${HEALTHCHECK_PROVIDER}" = "false" ]; then
+          echo "    url: \"$g_url\""
+          echo "    expected-status: $g_status"
+          echo "    interval: $g_interval"
+        fi
+        echo "    timeout: 1500"
+        case "$type" in
+          url-test)
+            [ -n "$g_tol" ] && echo "    tolerance: $g_tol"
+            ;;
+          load-balance)
+            [ -n "$g_strategy" ] && echo "    strategy: $g_strategy"
+            ;;
+        esac
+        echo "    lazy: false"
+        [ -n "$g_icon" ] && echo "    icon: $g_icon"
+        [ -n "$filter" ] && echo "    filter: $filter"
+        [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
+        [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
+        echo "    use:"
+        if [ -n "$use" ]; then
+          echo "$use" | tr ',' '\n' | sed 's/^/      - /'
+        else
+          for p in $providers; do echo "      - $p"; done
+        fi
+      done
+    fi
+    
     #ENV RULES*
 
     all_rules=""
@@ -923,7 +1092,7 @@ $group_prio|RULE-SET,${g}_geoip_$gi,$g"
 EOF
         all_rules="$all_rules
 $group_prio|RULE-SET,${g}_as_$asn,$g"
-      done
+      done   
 
       # Custom правила
       custom_payload=""
@@ -977,6 +1146,37 @@ $group_prio|RULE-SET,${g}_custom_rules,$g"
       idx=$((idx + 1))
     done
 
+# Добавляем inline rule-providers для custom
+if [ -n "$custom_rules_payloads" ]; then
+  echo "$custom_rules_payloads" | grep -v '^$' | sort -t'|' -k1 -n | while IFS='|' read -r idx name payload_file; do
+    # Защита от пустого имени
+    [ -z "$name" ] && continue
+
+    cat <<EOF
+  ${name}_ruleset:
+    type: inline
+    behavior: classical
+    format: text
+    payload:
+$(sed 's/^/      - /' "$payload_file")
+EOF
+  done
+fi
+
+# Добавляем RULE-SET в all_rules (с приоритетом группы)
+if [ -n "$custom_rules_payloads" ]; then
+while IFS='|' read -r idx name payload; do
+  [ -z "$name" ] && continue
+  env_name=$(echo "$name" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
+  prio=$(printenv "${env_name}_PRIORITY" 2>/dev/null || echo $((2000 + idx)))
+
+  all_rules="${all_rules}
+${prio}|RULE-SET,${name}_ruleset,${name}"
+done <<EOF
+$(echo "$custom_rules_payloads" | grep -v '^$' | sort -t'|' -k1 -n)
+EOF
+fi
+
     # Сортируем все правила по приоритету
     sorted_all_rules=$(echo "$all_rules" | grep -v '^$' | sort -t'|' -k1 -n | cut -d'|' -f2- | sed 's/^/  - /')
 
@@ -1028,17 +1228,17 @@ if [ "${ZAPRET}" = "true" ]; then
   nft create table inet zapret
   nft add chain inet zapret post "{type filter hook postrouting priority mangle;}"
   nft add rule inet zapret post meta l4proto { tcp, udp } mark 0x00000084 ct state new ct mark set 0x00000084
-  nft add rule inet zapret post meta l4proto { tcp, udp } ct mark 0x00000084 ct original packets 1-12 queue num 132
+  nft add rule inet zapret post meta l4proto { tcp, udp } ct mark 0x00000084 ${ZAPRET_PACKETS_RANGE:+ct original packets $ZAPRET_PACKETS_RANGE} queue num 132
   nft add chain inet zapret pre "{type filter hook prerouting priority mangle;}"
-  nft add rule inet zapret pre meta l4proto { tcp, udp } ct reply packets 1-12 ct mark 0x00000084 queue num 132
+  nft add rule inet zapret pre meta l4proto { tcp, udp } ct mark 0x00000084 ${ZAPRET_PACKETS_RANGE:+ct reply packets $ZAPRET_PACKETS_RANGE} queue num 132
 fi
 if [ "${ZAPRET2}" = "true" ]; then
   nft create table inet zapret2
   nft add chain inet zapret2 post "{type filter hook postrouting priority mangle;}"
   nft add rule inet zapret2 post meta l4proto { tcp, udp } mark 0x00000085 ct state new ct mark set 0x00000085
-  nft add rule inet zapret2 post meta l4proto { tcp, udp } ct mark 0x00000085 ct original packets 1-12 queue num 133
+  nft add rule inet zapret2 post meta l4proto { tcp, udp } ct mark 0x00000085 ${ZAPRET_PACKETS_RANGE:+ct original packets $ZAPRET2_PACKETS_RANGE} queue num 133
   nft add chain inet zapret2 pre "{type filter hook prerouting priority mangle;}"
-  nft add rule inet zapret2 pre meta l4proto { tcp, udp } ct reply packets 1-12 ct mark 0x00000085 queue num 133
+  nft add rule inet zapret2 pre meta l4proto { tcp, udp } ct mark 0x00000085 ${ZAPRET_PACKETS_RANGE:+ct reply packets $ZAPRET2_PACKETS_RANGE} queue num 133
 fi
 if [ "${BYEDPI}" = "true" ] || [ "${TPROXY}" = "false" ]; then
   nft add table nat
