@@ -131,7 +131,7 @@ add address=2.ru.pool.ntp.org
 add address=3.ru.pool.ntp.org
 :put "DNS and NTP client configuration complete"
 /ipv6 nd set [ find default=yes ] advertise-dns=yes disabled=yes
-/ipv6 settings set accept-redirects=no accept-router-advertisements=no allow-fast-path=no disable-ipv6=yes disable-link-local-address=yes forward=no
+/ipv6 settings set accept-redirects=no accept-router-advertisements=no accept-router-advertisements-on=none allow-fast-path=no disable-ipv6=yes disable-link-local-address=yes forward=no
 :put "Disable ipv6"
 /ip route
 add blackhole comment=BlackHole distance=254 dst-address=10.0.0.0/8 gateway="" routing-table=main
@@ -158,8 +158,8 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 /container/envs
 :do {add key=FAKE_IP_RANGE list=MihomoProxyRoS value=198.18.0.0/15
 :put "Add env FAKE_IP_RANGE value: 198.18.0.0/15"} on-error {}
-:do {add key=FAKE_IP_FILTER list=MihomoProxyRoS value=www.youtube.com
-:put "Add env FAKE_IP_FILTER value: www.youtube.com"} on-error {}
+:do {add key=FAKE_IP_FILTER1 list=MihomoProxyRoS value="DOMAIN,www.youtube.com,real-ip"
+:put "Add env FAKE_IP_FILTER1 value: DOMAIN,www.youtube.com,real-ip"} on-error {}
 :do {add key=NAMESERVER_POLICY list=MihomoProxyRoS value="tmdb-image-prod.b-cdn.net#https://dns.quad9.net/dns-query,+.themoviedb.org#https://dns.quad9.net/dns-query,+.tmdb.org#https://dns.quad9.net/dns-query,rule-set:META_geosite_meta#https://dns.quad9.net/dns-query"
 :put "Add env NAMESERVER_POLICY value: instagram, facebook, tmdb from Quad9"} on-error {}
 :do {add key=LOG_LEVEL list=MihomoProxyRoS value=error
@@ -255,19 +255,20 @@ add address=8.8.4.4 list=DNS
 :if ([:len [find comment="Discord_WebRTC"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=128 connection-mark=no-mark connection-state=new content="\12\A4\42" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19294-19344,50000-50100 protocol=udp comment="Discord_WebRTC"; :put "Add mangle rules 8"}
 :if ([:len [find comment="RoutingToMihomo1"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="RoutingToMihomo1"; :put "Add mangle rules 9"}
 
-/ip firewall address-list
-:do {add list=YT comment=YT_MSS address=www.youtube.com} on-error {}
-:do {add list=MihomoProxyRoS comment=YT address=www.youtube.com} on-error {}
-:do {add list=MihomoProxyRoS comment=TelegramFromAS31500 address=109.239.140.0/24} on-error {}
-
 /ip dns static
 :if ([:len [find name="mask.icloud.com"]] = 0) do={ add name="mask.icloud.com" type=NXDOMAIN }
 :if ([:len [find name="mask-h2.icloud.com"]] = 0) do={ add name="mask-h2.icloud.com" type=NXDOMAIN }
 :if ([:len [find name="doh.dns.apple.com"]] = 0) do={ add name="doh.dns.apple.com" type=NXDOMAIN }
 :if ([:len [find name="dns.apple.com"]] = 0) do={ add name="dns.apple.com" type=NXDOMAIN }
+:if ([:len [find name="ntc.party"]] = 0) do={ add comment=NTCParty name=ntc.party type=CNAME cname=box.ntc.party }
 :if ([:len [find name="usher.ttvnw.net"]] = 0) do={ add comment=twitch forward-to=MihomoProxyRoS match-subdomain=yes name=usher.ttvnw.net type=FWD }
 :if ([:len [find name="gql.twitch.tv"]] = 0) do={ add comment=twitch forward-to=MihomoProxyRoS match-subdomain=yes name=gql.twitch.tv type=FWD }
-:if ([:len [find name="ntc.party"]] = 0) do={ add comment=NTCParty forward-to=MihomoProxyRoS match-subdomain=no name=ntc.party type=FWD }
+
+/ip firewall address-list
+:do {add list=YT comment=YT_MSS address=www.youtube.com} on-error {}
+:do {add list=MihomoProxyRoS comment=YT address=www.youtube.com} on-error {}
+:do {add list=MihomoProxyRoS comment=NTCParty address=ntc.party} on-error {}
+:do {add list=MihomoProxyRoS comment=TelegramFromAS31500 address=109.239.140.0/24} on-error {}
 
 :if ([:len [/system/script/find name="IP_MihomoProxyRoS"]] = 0) do={
 /system script
@@ -488,8 +489,12 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 :do { /file/add name=proxies_yaml type=directory} on-error {}
 /container/mounts/add src=/proxies_yaml/ dst=/root/.config/mihomo/proxies_mount/ list=proxies_yaml comment="MihomoProxyRoSProxies"
 }
+:if ([:len [/container/mounts/find comment="MihomoProxyRoSRuleSet"]] = 0) do={
+:do { /file/add name=ruleset_txt type=directory} on-error {}
+/container/mounts/add src=/ruleset_txt/ dst=/root/.config/mihomo/rule_set_list list=ruleset_txt comment="MihomoProxyRoSRuleSet"
+}
 :if ([:len [/container/find comment="MihomoProxyRoS"]] = 0) do={
-/container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mountlists=awg_conf,proxies_yaml interface=MihomoProxyRoS root-dir=($pathPull . "Containers/MihomoProxyRoS") start-on-boot=yes comment="MihomoProxyRoS"
+/container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mountlists=awg_conf,proxies_yaml,ruleset_txt interface=MihomoProxyRoS root-dir=($pathPull . "Containers/MihomoProxyRoS") start-on-boot=yes comment="MihomoProxyRoS"
 :put "Start pull MihomoProxyRoS container, pls wait when container starting, pls wait"
 :delay 1
 }
