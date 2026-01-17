@@ -471,6 +471,51 @@ generate_nameserver_policy() {
   IFS=$OLDIFS
 }
 
+# ===== Registries =====
+
+DEFINED_GROUPS=""
+DEFINED_RULESETS=""
+DEFINED_RULES=""
+
+group_defined() {
+  case " $DEFINED_GROUPS " in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+register_group() {
+  DEFINED_GROUPS="$DEFINED_GROUPS $1"
+}
+
+ruleset_defined() {
+  case " $DEFINED_RULESETS " in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+register_ruleset() {
+  DEFINED_RULESETS="$DEFINED_RULESETS $1"
+}
+
+rule_defined() {
+  case "$DEFINED_RULES" in
+    *"|$1|"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+add_rule() {
+  local rule="$1"
+  local prio="$2"
+  if ! rule_defined "$rule"; then
+    DEFINED_RULES="${DEFINED_RULES}|$rule|"
+    all_rules="$all_rules
+$prio|$rule"
+  fi
+}
+
 # ------------------- CONFIG -------------------
 config_file_mihomo() {
   echo "Generating $CONFIG_YAML"
@@ -1078,33 +1123,36 @@ custom_rules_payloads=""
       g_interval=$(printenv "${env_name}_INTERVAL" || echo "$GROUP_INTERVAL")
       g_strategy=$(printenv "${env_name}_STRATEGY" || echo "$GROUP_STRATEGY")
       g_icon=$(printenv "${env_name}_ICON" || echo "")
-      echo
-      echo "  - name: $g"
-      echo "    type: $type"
-      if [ "${HEALTHCHECK_PROVIDER}" = "false" ]; then
-        echo "    url: \"$g_url\""
-        echo "    expected-status: $g_status"
-        echo "    interval: $g_interval"
-      fi
-      echo "    timeout: 1500"
-      case "$type" in
-        url-test)
-          [ -n "$g_tol" ] && echo "    tolerance: $g_tol"
-          ;;
-        load-balance)
-          [ -n "$g_strategy" ] && echo "    strategy: $g_strategy"
-          ;;
-      esac
-      echo "    lazy: false"
-      [ -n "$g_icon" ] && echo "    icon: $g_icon"
-      [ -n "$filter" ] && echo "    filter: $filter"
-      [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
-      [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
-      echo "    use:"
-      if [ -n "$use" ]; then
-        echo "$use" | tr ',' '\n' | sed 's/^/      - /'
-      else
-        for p in $providers; do echo "      - $p"; done
+      if ! group_defined "$g"; then
+        echo
+        echo "  - name: $g"
+        echo "    type: $type"
+        if [ "${HEALTHCHECK_PROVIDER}" = "false" ]; then
+          echo "    url: \"$g_url\""
+          echo "    expected-status: $g_status"
+          echo "    interval: $g_interval"
+        fi
+        echo "    timeout: 1500"
+        case "$type" in
+          url-test)
+            [ -n "$g_tol" ] && echo "    tolerance: $g_tol"
+            ;;
+          load-balance)
+            [ -n "$g_strategy" ] && echo "    strategy: $g_strategy"
+            ;;
+        esac
+        echo "    lazy: false"
+        [ -n "$g_icon" ] && echo "    icon: $g_icon"
+        [ -n "$filter" ] && echo "    filter: $filter"
+        [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
+        [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
+        echo "    use:"
+        if [ -n "$use" ]; then
+          echo "$use" | tr ',' '\n' | sed 's/^/      - /'
+        else
+          for p in $providers; do echo "      - $p"; done
+        fi
+        register_group "$g"
       fi
     done
 
@@ -1144,34 +1192,36 @@ custom_rules_payloads=""
         g_interval=$(printenv "${env_name}_INTERVAL" || echo "$GROUP_INTERVAL")
         g_strategy=$(printenv "${env_name}_STRATEGY" || echo "$GROUP_STRATEGY")
         g_icon=$(printenv "${env_name}_ICON" || echo "")
-
-        echo
-        echo "  - name: $name"
-        echo "    type: $type"
-        if [ "${HEALTHCHECK_PROVIDER}" = "false" ]; then
-          echo "    url: \"$g_url\""
-          echo "    expected-status: $g_status"
-          echo "    interval: $g_interval"
-        fi
-        echo "    timeout: 1500"
-        case "$type" in
-          url-test)
-            [ -n "$g_tol" ] && echo "    tolerance: $g_tol"
-            ;;
-          load-balance)
-            [ -n "$g_strategy" ] && echo "    strategy: $g_strategy"
-            ;;
-        esac
-        echo "    lazy: false"
-        [ -n "$g_icon" ] && echo "    icon: $g_icon"
-        [ -n "$filter" ] && echo "    filter: $filter"
-        [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
-        [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
-        echo "    use:"
-        if [ -n "$use" ]; then
-          echo "$use" | tr ',' '\n' | sed 's/^/      - /'
-        else
-          for p in $providers; do echo "      - $p"; done
+        if ! group_defined "$name"; then
+          echo
+          echo "  - name: $name"
+          echo "    type: $type"
+          if [ "${HEALTHCHECK_PROVIDER}" = "false" ]; then
+            echo "    url: \"$g_url\""
+            echo "    expected-status: $g_status"
+            echo "    interval: $g_interval"
+          fi
+          echo "    timeout: 1500"
+          case "$type" in
+            url-test)
+              [ -n "$g_tol" ] && echo "    tolerance: $g_tol"
+              ;;
+            load-balance)
+              [ -n "$g_strategy" ] && echo "    strategy: $g_strategy"
+              ;;
+          esac
+          echo "    lazy: false"
+          [ -n "$g_icon" ] && echo "    icon: $g_icon"
+          [ -n "$filter" ] && echo "    filter: $filter"
+          [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
+          [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
+          echo "    use:"
+          if [ -n "$use" ]; then
+            echo "$use" | tr ',' '\n' | sed 's/^/      - /'
+          else
+            for p in $providers; do echo "      - $p"; done
+          fi
+                register_group "$name"
         fi
       done
     fi
@@ -1207,80 +1257,102 @@ custom_rules_payloads=""
       group_prio=$(printenv "${env_name}_PRIORITY" 2>/dev/null)
       [ -z "$group_prio" ] && group_prio=$((1000 + idx))
 
-      # GEOSITE
-      geosite_list=$(printenv "${env_name}_GEOSITE" || echo "")
-      for gs in $(echo "$geosite_list" | tr ',' ' ' | xargs -n1); do
-        [ -z "$gs" ] && continue
-        if case "$gs" in anime|art|casino|education|games|messengers|music|news|porn|socials|tools|torrent|video) true ;; *) false ;; esac; then
+# GEOSITE
+geosite_list=$(printenv "${env_name}_GEOSITE" || echo "")
+for gs in $(echo "$geosite_list" | tr ',' ' ' | xargs -n1); do
+  [ -z "$gs" ] && continue
+
+  rs_name="${g}_geosite_$gs"
+
+  if ! ruleset_defined "$rs_name"; then
+    case "$gs" in
+      anime|art|casino|education|games|messengers|music|news|porn|socials|tools|torrent|video)
         cat <<EOF
-  ${g}_geosite_$gs:
+  $rs_name:
     type: http
     behavior: domain
     format: text
     url: "https://iplist.opencck.org/?format=text&data=domains&group=$gs"
     interval: 86400
 EOF
-        else
+        ;;
+      *)
         cat <<EOF
-  ${g}_geosite_$gs:
+  $rs_name:
     type: http
     behavior: domain
     format: mrs
     url: "https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/$gs.mrs"
     interval: 86400
 EOF
-        fi 
-        all_rules="$all_rules
-$group_prio|RULE-SET,${g}_geosite_$gs,$g"
-      done
+        ;;
+    esac
+    register_ruleset "$rs_name"
+  fi
 
-      # GEOIP
-      geoip_list=$(printenv "${env_name}_GEOIP" || echo "")
-      for gi in $(echo "$geoip_list" | tr ',' ' ' | xargs -n1); do
-        [ -z "$gi" ] && continue
+  add_rule "RULE-SET,$rs_name,$g" "$group_prio"
+done
 
-        if [ "$gi" = "discord" ]; then
-          cat <<EOF
-  ${g}_geoip_$gi:
+# GEOIP
+geoip_list=$(printenv "${env_name}_GEOIP" || echo "")
+for gi in $(echo "$geoip_list" | tr ',' ' ' | xargs -n1); do
+  [ -z "$gi" ] && continue
+
+  rs_name="${g}_geoip_$gi"
+
+  if ! ruleset_defined "$rs_name"; then
+    if [ "$gi" = "discord" ]; then
+      cat <<EOF
+  $rs_name:
     type: http
     behavior: ipcidr
     format: text
     url: "https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/custom_list/discord.list"
     interval: 86400
 EOF
-          all_rules="$all_rules
-$group_prio|AND,((RULE-SET,${g}_geoip_$gi),(NETWORK,UDP),(DST-PORT,19294-19344/50000-50100)),$g"
-        else
-          cat <<EOF
-  ${g}_geoip_$gi:
+    else
+      cat <<EOF
+  $rs_name:
     type: http
     behavior: ipcidr
     format: mrs
     url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/meta/geo/geoip/$gi.mrs"
     interval: 86400
 EOF
-          all_rules="$all_rules
-$group_prio|RULE-SET,${g}_geoip_$gi,$g"
-        fi
-      done
+    fi
+    register_ruleset "$rs_name"
+  fi
 
-      # AS
-      as_list=$(printenv "${env_name}_AS" || echo "")
-      for asn in $(echo "$as_list" | tr ',' ' ' | xargs -n1); do
-        [ -z "$asn" ] && continue
-        as_num=$(echo "$asn" | sed 's/^AS//')
-        [ "$as_num" = "$asn" ] && continue
-        cat <<EOF
-  ${g}_as_$asn:
+  if [ "$gi" = "discord" ]; then
+    add_rule "AND,((RULE-SET,$rs_name),(NETWORK,UDP),(DST-PORT,19294-19344/50000-50100)),$g" "$group_prio"
+  else
+    add_rule "RULE-SET,$rs_name,$g" "$group_prio"
+  fi
+done
+
+# AS
+as_list=$(printenv "${env_name}_AS" || echo "")
+for asn in $(echo "$as_list" | tr ',' ' ' | xargs -n1); do
+  [ -z "$asn" ] && continue
+  as_num="${asn#AS}"
+  [ "$as_num" = "$asn" ] && continue
+
+  rs_name="${g}_as_$asn"
+
+  if ! ruleset_defined "$rs_name"; then
+    cat <<EOF
+  $rs_name:
     type: http
     behavior: ipcidr
     format: mrs
     url: "https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/asn/AS$as_num.mrs"
     interval: 86400
 EOF
-        all_rules="$all_rules
-$group_prio|RULE-SET,${g}_as_$asn,$g"
-      done   
+    register_ruleset "$rs_name"
+  fi
+
+  add_rule "RULE-SET,$rs_name,$g" "$group_prio"
+done
 
       # Custom правила
       custom_payload=""
@@ -1320,13 +1392,20 @@ $group_prio|RULE-SET,${g}_as_$asn,$g"
       done
 
       if [ -n "$custom_payload" ]; then
-        cat <<EOF
-  ${g}_custom_rules:
+rs_name="${g}_custom_rules"
+
+if ! ruleset_defined "$rs_name"; then
+  cat <<EOF
+  $rs_name:
     type: inline
     behavior: classical
     format: text
     payload:$custom_payload
 EOF
+  register_ruleset "$rs_name"
+fi
+
+add_rule "RULE-SET,$rs_name,$g" "$group_prio"
         all_rules="$all_rules
 $group_prio|RULE-SET,${g}_custom_rules,$g"
       fi
@@ -1340,14 +1419,21 @@ if [ -n "$custom_rules_payloads" ]; then
     # Защита от пустого имени
     [ -z "$name" ] && continue
 
-    cat <<EOF
-  ${name}_ruleset:
+rs_name="${name}_ruleset"
+
+if ! ruleset_defined "$rs_name"; then
+  cat <<EOF
+  $rs_name:
     type: inline
     behavior: classical
     format: text
     payload:
 $(sed 's/^/      - /' "$payload_file")
 EOF
+  register_ruleset "$rs_name"
+fi
+
+add_rule "RULE-SET,$rs_name,$name" "$prio"
   done
 fi
 
