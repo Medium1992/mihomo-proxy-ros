@@ -1,25 +1,5 @@
 #!/usr/bin/sh
 
-if ! lsmod | grep nf_tables >/dev/null 2>&1; then
-  if ! apk info -e iptables iptables-legacy >/dev/null 2>&1; then
-    echo "Install iptables"
-    apk add --no-cache iptables iptables-legacy >/dev/null 2>&1
-    rm -f /usr/sbin/iptables /usr/sbin/iptables-save /usr/sbin/iptables-restore
-    ln -s /usr/sbin/iptables-legacy /usr/sbin/iptables
-    ln -s /usr/sbin/iptables-legacy-save /usr/sbin/iptables-save
-    ln -s /usr/sbin/iptables-legacy-restore /usr/sbin/iptables-restore
-  fi
-else
-  if ! apk info -e nftables >/dev/null 2>&1; then
-    echo "Install nftables"
-    apk add --no-cache nftables >/dev/null 2>&1
-  fi
-  if apk info -e iptables iptables-legacy >/dev/null 2>&1; then
-    echo "Delete iptables"
-    apk del iptables iptables-legacy >/dev/null 2>&1
-  fi
-fi
-
 echo 180  > /proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream
 
 set -eu
@@ -407,10 +387,18 @@ dns:
     - 9.9.9.9
     - 1.1.1.1
   enhanced-mode: ${DNS_MODE:-fake-ip}
-  fake-ip-filter-mode: ${FAKE_IP_FILTER_MODE:-blacklist}
+  fake-ip-filter-mode: rule
   fake-ip-range: ${FAKE_IP_RANGE}
-  fake-ip-ttl: ${FAKE_IP_TTL}${FAKE_IP_FILTER:+
-  fake-ip-filter:}${FAKE_IP_FILTER:+$(printf '\n    - %s' $(echo "$FAKE_IP_FILTER" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$'))}
+  fake-ip-ttl: ${FAKE_IP_TTL}
+  fake-ip-filter:
+EOF
+for var in $(env | grep -E '^FAKE_IP_FILTER[0-9]+=' | sort -V | cut -d= -f1); do
+  rule=$(printenv "$var" | xargs)
+  [ -z "$rule" ] && continue
+  echo "    - $rule" >> "$CONFIG_YAML"
+done
+    cat >> "$CONFIG_YAML" <<EOF
+    - MATCH,fake-ip    
 EOF
 generate_nameserver_policy >>  $CONFIG_YAML
     cat >> "$CONFIG_YAML" <<EOF
@@ -422,7 +410,6 @@ hosts:
   dns.google: [8.8.8.8, 8.8.4.4]
   dns.quad9.net: [9.9.9.9, 149.112.112.112]
   cloudflare-dns.com: [104.16.248.249, 104.16.249.249]
-  ntc.party: [130.255.77.28]
   
 sniffer:
   enable: ${SNIFFER:-true}
@@ -758,7 +745,6 @@ custom_rules_payloads=""
     custom_rules_idx=0
 
     for var in $(env | grep -E '^RULE_SET[0-9]+_BASE64=' | sort -V | cut -d= -f1); do
-      value=$(printenv "$var" || continue)
 
       value=$(printenv "$var" || true)
 
@@ -778,12 +764,12 @@ custom_rules_payloads=""
 
       if [ -z "$name" ]; then
         echo "ERROR: $var has empty or invalid name after '#'" >&2
-        exit 1
+        continue
       fi
 
       if [ -z "$base64_part" ]; then
         echo "ERROR: $var has empty BASE64 payload" >&2
-        exit 1
+        continue
       fi
 
       # Приоритет НЕ берём из строки, оставляем только name и payload
