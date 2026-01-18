@@ -605,6 +605,7 @@ EOF
   - name: tun-in
     type: tun
     stack: system
+    disable-icmp-forwarding: true
     auto-detect-interface: false
     include-interface:
       - $(first_iface)
