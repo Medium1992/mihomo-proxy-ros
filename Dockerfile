@@ -74,16 +74,29 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then mv zapret/binaries/linux-x86_64/nfqws /
 RUN if [ "$TARGETARCH" = "amd64" ]; then mv zapret2/binaries/linux-x86_64/nfqws2 /final/nfqws2; \
     elif [ "$TARGETARCH" = "arm64" ]; then mv zapret2/binaries/linux-arm64/nfqws2 /final/nfqws2; fi
 
-RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then mkdir -p /final/lua && \
-    cp zapret2/lua/*.lua /final/lua/ && \
-    mkdir -p /final/zapret-fakebin && \
-    cp zapret4rocket/fake/*.bin /final/zapret-fakebin && \
-    cp zapret-discord-youtube/bin/*.bin /final/zapret-fakebin && \
-    cp zapret2/files/fake/*.bin /final/zapret-fakebin && \
-    mkdir -p /final/zapret-lists && \
-    cp zapret4rocket/lists/*.txt /final/zapret-lists; \    
-    cp zapret-discord-youtube/lists/*.txt /final/zapret-lists; \
-    fi
+RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
+    mkdir -p /final/lua /final/zapret-fakebin /final/zapret-lists; \
+    if [ -d zapret2/lua ] && ls zapret2/lua/*.lua >/dev/null 2>&1; then \
+        cp zapret2/lua/*.lua /final/lua/; \
+    fi; \
+    Z4R=zapret4rocket/zapret4rocket-master; \
+    if [ -d "$Z4R/fake" ] && ls "$Z4R"/fake/*.bin >/dev/null 2>&1; then \
+        cp "$Z4R"/fake/*.bin /final/zapret-fakebin/; \
+    fi; \
+    if [ -d zapret-discord-youtube/bin ] && ls zapret-discord-youtube/bin/*.bin >/dev/null 2>&1; then \
+        cp zapret-discord-youtube/bin/*.bin /final/zapret-fakebin/; \
+    fi; \
+    if [ -d zapret2/files/fake ] && ls zapret2/files/fake/*.bin >/dev/null 2>&1; then \
+        cp zapret2/files/fake/*.bin /final/zapret-fakebin/; \
+    fi; \
+    if [ -d "$Z4R/lists" ] && ls "$Z4R"/lists/*.txt >/dev/null 2>&1; then \
+        cp "$Z4R"/lists/*.txt /final/zapret-lists/; \
+    fi; \
+    if [ -d zapret-discord-youtube/lists ] && ls zapret-discord-youtube/lists/*.txt >/dev/null 2>&1; then \
+        cp zapret-discord-youtube/lists/*.txt /final/zapret-lists/; \
+    fi; \
+fi
+
     
 COPY entrypoint.sh entrypoint_armv5.sh /final/
 
