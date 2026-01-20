@@ -1,25 +1,5 @@
 #!/usr/bin/sh
 
-if ! lsmod | grep nf_tables >/dev/null 2>&1; then
-  if ! apk info -e iptables iptables-legacy >/dev/null 2>&1; then
-    echo "Install iptables"
-    apk add --no-cache iptables iptables-legacy >/dev/null 2>&1
-    rm -f /usr/sbin/iptables /usr/sbin/iptables-save /usr/sbin/iptables-restore
-    ln -s /usr/sbin/iptables-legacy /usr/sbin/iptables
-    ln -s /usr/sbin/iptables-legacy-save /usr/sbin/iptables-save
-    ln -s /usr/sbin/iptables-legacy-restore /usr/sbin/iptables-restore
-  fi
-else
-  if ! apk info -e nftables >/dev/null 2>&1; then
-    echo "Install nftables"
-    apk add --no-cache nftables >/dev/null 2>&1
-  fi
-  if apk info -e iptables iptables-legacy >/dev/null 2>&1; then
-    echo "Delete iptables"
-    apk del iptables iptables-legacy >/dev/null 2>&1
-  fi
-fi
-
 echo 180  > /proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream
 
 set -eu
