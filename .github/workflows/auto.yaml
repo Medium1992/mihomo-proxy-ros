@@ -48,6 +48,11 @@ jobs:
       - name: Compare with VERSIONS
         id: check_versions
         run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual run → force build"
+            echo "build_needed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
           if [ ! -f VERSIONS ]; then
             echo "No VERSIONS file, need build"
             echo "build_needed=true" >> $GITHUB_OUTPUT
