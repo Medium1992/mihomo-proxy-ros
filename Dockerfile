@@ -45,6 +45,12 @@ RUN curl -s https://api.github.com/repos/Flowseal/zapret-discord-youtube/release
     unzip zapret-discord-youtube.zip -d /zapret-discord-youtube && \
     rm zapret-discord-youtube.zip
 
+RUN curl -L https://github.com/IndeecFOX/zapret4rocket/archive/refs/heads/master.zip \
+        -o zapret4rocket.zip && \
+    mkdir -p /zapret4rocket && \
+    unzip zapret4rocket.zip -d /zapret4rocket && \
+    rm zapret4rocket.zip
+
 RUN mkdir -p /final
 
 RUN if [ "$TARGETARCH" = "amd64" ]; then mv $(ls mihomo-linux-amd64-${AMD64VERSION}-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1) /final/mihomo; \
@@ -71,9 +77,11 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then mv zapret2/binaries/linux-x86_64/nfqws2
 RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then mkdir -p /final/lua && \
     cp zapret2/lua/*.lua /final/lua/ && \
     mkdir -p /final/zapret-fakebin && \
+    cp zapret4rocket/fake/*.bin /final/zapret-fakebin && \
     cp zapret-discord-youtube/bin/*.bin /final/zapret-fakebin && \
     cp zapret2/files/fake/*.bin /final/zapret-fakebin && \
     mkdir -p /final/zapret-lists && \
+    cp zapret4rocket/lists/*.txt /final/zapret-lists; \    
     cp zapret-discord-youtube/lists/*.txt /final/zapret-lists; \
     fi
     
