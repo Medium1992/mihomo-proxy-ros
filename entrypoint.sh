@@ -1,5 +1,7 @@
 #!/bin/sh
 
+sleep 1
+
 if ! lsmod | grep nf_tables >/dev/null 2>&1; then
   if ! apk info -e iptables iptables-legacy >/dev/null 2>&1; then
     echo "Install iptables"
