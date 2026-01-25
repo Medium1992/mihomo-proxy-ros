@@ -199,10 +199,10 @@ start_byedpi_processes() {
 
     echo "Starting BYEDPI[$idx] tcp:$tcp_port udp:$udp_port"
 
-    ./byedpi --port $tcp_port --transparent $cmd &
-    ./byedpi --port $udp_port $cmd &
+    ./byedpi --port $tcp_port --transparent $cmd >/dev/null 2>&1 &
+    ./byedpi --port $udp_port $cmd >/dev/null 2>&1 &
     generate_hs5t "$idx"
-    ./hs5t "./hs5t_$idx.yml" &
+    ./hs5t "./hs5t_$idx.yml" >/dev/null 2>&1 &
   done
 }
 
