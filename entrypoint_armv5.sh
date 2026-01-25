@@ -1,7 +1,8 @@
 #!/usr/bin/sh
 
-echo 180  > /proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream
 sleep 1
+
+echo 180  > /proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream
 
 set -eu
 
@@ -13,15 +14,10 @@ AWG_DIR="$CONFIG_DIR/awg"
 PROXIES_DIR="$CONFIG_DIR/proxies_mount"
 RULE_SET_DIR="$CONFIG_DIR/rule_set_list"
 CONFIG_YAML="$CONFIG_DIR/config.yaml"
-BYEDPI_YAML="$CONFIG_DIR/byedpi.yaml"
-ZAPRET_YAML="$CONFIG_DIR/zapret.yaml"
-ZAPRET2_YAML="$CONFIG_DIR/zapret2.yaml"
 UI_URL_CHECK="$CONFIG_DIR/.ui_url"
 FAKE_IP_RANGE="${FAKE_IP_RANGE:-198.18.0.0/15}"
 FAKE_IP_TTL="${FAKE_IP_TTL:-1}"
 FAKE_IP_FILTER="${FAKE_IP_FILTER:-}"
-BYEDPI_CMD="${BYEDPI_CMD:-}"
-BYEDPI_CMD_UDP="${BYEDPI_CMD_UDP:-}"
 ZAPRET_PACKETS="${ZAPRET_PACKETS:-12}"
 ZAPRET2_PACKETS="${ZAPRET2_PACKETS:-12}"
 HEALTHCHECK_INTERVAL="${HEALTHCHECK_INTERVAL:-120}"
@@ -39,7 +35,6 @@ GROUP_URL_STATUS="${GROUP_URL_STATUS:-204}"
 GROUP_INTERVAL="${GROUP_INTERVAL:-60}"
 GROUP_TOLERANCE="${GROUP_TOLERANCE:-20}"
 GROUP_STRATEGY="${GROUP_STRATEGY:-consistent-hashing}"
-[ -n "$BYEDPI_CMD" ] && BYEDPI=true || BYEDPI=false
 
 collect_cmds() {
   prefix="$1"
@@ -53,6 +48,9 @@ collect_cmds() {
 
 ZAPRET_LIST=$(collect_cmds ZAPRET)
 ZAPRET2_LIST=$(collect_cmds ZAPRET2)
+BYEDPI_LIST=$(collect_cmds BYEDPI)
+
+[ -n "$BYEDPI_LIST" ] && BYEDPI=true || BYEDPI=false
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
@@ -73,17 +71,119 @@ first_iface() {
 }
 
 # ------------------- BYEDPI -------------------
-generate_byedpi_yaml() {
-  [ "$BYEDPI" = "true" ] || return 0
-  echo "Generating $BYEDPI_YAML"
-  cat > "$BYEDPI_YAML" <<EOF
+generate_byedpi_proxies() {
+  base_mark=500
+
+  for var in $BYEDPI_LIST; do
+    idx=$(get_cmd_index "$var" BYEDPI)
+    mark=$((base_mark + idx))
+    name=$(get_instance_name "BYEDPI" "$idx")
+    yaml="$CONFIG_DIR/${name}.yaml"
+
+    cat > "$yaml" <<EOF
 proxies:
-  - name: "BYEDPI"
+  - name: "$name"
     type: direct
     udp: true
     ip-version: ipv4
-    routing-mark: 131
+    routing-mark: $mark
 EOF
+
+    cat >> "$CONFIG_YAML" <<EOF
+  $name:
+    type: file
+    path: ${name}.yaml
+EOF
+
+    [ "${HEALTHCHECK_PROVIDER}" = "true" ] && cat >> "$CONFIG_YAML" <<EOF
+    health-check:
+      enable: true
+      url: ${HEALTHCHECK_URL_BYEDPI:-https://www.facebook.com}
+      interval: $HEALTHCHECK_INTERVAL
+      timeout: 1500
+      lazy: false
+      expected-status: ${HEALTHCHECK_URL_STATUS_BYEDPI:-200}
+EOF
+
+    providers="$providers $name"
+  done
+}
+
+apply_byedpi_nft() {
+  base_mark=500
+  base_port=1500
+
+  nft add table inet byedpi
+  nft add chain inet byedpi output '{ type nat hook output priority -100; policy accept; }'
+
+  for var in $BYEDPI_LIST; do
+    idx=$(get_cmd_index "$var" BYEDPI)
+    mark=$((base_mark + idx))
+    port=$((base_port + idx))
+
+    nft add rule inet byedpi output meta l4proto tcp mark $mark redirect to $port
+  done
+}
+
+apply_byedpi_iptables() {
+  base_mark=500
+  base_port=1500
+
+  for var in $BYEDPI_LIST; do
+    idx=$(get_cmd_index "$var" BYEDPI)
+    mark=$((base_mark + idx))
+    port=$((base_port + idx))
+
+    iptables -t nat -A mihomo-output -p tcp -m mark --mark $mark -j REDIRECT --to-port $port
+  done
+}
+
+generate_hs5t() {
+  idx="$1"
+  mark=$((500 + idx))
+  port=$((2500 + idx))
+
+  cat > "/hs5t_$idx.yml" <<EOF
+misc:
+  log-level: 'error'
+tunnel:
+  name: hs5t_$idx
+  mtu: 1500
+  ipv4: 100.64.$idx.1
+  multi-queue: true
+  post-up-script: '/hs5t_$idx.sh'
+socks5:
+  address: '127.0.0.1'
+  port: $port
+  udp: 'udp'
+EOF
+
+  cat > "/hs5t_$idx.sh" <<EOF
+#!/usr/bin/sh
+ip rule show | grep -q "fwmark $mark.*ipproto udp" || \
+  ip rule add fwmark $mark ipproto udp table $mark pref 150
+ip route replace default via 100.64.$idx.1 dev hs5t_$idx table $mark
+EOF
+  chmod +x "/hs5t_$idx.sh"
+}
+
+start_byedpi_processes() {
+  base_tcp=1500
+  base_udp=2500
+
+  for var in $BYEDPI_LIST; do
+    idx=$(get_cmd_index "$var" BYEDPI)
+    tcp_port=$((base_tcp + idx))
+    udp_port=$((base_udp + idx))
+    cmd=$(printenv "$var")
+
+    echo "Starting BYEDPI[$idx] tcp:$tcp_port udp:$udp_port"
+
+    ./byedpi --port $tcp_port --transparent $cmd &
+    ./byedpi --port $udp_port $cmd &
+    generate_hs5t "$idx"
+    ./hs5t "./hs5t_$idx.yml" &
+  done
 }
 
 # ------------------- ZAPRET -------------------
@@ -164,6 +264,17 @@ get_cmd_index() {
     echo 0
   else
     echo "$idx"
+  fi
+}
+
+get_instance_name() {
+  base="$1"
+  idx="$2"
+
+  if [ "$idx" -eq 0 ]; then
+    echo "$base"
+  else
+    echo "${base}_$idx"
   fi
 }
 
@@ -399,6 +510,7 @@ generate_awg_providers() {
     type: file
     path: ${awg_name}.yaml
 EOF
+emit_provider_override "$awg_name" >> "$CONFIG_YAML"
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
       cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
@@ -425,6 +537,7 @@ generate_mounted_providers() {
     type: file
     path: ${provider_name}.yaml
 EOF
+emit_provider_override "$provider_name" >> "$CONFIG_YAML"
       if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
         cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
@@ -438,18 +551,36 @@ EOF
 
 #   NAMESERVER_POLICY="domain1#dns1,domain2#dns2"
 generate_nameserver_policy() {
-  [ -z "${NAMESERVER_POLICY:-}" ] && return
+  has_output=false
+
+  if [ -n "${NAMESERVER_POLICY:-}" ]; then
+    has_output=true
+  fi
+
+  if [ -n "$DNS_POLICY" ]; then
+    has_output=true
+  fi
+
+  [ "$has_output" = false ] && return
+
   echo "  nameserver-policy:"
-  OLDIFS=$IFS
-  IFS=','
-  for raw in $NAMESERVER_POLICY; do
-    item=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    [ -z "$item" ] && continue
-    domain=${item%%#*}
-    dns=${item#*#}
-    printf "    '%s': '%s'\n" "$domain" "$dns"
-  done
-  IFS=$OLDIFS
+
+  if [ -n "${NAMESERVER_POLICY:-}" ]; then
+    OLDIFS=$IFS
+    IFS=','
+    for raw in $NAMESERVER_POLICY; do
+      item=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+      [ -z "$item" ] && continue
+      domain=${item%%#*}
+      dns=${item#*#}
+      printf "    '%s': '%s'\n" "$domain" "$dns"
+    done
+    IFS=$OLDIFS
+  fi
+
+  if [ -n "$DNS_POLICY" ]; then
+    printf '%s\n' "$DNS_POLICY"
+  fi
 }
 
 # ===== Registries =====
@@ -457,6 +588,19 @@ generate_nameserver_policy() {
 DEFINED_GROUPS=""
 DEFINED_RULESETS=""
 DEFINED_RULES=""
+DNS_POLICY=""
+
+add_dns_policy() {
+  local rule="$1"
+  local dns="$2"
+  if [ -z "$DNS_POLICY" ]; then
+    DNS_POLICY="    '$rule': '$dns'"
+  else
+    DNS_POLICY="$DNS_POLICY
+    '$rule': '$dns'"
+  fi
+}
+
 
 group_defined() {
   case " $DEFINED_GROUPS " in
@@ -497,6 +641,20 @@ $prio|$rule"
   fi
 }
 
+emit_provider_override() {
+  local name="$1"
+  local dialer
+
+  dialer=$(printenv "${name}_DIALER_PROXY" 2>/dev/null || true)
+
+  if [ -n "$dialer" ]; then
+    cat <<EOF
+    override:
+      dialer-proxy: $dialer
+EOF
+  fi
+}
+
 # ------------------- CONFIG -------------------
 config_file_mihomo() {
   echo "Generating $CONFIG_YAML"
@@ -518,54 +676,6 @@ external-ui-url: "$EXTERNAL_UI_URL"
 unified-delay: true
 ipv6: false
 geodata-mode: true
-dns:
-  enable: true
-  cache-algorithm: arc
-  prefer-h3: false
-  use-system-hosts: false
-  respect-rules: true
-  listen: 0.0.0.0:53
-  ipv6: false
-  default-nameserver:
-    - 8.8.8.8
-    - 9.9.9.9
-    - 1.1.1.1
-  enhanced-mode: ${DNS_MODE:-fake-ip}
-  fake-ip-filter-mode: rule
-  fake-ip-range: ${FAKE_IP_RANGE}
-  fake-ip-ttl: ${FAKE_IP_TTL}
-  fake-ip-filter:
-EOF
-for var in $(env | grep -E '^FAKE_IP_FILTER[0-9]+=' | sort -V | cut -d= -f1); do
-  rule=$(printenv "$var" | xargs)
-  [ -z "$rule" ] && continue
-  echo "    - $rule" >> "$CONFIG_YAML"
-done
-    cat >> "$CONFIG_YAML" <<EOF
-    - MATCH,fake-ip    
-EOF
-generate_nameserver_policy >>  $CONFIG_YAML
-    cat >> "$CONFIG_YAML" <<EOF
-  nameserver:
-    - https://dns.google/dns-query#disable-qtype-65=true&disable-ipv6=true
-    - https://cloudflare-dns.com/dns-query#disable-qtype-65=true&disable-ipv6=true
-    - https://dns.quad9.net/dns-query#disable-qtype-65=true&disable-ipv6=true
-  proxy-server-nameserver:
-    - https://dns.google/dns-query#disable-qtype-65=true&disable-ipv6=true
-    - https://cloudflare-dns.com/dns-query#disable-qtype-65=true&disable-ipv6=true
-    - https://dns.quad9.net/dns-query#disable-qtype-65=true&disable-ipv6=true
-hosts:
-  dns.google: [8.8.8.8, 8.8.4.4]
-  dns.quad9.net: [9.9.9.9, 149.112.112.112]
-  cloudflare-dns.com: [104.16.248.249, 104.16.249.249]
-  
-sniffer:
-  enable: ${SNIFFER:-true}
-  sniff:
-    QUIC:
-    TLS:
-    HTTP:
-
 listeners:
 EOF
 
@@ -626,6 +736,7 @@ EOF
     type: file
     path: ${provider_name}.yaml
 EOF
+emit_provider_override "$provider_name" >> "$CONFIG_YAML"
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
       cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
@@ -661,6 +772,7 @@ EOF
     interval: $interval
     proxy: $proxy
 EOF
+emit_provider_override "$name" >> "$CONFIG_YAML"
     if [ -n "$headers_raw" ]; then
       cat >> "$CONFIG_YAML" <<EOF
     header:
@@ -747,6 +859,7 @@ EOF
     type: file
     path: ${name}.yaml
 EOF
+emit_provider_override "$name" >> "$CONFIG_YAML"
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
       cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
@@ -757,28 +870,14 @@ EOF
   done < <(env | grep -E '^SOCKS[0-9]+=' | sort -V)
 
   # ZAPRET
-  generate_zapret_proxies 300 ZAPRET "$ZAPRET_LIST"
-  generate_zapret_proxies 400 ZAPRET2 "$ZAPRET2_LIST"
+  if lsmod | grep -q '^nft_tproxy'; then
+    generate_zapret_proxies 300 ZAPRET "$ZAPRET_LIST"
+    generate_zapret_proxies 400 ZAPRET2 "$ZAPRET2_LIST"
+  fi
 
   # BYEDPI
-  if [ "$BYEDPI" = "true" ]; then
-    cat >> "$CONFIG_YAML" <<EOF
-  BYEDPI:
-    type: file
-    path: $(basename "$BYEDPI_YAML")
-EOF
-    if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
-      cat >> "$CONFIG_YAML" <<EOF
-    health-check:
-      enable: true
-      url: ${HEALTHCHECK_URL_BYEDPI:-https://www.facebook.com}
-      interval: $HEALTHCHECK_INTERVAL
-      timeout: 1500
-      lazy: false
-      expected-status: ${HEALTHCHECK_URL_STATUS_BYEDPI:-200}
-EOF
-    fi
-    providers="$providers BYEDPI"
+  if [ "${BYEDPI}" = "true" ]; then
+    generate_byedpi_proxies
   fi
   
   # all interfaces
@@ -804,7 +903,7 @@ for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2
         ip route replace default via "$gw" dev "$iface"
     else
         ip route replace default via "$gw" dev "$iface" table $i
-        ip rule add fwmark $i table $i 2>/dev/null || true
+        ip rule add fwmark $i table $i pref 150 2>/dev/null || true
     fi
   if [ $i = 200 ]; then
     ip route del default
@@ -812,7 +911,7 @@ for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2
   else
     ip route replace default via $gw dev $iface table $i
     ip rule del table $i 2>/dev/null
-    ip rule add fwmark $i table $i
+    ip rule add fwmark $i table $i pref 150
   fi
 
   echo "Generating $CONFIG_DIR/$iface.yaml with interface: $iface"
@@ -866,7 +965,11 @@ for var in $ZAPRET2_LIST; do
   fi
   dns_zapret="$dns_zapret $name"
 done
-[ "$BYEDPI"  = "true" ] && dns_zapret="$dns_zapret BYEDPI"
+for var in $BYEDPI_LIST; do
+  idx=$(get_cmd_index "$var" BYEDPI)
+  name=$(get_instance_name "BYEDPI" "$idx")
+  dns_zapret="$dns_zapret $name"
+done
 dns_providers="$(echo "$dns_ifaces $dns_zapret $dns_other" | xargs)"
 
 # REJECT,REJECT-DROP
@@ -975,6 +1078,7 @@ custom_rules_payloads=""
     g_interval="${GLOBAL_INTERVAL:-$GROUP_INTERVAL}"
     g_strategy="${GLOBAL_STRATEGY:-$GROUP_STRATEGY}"
     g_icon="${GLOBAL_ICON:-}"
+    hidden="${GLOBAL_HIDDEN:-false}"
     echo
     echo "proxy-groups:"
     echo "  - name: GLOBAL"
@@ -998,6 +1102,7 @@ custom_rules_payloads=""
       [ -n "$filter" ] && echo "    filter: $filter"
       [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
       [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
+      echo "    hidden: $hidden"
       echo "    use:"
       if [ -n "$use" ]; then
         echo "$use" | tr ',' '\n' | sed 's/^/      - /'
@@ -1018,6 +1123,7 @@ custom_rules_payloads=""
     g_interval="${DNS_INTERVAL:-$GROUP_INTERVAL}"
     g_strategy="${DNS_STRATEGY:-$GROUP_STRATEGY}"
     g_icon="${DNS_ICON:-}"
+    hidden="${DNS_HIDDEN:-false}"
     echo
     echo "  - name: DNS"
     echo "    type: $type"
@@ -1040,6 +1146,7 @@ custom_rules_payloads=""
       [ -n "$filter" ] && echo "    filter: $filter"
       [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
       [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
+      echo "    hidden: $hidden"
       echo "    use:"
       if [ -n "$use" ]; then
         echo "$use" | tr ',' '\n' | sed 's/^/      - /'
@@ -1057,6 +1164,9 @@ custom_rules_payloads=""
 
         env_name=$(echo "$g" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
         has_resource=false
+        has_use=false
+
+        # Проверка rule-ресурсов
         for suffix in GEOSITE GEOIP AS DOMAIN SUFFIX IPCIDR KEYWORD SRCIPCIDR; do
           if [ -n "$(printenv "${env_name}_${suffix}" 2>/dev/null || echo "")" ]; then
             has_resource=true
@@ -1064,7 +1174,12 @@ custom_rules_payloads=""
           fi
         done
 
-        if ! $has_resource; then
+        # Проверка USE
+        use_val=$(printenv "${env_name}_USE" 2>/dev/null || echo "")
+        [ -n "$use_val" ] && has_use=true
+
+        # Если нет ни ресурсов, ни USE — пропускаем
+        if ! $has_resource && ! $has_use; then
           continue
         fi
 
@@ -1105,6 +1220,7 @@ custom_rules_payloads=""
       g_interval=$(printenv "${env_name}_INTERVAL" || echo "$GROUP_INTERVAL")
       g_strategy=$(printenv "${env_name}_STRATEGY" || echo "$GROUP_STRATEGY")
       g_icon=$(printenv "${env_name}_ICON" || echo "")
+      hidden=$(printenv "${env_name}_HIDDEN" || echo "false")
       if ! group_defined "$g"; then
         echo
         echo "  - name: $g"
@@ -1128,6 +1244,7 @@ custom_rules_payloads=""
         [ -n "$filter" ] && echo "    filter: $filter"
         [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
         [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
+        echo "    hidden: $hidden"
         echo "    use:"
         if [ -n "$use" ]; then
           echo "$use" | tr ',' '\n' | sed 's/^/      - /'
@@ -1174,6 +1291,7 @@ custom_rules_payloads=""
         g_interval=$(printenv "${env_name}_INTERVAL" || echo "$GROUP_INTERVAL")
         g_strategy=$(printenv "${env_name}_STRATEGY" || echo "$GROUP_STRATEGY")
         g_icon=$(printenv "${env_name}_ICON" || echo "")
+        hidden=$(printenv "${env_name}_HIDDEN" || echo "false")
         if ! group_defined "$name"; then
           echo
           echo "  - name: $name"
@@ -1197,6 +1315,7 @@ custom_rules_payloads=""
           [ -n "$filter" ] && echo "    filter: $filter"
           [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
           [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
+          echo "    hidden: $hidden"
           echo "    use:"
           if [ -n "$use" ]; then
             echo "$use" | tr ',' '\n' | sed 's/^/      - /'
@@ -1270,6 +1389,9 @@ EOF
         ;;
     esac
     register_ruleset "$rs_name"
+    
+    dns=$(printenv "${env_name}_DNS" 2>/dev/null || true)
+    [ -n "$dns" ] && add_dns_policy "rule-set:${rs_name}" "$dns"
   fi
 
   add_rule "RULE-SET,$rs_name,$g" "$group_prio"
@@ -1385,11 +1507,11 @@ if ! ruleset_defined "$rs_name"; then
     payload:$custom_payload
 EOF
   register_ruleset "$rs_name"
+  dns=$(printenv "${env_name}_DNS" 2>/dev/null || true)
+  [ -n "$dns" ] && add_dns_policy "rule-set:${rs_name}" "$dns"
 fi
 
 add_rule "RULE-SET,$rs_name,$g" "$group_prio"
-        all_rules="$all_rules
-$group_prio|RULE-SET,${g}_custom_rules,$g"
       fi
 
       idx=$((idx + 1))
@@ -1397,7 +1519,7 @@ $group_prio|RULE-SET,${g}_custom_rules,$g"
 
 # Добавляем inline rule-providers для custom
 if [ -n "$custom_rules_payloads" ]; then
-  echo "$custom_rules_payloads" | grep -v '^$' | sort -t'|' -k1 -n | while IFS='|' read -r idx name payload_file; do
+  while IFS='|' read -r idx name payload_file; do
     # Защита от пустого имени
     [ -z "$name" ] && continue
 
@@ -1415,8 +1537,12 @@ EOF
   register_ruleset "$rs_name"
 fi
 
+env_name=$(echo "$name" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
+dns=$(printenv "${env_name}_DNS" 2>/dev/null || true)
+[ -n "$dns" ] && add_dns_policy "rule-set:${rs_name}" "$dns"
+
 add_rule "RULE-SET,$rs_name,$name" "$prio"
-  done
+  done < <(echo "$custom_rules_payloads" | grep -v '^$' | sort -t'|' -k1 -n)
 fi
 
     cat <<EOF
@@ -1461,6 +1587,58 @@ fi
     echo "  - IN-NAME,mixed-in,GLOBAL"
     echo "  - MATCH,DIRECT"
   } >> "$CONFIG_YAML"
+cat >> "$CONFIG_YAML" <<EOF
+
+dns:
+  enable: true
+  cache-algorithm: arc
+  prefer-h3: false
+  use-system-hosts: false
+  respect-rules: true
+  listen: 0.0.0.0:53
+  ipv6: false
+  default-nameserver:
+    - 8.8.8.8
+    - 9.9.9.9
+    - 1.1.1.1
+  enhanced-mode: ${DNS_MODE:-fake-ip}
+  fake-ip-filter-mode: rule
+  fake-ip-range: ${FAKE_IP_RANGE}
+  fake-ip-ttl: ${FAKE_IP_TTL}
+  fake-ip-filter:
+EOF
+for var in $(env | grep -E '^FAKE_IP_FILTER[0-9]+=' | sort -V | cut -d= -f1); do
+  rule=$(printenv "$var" | xargs)
+  [ -z "$rule" ] && continue
+  echo "    - $rule" >> "$CONFIG_YAML"
+done
+    cat >> "$CONFIG_YAML" <<EOF
+    - MATCH,fake-ip    
+EOF
+generate_nameserver_policy >>  $CONFIG_YAML
+    cat >> "$CONFIG_YAML" <<EOF
+  nameserver:
+    - https://dns.google/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://cloudflare-dns.com/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://dns.quad9.net/dns-query#disable-qtype-65=true&disable-ipv6=true
+  proxy-server-nameserver:
+    - https://dns.google/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://cloudflare-dns.com/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://dns.quad9.net/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://common.dot.dns.yandex.net/dns-query#disable-qtype-65=true&disable-ipv6=true
+hosts:
+  dns.google: [8.8.8.8, 8.8.4.4]
+  dns.quad9.net: [9.9.9.9, 149.112.112.112]
+  cloudflare-dns.com: [104.16.248.249, 104.16.249.249]
+  common.dot.dns.yandex.net: [77.88.8.8]
+  
+sniffer:
+  enable: ${SNIFFER:-true}
+  sniff:
+    QUIC:
+    TLS:
+    HTTP:
+EOF
 }
 
 # ------------------- NFT -------------------
@@ -1494,15 +1672,11 @@ else
 fi
 [ -n "$ZAPRET_LIST" ] && apply_zapret_nft 300 300 "$ZAPRET_LIST"  zapret  ZAPRET  "$ZAPRET_PACKETS"
 [ -n "$ZAPRET2_LIST" ] && apply_zapret_nft 400 400 "$ZAPRET2_LIST" zapret2 ZAPRET2 "$ZAPRET2_PACKETS"
-if [ "${BYEDPI}" = "true" ] || [ "${TPROXY}" = "false" ]; then
+[ -n "$BYEDPI_LIST" ] && apply_byedpi_nft
+if [ "${TPROXY}" = "false" ]; then
   nft add table nat
   nft add chain nat output '{ type nat hook output priority -100; }'
-  if [ "${BYEDPI}" = "true" ]; then
-    nft add rule nat output meta l4proto tcp mark 0x00000083 redirect to 1100
-  fi
-  if [ "${TPROXY}" = "false" ]; then  
-    nft add rule nat output meta l4proto tcp oifname "Meta" redirect to 12345
-  fi
+  nft add rule nat output meta l4proto tcp oifname "Meta" redirect to 12345
 fi
 }
 
@@ -1519,9 +1693,7 @@ iptables_rules() {
   iptables -t nat -N mihomo-prerouting
   iptables -t nat -A PREROUTING -j mihomo-prerouting
   iptables -t nat -A OUTPUT -j mihomo-output
-  if [ "${BYEDPI}" = "true" ]; then
-  iptables -t nat -A mihomo-output -p tcp -m mark --mark 131 -j REDIRECT --to-port 1100
-  fi
+  [ -n "$BYEDPI_LIST" ] && apply_byedpi_iptables
   iptables -t nat -A mihomo-output -o Meta -p tcp -j REDIRECT --to-ports 12345
   iptables -t nat -A mihomo-prerouting -i Meta -j RETURN
   iptables -t nat -A mihomo-prerouting -i $iface -p udp -m udp --dport 53 -j DNAT --to-destination 198.19.0.2
@@ -1532,32 +1704,6 @@ iptables_rules() {
   echo "Mode inbound Redirect(tcp)+TUN(udp) interface $iface"
 }
 
-config_file() {
-  cat > /hs5t.yml << EOF
-misc:
-  log-level: 'error'
-tunnel:
-  name: hs5t
-  mtu: 1500
-  ipv4: 100.64.0.1
-  multi-queue: true
-  post-up-script: '/hs5t.sh'
-socks5:
-  address: '127.0.0.1'
-  port: 1090
-  udp: 'udp'
-EOF
-}
-
-hs5t_file() {
-  cat > /hs5t.sh << 'EOF'
-#!/usr/bin/sh
-ip rule show | grep -q 'fwmark 0x83 ipproto udp lookup 131' || ip rule add fwmark 131 ipproto udp table 131
-ip route replace default via 100.64.0.1 dev hs5t table 131
-EOF
-chmod +x /hs5t.sh
-}
-
 # ------------------- RUN -------------------
 run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$PROXIES_DIR" "$RULE_SET_DIR"
@@ -1566,24 +1712,14 @@ run() {
   else
     iptables_rules
   fi
-  if [ "${BYEDPI}" = "true" ]; then
-    generate_byedpi_yaml
-    config_file
-    hs5t_file
-    echo "Starting ByeDPI v.$(./byedpi --version) "
-    echo "Starting hev-socks5-tunnel $(./hs5t --version | head -n 2 | tail -n 1)"
-    local cmd_udp=$(printenv "$BYEDPI_CMD_UDP" || echo "$BYEDPI_CMD")
-  fi
   config_file_mihomo
   echo "Starting Mihomo $(./mihomo -v)"
   if lsmod | grep -q '^nft_tproxy'; then
-  start_zapret_processes 300 nfqws  "$ZAPRET_LIST"
-  start_zapret_processes 400 nfqws2 "$ZAPRET2_LIST"
+    start_zapret_processes 300 nfqws  "$ZAPRET_LIST"
+    start_zapret_processes 400 nfqws2 "$ZAPRET2_LIST"
   fi
   if [ "${BYEDPI}" = "true" ]; then
-    ./byedpi --port 1100 --transparent $BYEDPI_CMD &
-    ./byedpi --port 1090 $cmd_udp &
-    ./hs5t ./hs5t.yml &
+    start_byedpi_processes
   fi
   exec ./mihomo
 }
