@@ -890,7 +890,7 @@ EOF
   done < <(env | grep -E '^SOCKS[0-9]+=' | sort -V)
 
   # ZAPRET
-  if lsmod | grep -q '^nft_tproxy'; then
+  if lsmod | grep nf_tables >/dev/null 2>&1; then
     generate_zapret_proxies 300 ZAPRET "$ZAPRET_LIST"
     generate_zapret_proxies 400 ZAPRET2 "$ZAPRET2_LIST"
   fi
@@ -1727,14 +1727,14 @@ iptables_rules() {
 # ------------------- RUN -------------------
 run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$PROXIES_DIR" "$RULE_SET_DIR"
-  if lsmod | grep -q '^nft_tproxy'; then
+  if lsmod | grep nf_tables >/dev/null 2>&1; then
     nft_rules
   else
     iptables_rules
   fi
   config_file_mihomo
   echo "Starting Mihomo $(./mihomo -v)"
-  if lsmod | grep -q '^nft_tproxy'; then
+  if lsmod | grep nf_tables >/dev/null 2>&1; then
     start_zapret_processes 300 nfqws  "$ZAPRET_LIST"
     start_zapret_processes 400 nfqws2 "$ZAPRET2_LIST"
   fi
