@@ -117,6 +117,8 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
+            TAG=${{ env.mihomo }}
+            BUILDTIME=${{ env.BUILDTIME }}
             AMD64VERSION=v1
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
@@ -135,6 +137,8 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
+            TAG=${{ env.mihomo }}
+            BUILDTIME=${{ env.BUILDTIME }}
             AMD64VERSION=v2
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
@@ -153,6 +157,8 @@ jobs:
           platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v5
           push: true
           build-args: |
+            TAG=${{ env.mihomo }}
+            BUILDTIME=${{ env.BUILDTIME }}
             AMD64VERSION=v3
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
