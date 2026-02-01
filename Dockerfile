@@ -6,7 +6,7 @@ ARG AMD64VERSION
 ARG TAG
 ARG WITH_GVISOR=1
 ARG BUILDTIME
-RUN apk add --no-cache curl jq gzip tar unzip git make python3
+RUN apk add --no-cache curl jq gzip tar unzip git make python3 go
 RUN mkdir -p /final
     
 RUN curl -s https://api.github.com/repos/heiher/hev-socks5-tunnel/releases/latest | \
