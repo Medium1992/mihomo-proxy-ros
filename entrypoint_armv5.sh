@@ -7,6 +7,7 @@ echo 180  > /proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream
 set -eu
 
 TPROXY="${TPROXY:-true}"
+LOG_LEVEL="${LOG_LEVEL:-error}"
 EXTERNAL_UI_URL="${EXTERNAL_UI_URL:-https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip}"
 UI_SECRET="${UI_SECRET:-}"
 CONFIG_DIR="/root/.config/mihomo"
@@ -17,12 +18,15 @@ CONFIG_YAML="$CONFIG_DIR/config.yaml"
 UI_URL_CHECK="$CONFIG_DIR/.ui_url"
 FAKE_IP_RANGE="${FAKE_IP_RANGE:-198.18.0.0/15}"
 FAKE_IP_TTL="${FAKE_IP_TTL:-1}"
-FAKE_IP_FILTER="${FAKE_IP_FILTER:-}"
 ZAPRET_PACKETS="${ZAPRET_PACKETS:-12}"
 ZAPRET2_PACKETS="${ZAPRET2_PACKETS:-12}"
 HEALTHCHECK_INTERVAL="${HEALTHCHECK_INTERVAL:-120}"
 HEALTHCHECK_URL="${HEALTHCHECK_URL:-https://www.gstatic.com/generate_204}"
 HEALTHCHECK_URL_STATUS="${HEALTHCHECK_URL_STATUS:-204}"
+HEALTHCHECK_URL_BYEDPI="${HEALTHCHECK_URL_BYEDPI:-https://www.facebook.com}"
+HEALTHCHECK_URL_STATUS_BYEDPI="${HEALTHCHECK_URL_STATUS_BYEDPI:-200}"
+HEALTHCHECK_URL_ZAPRET="${HEALTHCHECK_URL_ZAPRET:-https://www.facebook.com}"
+HEALTHCHECK_URL_STATUS_ZAPRET="${HEALTHCHECK_URL_STATUS_ZAPRET:-200}"
 HEALTHCHECK_PROVIDER="${HEALTHCHECK_PROVIDER:-true}"
 SUB_LINK_INTERVAL="${SUB_LINK_INTERVAL:-3600}"
 GROUP_TYPE="${GROUP_TYPE:-select}"
@@ -35,6 +39,37 @@ GROUP_URL_STATUS="${GROUP_URL_STATUS:-204}"
 GROUP_INTERVAL="${GROUP_INTERVAL:-60}"
 GROUP_TOLERANCE="${GROUP_TOLERANCE:-20}"
 GROUP_STRATEGY="${GROUP_STRATEGY:-consistent-hashing}"
+
+ZAPRET2_WG_CMD="${ZAPRET2_WG_CMD:---blob=quic_vk:@/zapret-fakebin/quic_initial_vk_com.bin --payload wireguard_initiation --lua-desync=fake:blob=quic_vk:repeats=6}"
+ZAPRET2_WG_DST="${ZAPRET2_WG_DST:-}"
+
+export TPROXY
+export LOG_LEVEL
+export EXTERNAL_UI_URL
+export UI_SECRET
+export FAKE_IP_RANGE
+export FAKE_IP_TTL
+export ZAPRET_PACKETS
+export ZAPRET2_PACKETS
+export HEALTHCHECK_INTERVAL
+export HEALTHCHECK_URL
+export HEALTHCHECK_URL_STATUS
+export HEALTHCHECK_URL_BYEDPI
+export HEALTHCHECK_URL_STATUS_BYEDPI
+export HEALTHCHECK_URL_ZAPRET
+export HEALTHCHECK_URL_STATUS_ZAPRET
+export HEALTHCHECK_PROVIDER
+export SUB_LINK_INTERVAL
+export GROUP_TYPE
+export GROUP_USE
+export GROUP_FILTER
+export GROUP_EXCLUDE
+export GROUP_EXCLUDE_TYPE
+export GROUP_URL
+export GROUP_URL_STATUS
+export GROUP_INTERVAL
+export GROUP_TOLERANCE
+export GROUP_STRATEGY
 
 collect_cmds() {
   prefix="$1"
@@ -98,11 +133,11 @@ EOF
     [ "${HEALTHCHECK_PROVIDER}" = "true" ] && cat >> "$CONFIG_YAML" <<EOF
     health-check:
       enable: true
-      url: ${HEALTHCHECK_URL_BYEDPI:-https://www.facebook.com}
+      url: $HEALTHCHECK_URL_BYEDPI
       interval: $HEALTHCHECK_INTERVAL
       timeout: 1500
       lazy: false
-      expected-status: ${HEALTHCHECK_URL_STATUS_BYEDPI:-200}
+      expected-status: $HEALTHCHECK_URL_STATUS_BYEDPI
 EOF
 
     providers="$providers $name"
@@ -223,11 +258,11 @@ EOF
       cat >> "$CONFIG_YAML" <<EOF
     health-check:
       enable: true
-      url: ${HEALTHCHECK_URL_ZAPRET:-https://www.facebook.com}
+      url: $HEALTHCHECK_URL_ZAPRET
       interval: $HEALTHCHECK_INTERVAL
       timeout: 1500
       lazy: false
-      expected-status: ${HEALTHCHECK_URL_STATUS_ZAPRET:-200}
+      expected-status: $HEALTHCHECK_URL_STATUS_ZAPRET
 EOF
     fi
     providers="$providers $name"
@@ -655,6 +690,100 @@ EOF
   fi
 }
 
+parse_wg_dst() {
+  echo "$ZAPRET2_WG_DST" | tr ',' '\n' | sed '/^$/d'
+}
+
+apply_zapret2_wg_nft() {
+
+  [ -z "$ZAPRET2_WG_DST" ] && return 0
+
+  echo "Applying ZAPRET2 WG rules..."
+
+  local table="zapret2_wg"
+  local mark="0x25"
+  local queue="250"
+
+  nft add table inet $table 2>/dev/null || true
+
+  nft add chain inet $table pre '{
+    type filter hook prerouting priority mangle;
+    policy accept;
+  }' 2>/dev/null || true
+
+
+  echo "$ZAPRET2_WG_DST" | tr ',' '\n' | while read -r ep; do
+
+    [ -z "$ep" ] && continue
+
+    ip="${ep%%:*}"
+    port="${ep##*:}"
+
+    echo "WG endpoint: $ip:$port"
+
+    nft add rule inet $table pre \
+      ip daddr $ip udp dport $port \
+      meta mark set $mark \
+      queue num $queue
+
+  done
+
+  ip rule show | grep -q "fwmark $mark lookup main" || \
+    ip rule add fwmark $mark table main pref 40
+
+  # === Exclude WG from mihomo tproxy ===
+  if [ "${TPROXY}" = "true" ]; then
+
+    echo "Adding mihomo tproxy exclusions for WG..."
+
+    local mtable="mihomo"
+    local mchain="pre"
+
+    # Убедимся что таблица есть
+    nft list table inet $mtable >/dev/null 2>&1 || return 0
+
+    echo "$ZAPRET2_WG_DST" | tr ',' '\n' | while read -r ep; do
+
+      [ -z "$ep" ] && continue
+
+      ip="${ep%%:*}"
+      port="${ep##*:}"
+
+      # Проверим, нет ли уже правила
+      nft list chain inet $mtable $mchain | \
+        grep -q "ip daddr $ip udp dport $port return" && continue
+
+      echo "Exclude from mihomo: $ip:$port"
+
+      # Добавляем В НАЧАЛО цепочки
+      nft insert rule inet $mtable $mchain position 0 \
+        ip daddr $ip udp dport $port return
+
+    done
+  fi
+}
+
+start_zapret2_wg() {
+
+  [ -z "$ZAPRET2_WG_DST" ] && return 0
+
+  local queue="250"
+
+  echo "Starting ZAPRET2 for WireGuard on queue $queue"
+
+  LUA_INIT_ARGS=""
+  for f in /lua/*.lua; do
+    LUA_INIT_ARGS="$LUA_INIT_ARGS --lua-init=@$f"
+  done
+
+  ./nfqws2 \
+    --qnum $queue \
+    --user=root \
+    $LUA_INIT_ARGS \
+    $ZAPRET2_WG_CMD &
+
+}
+
 # ------------------- CONFIG -------------------
 config_file_mihomo() {
   echo "Generating $CONFIG_YAML"
@@ -668,7 +797,7 @@ config_file_mihomo() {
   fi
 
   cat > "$CONFIG_YAML" <<EOF
-log-level: ${LOG_LEVEL:-error}
+log-level: $LOG_LEVEL
 external-controller: 0.0.0.0:9090
 secret: $UI_SECRET
 external-ui: ui
@@ -870,7 +999,7 @@ EOF
   done < <(env | grep -E '^SOCKS[0-9]+=' | sort -V)
 
   # ZAPRET
-  if lsmod | grep -q '^nft_tproxy'; then
+  if lsmod | grep nf_tables >/dev/null 2>&1; then
     generate_zapret_proxies 300 ZAPRET "$ZAPRET_LIST"
     generate_zapret_proxies 400 ZAPRET2 "$ZAPRET2_LIST"
   fi
@@ -1672,6 +1801,7 @@ else
 fi
 [ -n "$ZAPRET_LIST" ] && apply_zapret_nft 300 300 "$ZAPRET_LIST"  zapret  ZAPRET  "$ZAPRET_PACKETS"
 [ -n "$ZAPRET2_LIST" ] && apply_zapret_nft 400 400 "$ZAPRET2_LIST" zapret2 ZAPRET2 "$ZAPRET2_PACKETS"
+[ -n "$ZAPRET2_WG_DST" ] && apply_zapret2_wg_nft
 [ -n "$BYEDPI_LIST" ] && apply_byedpi_nft
 if [ "${TPROXY}" = "false" ]; then
   nft add table nat
@@ -1707,21 +1837,25 @@ iptables_rules() {
 # ------------------- RUN -------------------
 run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$PROXIES_DIR" "$RULE_SET_DIR"
-  if lsmod | grep -q '^nft_tproxy'; then
+  if lsmod | grep nf_tables >/dev/null 2>&1; then
     nft_rules
   else
     iptables_rules
   fi
   config_file_mihomo
   echo "Starting Mihomo $(./mihomo -v)"
-  if lsmod | grep -q '^nft_tproxy'; then
+  if lsmod | grep nf_tables >/dev/null 2>&1; then
     start_zapret_processes 300 nfqws  "$ZAPRET_LIST"
     start_zapret_processes 400 nfqws2 "$ZAPRET2_LIST"
+    start_zapret2_wg
   fi
   if [ "${BYEDPI}" = "true" ]; then
     start_byedpi_processes
   fi
   exec ./mihomo
 }
+
+run || exit 1
+
 
 run || exit 1
