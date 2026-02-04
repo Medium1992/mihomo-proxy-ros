@@ -825,6 +825,7 @@ external-ui-url: "$EXTERNAL_UI_URL"
 unified-delay: true
 ipv6: false
 geodata-mode: true
+find-process-mode: off
 listeners:
 EOF
 
