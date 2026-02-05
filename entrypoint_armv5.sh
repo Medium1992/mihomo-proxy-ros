@@ -2,10 +2,10 @@
 
 sleep 1
 
-echo 180  > /proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream
+echo 180  > /proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream >/dev/null 2>&1;
 for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo") print $2}'); do
-tc qdisc add dev $iface root fq_codel
-ip link set dev $iface multicast off
+tc qdisc add dev $iface root fq_codel >/dev/null 2>&1;
+ip link set dev $iface multicast off >/dev/null 2>&1;
 done
 
 set -eu
