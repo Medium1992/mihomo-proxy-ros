@@ -147,9 +147,9 @@ ARG TARGETVARIANT
 COPY --from=package /final /
 
 RUN if [ "$TARGETARCH" = "arm64" ] || [ "$TARGETARCH" = "amd64" ]; then \
-        apk add --no-cache ca-certificates tzdata iproute2-minimal iptables iptables-legacy nftables; \
+        apk add --no-cache ca-certificates tzdata iproute2 iptables iptables-legacy nftables; \
     elif [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v7" ]; then \
-        apk add --no-cache ca-certificates tzdata iproute2-minimal iptables iptables-legacy; \
+        apk add --no-cache ca-certificates tzdata iproute2 iptables iptables-legacy; \
     fi && \
     if ! ( [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v5" ] ); then \
     rm -f /usr/sbin/iptables /usr/sbin/iptables-save /usr/sbin/iptables-restore && \
