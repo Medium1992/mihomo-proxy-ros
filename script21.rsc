@@ -499,7 +499,7 @@ o={\r\
 \n/ip dns cache flush\r\
 \n:log warning \"change DNS server to DNSProxy\"\r\
 \n} \r\
-\n:if ((([:len [/container/find comment="DNSProxy" and stopped]] > 0) or ([:len [/container/find comment="DNSProxy"]]=0)) and [/ip/dns/get servers]=192.168.255.10) do={\r\
+\n:if ((([:len [/container/find comment=\"DNSProxy\" and stopped]] > 0) or ([:len [/container/find comment=\"DNSProxy\"]]=0)) and [/ip/dns/get servers]=192.168.255.10) do={\
 \n/ip dns set servers=\"\"\r\
 \n/ip dns set servers=8.8.8.8\r\
 \n/ip dns set use-doh-server=https://dns.google/dns-query verify-doh-cert=yes\r\
