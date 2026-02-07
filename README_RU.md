@@ -131,7 +131,7 @@
 Разрешите device-mode если необходимо.
 Следуйте указаниям после выполнения команды ниже, даётся 5 минут на перезагрузку электропитанием или кратковременно нажать на любую кнопку на устройстве, я рекомендую использовать любую кнопку)
 ```bash
-/system/device-mode/update mode=advanced container=yes
+/system/device-mode/update mode=advanced container=yes traffic-gen=yes
 ```
 
 🧩 Установка выполняется **непосредственно через терминал MikroTik** —  
