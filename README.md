@@ -135,7 +135,7 @@ First, make sure you have the `container` package installed and that the necessa
 Enable device-mode if necessary.
 Follow the instructions after executing the command below. You have 5 minutes to reboot the power supply or briefly press any button on the device (I recommend using any button).
 ```bash
-/system/device-mode/update mode=advanced container=yes
+/system/device-mode/update mode=advanced container=yes traffic-gen=yes
 ```
 
 🧩 Installation is done **directly via MikroTik terminal** —  
