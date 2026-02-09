@@ -148,6 +148,26 @@ jobs:
             medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}
             medium1992/mihomo-proxy-ros:amd64v2
 
+      - name: Build and push amd64v4
+        if: steps.check_versions.outputs.build_needed == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            TAG=${{ env.mihomo }}
+            BUILDTIME=${{ env.BUILDTIME }}
+            AMD64VERSION=v4
+          tags: |
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v4
+            medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
+            medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}
+            medium1992/mihomo-proxy-ros:amd64v4
+
       - name: Build and push multi-arch
         if: steps.check_versions.outputs.build_needed == 'true'
         uses: docker/build-push-action@v6
