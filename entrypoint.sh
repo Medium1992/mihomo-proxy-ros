@@ -1877,6 +1877,7 @@ run() {
   if [ "${BYEDPI}" = "true" ]; then
     start_byedpi_processes
   fi
+  httpd -f -p 80 -h /www >/dev/null 2>&1 &
   exec ./mihomo
 }
 
