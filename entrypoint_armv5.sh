@@ -1043,6 +1043,7 @@ EOF
   fi
   
   # all interfaces
+reverse_providers=""
 i=200
 for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo") print $2}'); do
     route_line=$(ip route list dev "$iface" proto kernel scope link | head -n1)
@@ -1103,9 +1104,10 @@ $(health_check_block)
 EOF
     fi
  
-  providers="$providers $iface"
+  reverse_providers="$iface $reverse_providers"
   i=$((i+1))
 done
+  providers="$providers $reverse_providers"
 
 for var in $ZAPRET_LIST; do
   base="${var%%_CMD*}"
@@ -1148,6 +1150,8 @@ dns_providers="$(echo "$dns_ifaces $dns_zapret $dns_other" | xargs)"
         type: reject
         drop: true
 EOF
+  providers="$providers REJECT"
+  providers="$providers REJECT-DROP"
 
 # === ГРУППЫ + ПРАВИЛА ===
   {
