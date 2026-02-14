@@ -91,6 +91,20 @@ BYEDPI_LIST=$(collect_cmds BYEDPI)
 
 [ -n "$BYEDPI_LIST" ] && BYEDPI=true || BYEDPI=false
 
+used_dscps=""
+dscp_to_group=""
+for var in $(env | grep -E '_DSCP=' | cut -d= -f1 | sort); do
+  group=${var%_DSCP}
+  dscp=$(printenv $var)
+  if ! echo "$dscp" | grep -Eq '^[0-9]+$'; then continue; fi
+  if echo "$used_dscps" | grep -qw "$dscp"; then
+    log "Warning: DSCP $dscp already assigned to another group, skipping $group"
+    continue
+  fi
+  used_dscps="$used_dscps $dscp"
+  dscp_to_group="$dscp_to_group $dscp:$group"
+done
+
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
 health_check_block() {
@@ -153,7 +167,7 @@ apply_byedpi_nft() {
   base_port=1500
 
   nft add table inet byedpi
-  nft add chain inet byedpi output '{ type nat hook output priority -100; policy accept; }'
+  nft add chain inet byedpi output '{ type nat hook output priority dstnat; policy accept; }'
 
   for var in $BYEDPI_LIST; do
     idx=$(get_cmd_index "$var" BYEDPI)
@@ -280,8 +294,11 @@ get_packets_range() {
   def="$3"        # дефолт (например 12)
 
   idx="${var#${base}_CMD}"
-  packets_var="${base}_PACKETS${idx}"
+  if [ "$idx" = "$var" ] || [ -z "$idx" ]; then
+    idx=0
+  fi
 
+  packets_var="${base}_PACKETS${idx}"
   packets=$(printenv "$packets_var" 2>/dev/null || true)
   [ -z "$packets" ] && packets="$def"
 
@@ -741,7 +758,7 @@ apply_zapret2_wg_nft() {
     echo "Adding mihomo tproxy exclusions for WG..."
 
     local mtable="mihomo"
-    local mchain="pre"
+    local mchain="pre_filter"
 
     # Убедимся что таблица есть
     nft list table inet $mtable >/dev/null 2>&1 || return 0
@@ -811,22 +828,33 @@ ipv6: false
 geodata-mode: true
 find-process-mode: off
 listeners:
+  - name: redir-in
+    type: redir
+    port: 12345
+    listen: 0.0.0.0
 EOF
-
+for entry in $dscp_to_group; do
+    dscp=${entry%%:*}
+    group=${entry#*:}
+    port=$((7000 + dscp))
+    name="redir-in-dscp-${dscp}"
+    cat >> "$CONFIG_YAML" <<EOF
+  - name: $name
+    type: redir
+    port: $port
+    listen: 0.0.0.0
+EOF
+  done
   if lsmod | grep -q '^nft_tproxy' && [ "$TPROXY" = "true" ]; then
     cat >> "$CONFIG_YAML" <<EOF
   - name: tproxy-in
     type: tproxy
-    port: 12345
+    port: 12346
     listen: 0.0.0.0
     udp: true
 EOF
   else
     cat >> "$CONFIG_YAML" <<EOF
-  - name: redir-in
-    type: redir
-    port: 12345
-    listen: 0.0.0.0
   - name: tun-in
     type: tun
     stack: system
@@ -1301,7 +1329,7 @@ custom_rules_payloads=""
         has_use=false
 
         # Проверка rule-ресурсов
-        for suffix in GEOSITE GEOIP AS DOMAIN SUFFIX IPCIDR KEYWORD SRCIPCIDR; do
+        for suffix in GEOSITE GEOIP AS DOMAIN SUFFIX IPCIDR KEYWORD SRCIPCIDR DSCP; do
           if [ -n "$(printenv "${env_name}_${suffix}" 2>/dev/null || echo "")" ]; then
             has_resource=true
             break
@@ -1647,7 +1675,11 @@ fi
 
 add_rule "RULE-SET,$rs_name,$g" "$group_prio"
       fi
-
+dscp=$(printenv "${env_name}_DSCP" || true)
+      if [ -n "$dscp" ]; then
+        add_rule "DSCP,$dscp,$g" "$group_prio"
+        add_rule "IN-NAME,redir-in-dscp-${dscp},$g" "$group_prio"
+      fi
       idx=$((idx + 1))
     done
 
@@ -1712,10 +1744,10 @@ fi
     echo "rules:"
     echo "  - RULE-SET,DNS_ruleset,DNS"
     echo "$sorted_all_rules"
+    echo "  - IN-NAME,redir-in,GLOBAL"
     if lsmod | grep -q '^nft_tproxy' && [ "$TPROXY" = "true" ]; then
       echo "  - IN-NAME,tproxy-in,GLOBAL"
     else
-      echo "  - IN-NAME,redir-in,GLOBAL"
       echo "  - IN-NAME,tun-in,GLOBAL"
     fi
     echo "  - IN-NAME,mixed-in,GLOBAL"
@@ -1782,37 +1814,56 @@ nft_rules() {
   iface_cidr=$(ip -4 -o addr show dev "$iface" scope global | awk '{print $4}')
   iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
   nft flush ruleset || true
+
 if [ "${TPROXY}" = "true" ]; then
   nft create table inet mihomo
-  nft add chain inet mihomo pre "{type filter hook prerouting priority filter; policy accept;}"
-  nft add rule inet mihomo pre tcp option mptcp exists drop
-  nft add rule inet mihomo pre ip daddr ${FAKE_IP_RANGE} meta l4proto { tcp, udp } iifname "$iface" meta mark set 0x00000001 tproxy ip to 127.0.0.1:12345 accept
-  nft add rule inet mihomo pre ip daddr { $iface_cidr, 127.0.0.0/8, 224.0.0.0/4, 255.255.255.255 } return
-  nft add rule inet mihomo pre meta l4proto { tcp, udp } iifname "$iface" meta mark set 0x00000001 tproxy ip to 127.0.0.1:12345 accept
-  nft add chain inet mihomo divert "{type filter hook prerouting priority mangle; policy accept;}"
-  nft add rule inet mihomo divert meta l4proto tcp socket transparent 1 meta mark set 0x00000001 accept
+  nft add chain inet mihomo pre_nat "{type nat hook prerouting priority dstnat + 1; policy accept;}"
+  nft add rule inet mihomo pre_nat meta iifname != "$iface" return
+  nft add rule inet mihomo pre_nat tcp option mptcp exists drop
+  nft add rule inet mihomo pre_nat ip daddr ${FAKE_IP_RANGE} meta l4proto tcp redirect to 12345
+  nft add rule inet mihomo pre_nat ip daddr { $iface_cidr, 127.0.0.0/8, 198.19.0.0/30, 224.0.0.0/4, 255.255.255.255 } return
+  nft add rule inet mihomo pre_nat meta l4proto tcp redirect to 12345
+  nft add chain inet mihomo pre_filter "{type filter hook prerouting priority filter + 1; policy accept;}"
+  nft add rule inet mihomo pre_filter meta iifname != "$iface" return 
+  nft add rule inet mihomo pre_filter tcp option mptcp exists drop
+  nft add rule inet mihomo pre_filter ip daddr ${FAKE_IP_RANGE} meta l4proto udp meta mark set 0x00000001 tproxy ip to 127.0.0.1:12346 accept
+  nft add rule inet mihomo pre_filter ip daddr { $iface_cidr, 127.0.0.0/8, 224.0.0.0/4, 255.255.255.255 } return
+  nft add rule inet mihomo pre_filter meta l4proto udp meta mark set 0x00000001 tproxy ip to 127.0.0.1:12346 accept
   ip rule show | grep -q 'fwmark 0x00000001 lookup 100' || ip rule add fwmark 1 table 100
   ip route replace local 0.0.0.0/0 dev lo table 100
-  echo "Mode inbound TProxy(tcp,udp) interface $iface"
+  echo "Mode inbound Redirect(tcp)+TProxy(udp) interface $iface"
 else
   nft create table inet mihomo
-  nft add chain inet mihomo pre "{type nat hook prerouting priority -99; policy accept;}"
-  nft add rule inet mihomo pre meta iifname != "$iface" return 
-  nft add rule inet mihomo pre meta l4proto { tcp, udp } th dport 53 iifname "$iface" dnat ip to 198.19.0.2
+  nft add chain inet mihomo pre "{type nat hook prerouting priority dstnat + 1; policy accept;}"
+  nft add rule inet mihomo pre meta iifname != "$iface" return
+  nft add rule inet mihomo pre tcp option mptcp exists drop
+  nft add rule inet mihomo pre ip daddr ${FAKE_IP_RANGE} meta l4proto tcp redirect to 12345
+  nft add rule inet mihomo pre meta l4proto { tcp, udp } th dport 53 dnat ip to 198.19.0.2
   nft add rule inet mihomo pre ip daddr { $iface_cidr, 127.0.0.0/8, 198.19.0.0/30, 224.0.0.0/4, 255.255.255.255 } return
-  nft add rule inet mihomo pre tcp option mptcp 1 drop
-  nft add rule inet mihomo pre meta nfproto 2 meta l4proto tcp redirect to 12345
+  nft add rule inet mihomo pre meta l4proto tcp redirect to 12345
+  nft add table nat
+  nft add chain nat output '{ type nat hook output priority dstnat + 1; policy accept;}'
+  nft add rule nat output meta l4proto tcp oifname "Meta" redirect to 12345
   echo "Mode inbound Redirect(tcp)+TUN(udp) interface $iface"
 fi
 [ -n "$ZAPRET_LIST" ] && apply_zapret_nft 300 300 "$ZAPRET_LIST"  zapret  ZAPRET  "$ZAPRET_PACKETS"
 [ -n "$ZAPRET2_LIST" ] && apply_zapret_nft 400 400 "$ZAPRET2_LIST" zapret2 ZAPRET2 "$ZAPRET2_PACKETS"
 [ -n "$ZAPRET2_WG_DST" ] && apply_zapret2_wg_nft
 [ -n "$BYEDPI_LIST" ] && apply_byedpi_nft
-if [ "${TPROXY}" = "false" ]; then
-  nft add table nat
-  nft add chain nat output '{ type nat hook output priority -100; }'
-  nft add rule nat output meta l4proto tcp oifname "Meta" redirect to 12345
-fi
+for entry in $dscp_to_group; do
+  dscp=${entry%%:*}
+  table="dscp_${dscp}"
+  chain="pre"
+  port=$((7000 + dscp))
+  nft create table inet $table
+  nft add chain inet $table $chain "{type nat hook prerouting priority dstnat; policy accept;}"
+  nft add rule inet $table $chain ip dscp != $dscp return
+  nft add rule inet $table $chain meta iifname != "$iface" return
+  nft add rule inet $table $chain tcp option mptcp exists drop
+  nft add rule inet $table $chain ip daddr ${FAKE_IP_RANGE} meta l4proto tcp redirect to $port
+  nft add rule inet $table $chain ip daddr { $iface_cidr, 127.0.0.0/8, 198.19.0.0/30, 224.0.0.0/4, 255.255.255.255 } return
+  nft add rule inet $table $chain meta l4proto tcp redirect to $port
+done
 }
 
 iptables_rules() {
@@ -1835,6 +1886,11 @@ iptables_rules() {
   iptables -t nat -A mihomo-prerouting -i $iface -p tcp -m tcp --dport 53 -j DNAT --to-destination 198.19.0.2
   iptables -t nat -A mihomo-prerouting -m addrtype --dst-type LOCAL -j RETURN
   iptables -t nat -A mihomo-prerouting -m addrtype ! --dst-type UNICAST -j RETURN
+  for entry in $dscp_to_group; do
+    dscp=${entry%%:*}
+    port=$((7000 + dscp))
+    iptables -t nat -A mihomo-prerouting -i $iface -p tcp -m dscp --dscp $dscp -j REDIRECT --to-ports $port
+  done
   iptables -t nat -A mihomo-prerouting -i $iface -p tcp -j REDIRECT --to-ports 12345
   echo "Mode inbound Redirect(tcp)+TUN(udp) interface $iface"
 }
@@ -1860,8 +1916,5 @@ run() {
   httpd -f -p 80 -h /www >/dev/null 2>&1 &
   exec ./mihomo
 }
-
-run || exit 1
-
 
 run || exit 1
