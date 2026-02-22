@@ -117,6 +117,20 @@ RUN BUILD_TAGS="" && \
         echo "Setting GOAMD64=$AMD64VERSION for amd64"; \
         CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOAMD64=$AMD64VERSION \
         go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
+    elif [ "$TARGETARCH" = "arm" ]; then \
+        if [ "$TARGETVARIANT" = "v5" ]; then \
+            echo "Building for ARMv5 (GOARM=5)"; \
+            CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=arm GOARM=5 \
+            go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
+        elif [ "$TARGETVARIANT" = "v7" ]; then \
+            echo "Building for ARMv7 (GOARM=7)"; \
+            CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=arm GOARM=7 \
+            go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
+        else \
+            echo "Unknown ARM variant, defaulting to GOARM=7"; \
+            CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=arm GOARM=7 \
+            go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
+        fi; \
     else \
         CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
         go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
