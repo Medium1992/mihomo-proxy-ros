@@ -1,3 +1,4 @@
+:local totalspace [/system/resource/get total-hdd-space]
 :local freespace [/system/resource/get free-hdd-space]
 :if ($freespace<80914560 and ([:len [/container/find comment="MihomoProxyRoS"]] = 0) and ([:len [[/disk/find where fs=ext4 free>80914560]]] = 0)) do={
 :put "Low free space on storage(s), script exit"
@@ -431,20 +432,27 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 
 :local flagContainer false
 :while ($flagContainer = false) do={
+:if ($totalspace>=120000000) do={
+:if ([:len [/container/mounts/find comment="MihomoProxyRoS"]] = 0) do={
+:do { /file/add name=mihomo type=directory} on-error {}
+/container/mounts/add src=/mihomo/ dst=/root/.config/mihomo/ list=MihomoProxyRoS comment="MihomoProxyRoS"
+}
+} else={
 :if ([:len [/container/mounts/find comment="MihomoProxyRoSAWG"]] = 0) do={
 :do { /file/add name=awg_conf type=directory} on-error {}
-/container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ list=awg_conf comment="MihomoProxyRoSAWG"
+/container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ list=MihomoProxyRoS comment="MihomoProxyRoSAWG"
 }
 :if ([:len [/container/mounts/find comment="MihomoProxyRoSProxies"]] = 0) do={
 :do { /file/add name=proxies_yaml type=directory} on-error {}
-/container/mounts/add src=/proxies_yaml/ dst=/root/.config/mihomo/proxies_mount/ list=proxies_yaml comment="MihomoProxyRoSProxies"
+/container/mounts/add src=/proxies_yaml/ dst=/root/.config/mihomo/proxies_mount/ list=MihomoProxyRoS comment="MihomoProxyRoSProxies"
 }
 :if ([:len [/container/mounts/find comment="MihomoProxyRoSRuleSet"]] = 0) do={
 :do { /file/add name=ruleset_txt type=directory} on-error {}
-/container/mounts/add src=/ruleset_txt/ dst=/root/.config/mihomo/rule_set_list list=ruleset_txt comment="MihomoProxyRoSRuleSet"
+/container/mounts/add src=/ruleset_txt/ dst=/root/.config/mihomo/rule_set_list list=MihomoProxyRoS comment="MihomoProxyRoSRuleSet"
+}
 }
 :if ([:len [/container/find comment="MihomoProxyRoS"]] = 0) do={
-/container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mountlists=awg_conf,proxies_yaml,ruleset_txt interface=MihomoProxyRoS root-dir=($pathPull . "Containers/MihomoProxyRoS") start-on-boot=yes comment="MihomoProxyRoS"
+/container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mountlists=MihomoProxyRoS interface=MihomoProxyRoS root-dir=($pathPull . "Containers/MihomoProxyRoS") start-on-boot=yes comment="MihomoProxyRoS"
 :put "Start pull MihomoProxyRoS container, pls wait when container starting, pls wait"
 :delay 1
 }
