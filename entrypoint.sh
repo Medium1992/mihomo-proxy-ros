@@ -849,6 +849,8 @@ unified-delay: true
 ipv6: false
 geodata-mode: true
 find-process-mode: off
+profile:
+  store-selected: true
 listeners:
   - name: redir-in
     type: redir
@@ -1855,8 +1857,12 @@ sniffer:
   enable: ${SNIFFER:-true}
   sniff:
     QUIC:
+      ports: [ 443 ]
     TLS:
+      ports: [443, 8443]
     HTTP:
+      ports: [80, 8080]
+      override-destination: true
 EOF
 }
 
