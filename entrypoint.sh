@@ -55,6 +55,7 @@ HEALTHCHECK_PROVIDER="${HEALTHCHECK_PROVIDER:-true}"
 SUB_LINK_INTERVAL="${SUB_LINK_INTERVAL:-3600}"
 GROUP_TYPE="${GROUP_TYPE:-select}"
 GROUP_USE="${GROUP_USE:-}"
+GROUP_PROXIES="${GROUP_PROXIES:-}"
 GROUP_FILTER="${GROUP_FILTER:-}"
 GROUP_EXCLUDE="${GROUP_EXCLUDE:-}"
 GROUP_EXCLUDE_TYPE="${GROUP_EXCLUDE_TYPE:-}"
@@ -86,6 +87,7 @@ export HEALTHCHECK_PROVIDER
 export SUB_LINK_INTERVAL
 export GROUP_TYPE
 export GROUP_USE
+export GROUP_PROXIES
 export GROUP_FILTER
 export GROUP_EXCLUDE
 export GROUP_EXCLUDE_TYPE
@@ -1258,6 +1260,7 @@ custom_rules_payloads=""
     exclude="${GLOBAL_EXCLUDE:-$GROUP_EXCLUDE}"
     exclude_type="${GLOBAL_EXCLUDE_TYPE:-$GROUP_EXCLUDE_TYPE}"
     use="${GLOBAL_USE:-$GROUP_USE}"
+    proxies_val="${GLOBAL_PROXIES:-$GROUP_PROXIES}"
     g_tol="${GLOBAL_TOLERANCE:-$GROUP_TOLERANCE}"
     g_url="${GLOBAL_URL:-$GROUP_URL}"
     g_status="${GLOBAL_URL_STATUS:-$GROUP_URL_STATUS}"
@@ -1289,12 +1292,18 @@ custom_rules_payloads=""
       [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
       [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
       echo "    hidden: $hidden"
-      echo "    use:"
-      if [ -n "$use" ]; then
-        echo "$use" | tr ',' '\n' | sed 's/^/      - /'
-      else
-      for p in $providers; do echo "      - $p"; done
-    fi
+      if [ -n "$proxies_val" ]; then
+        echo "    proxies:"
+        echo "$proxies_val" | tr ',' '\n' | sed 's/^/      - /'
+      fi
+      if [ "$use" != "none" ]; then
+        echo "    use:"
+        if [ -n "$use" ]; then
+          echo "$use" | tr ',' '\n' | sed 's/^/      - /'
+        else
+          for p in $providers; do echo "      - $p"; done
+        fi
+      fi
 
     # DNS
 
@@ -1303,6 +1312,7 @@ custom_rules_payloads=""
     exclude="${DNS_EXCLUDE:-}"
     exclude_type="${DNS_EXCLUDE_TYPE:-}"
     use="${DNS_USE:-}"
+    proxies_val="${DNS_PROXIES:-}"
     g_tol="${DNS_TOLERANCE:-$GROUP_TOLERANCE}"
     g_url="${DNS_URL:-$GROUP_URL}"
     g_status="${DNS_URL_STATUS:-$GROUP_URL_STATUS}"
@@ -1333,12 +1343,18 @@ custom_rules_payloads=""
       [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
       [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
       echo "    hidden: $hidden"
-      echo "    use:"
-      if [ -n "$use" ]; then
-        echo "$use" | tr ',' '\n' | sed 's/^/      - /'
-      else
-      for p in $dns_providers; do echo "      - $p"; done
-    fi
+      if [ -n "$proxies_val" ]; then
+        echo "    proxies:"
+        echo "$proxies_val" | tr ',' '\n' | sed 's/^/      - /'
+      fi
+      if [ "$use" != "none" ]; then
+        echo "    use:"
+        if [ -n "$use" ]; then
+          echo "$use" | tr ',' '\n' | sed 's/^/      - /'
+        else
+          for p in $dns_providers; do echo "      - $p"; done
+        fi
+      fi
 
     # === Сбор групп с приоритетами ===
     group_prio_list=""
@@ -1400,6 +1416,7 @@ custom_rules_payloads=""
       exclude=$(printenv "${env_name}_EXCLUDE" || echo "$GROUP_EXCLUDE")
       exclude_type=$(printenv "${env_name}_EXCLUDE_TYPE" || echo "$GROUP_EXCLUDE_TYPE")
       use=$(printenv "${env_name}_USE" || echo "$GROUP_USE")
+      proxies_val=$(printenv "${env_name}_PROXIES" 2>/dev/null || echo "$GROUP_PROXIES")
       g_tol=$(printenv "${env_name}_TOLERANCE" || echo "$GROUP_TOLERANCE")
       g_url=$(printenv "${env_name}_URL" || echo "$GROUP_URL")
       g_status=$(printenv "${env_name}_URL_STATUS" || echo "$GROUP_URL_STATUS")
@@ -1431,13 +1448,18 @@ custom_rules_payloads=""
         [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
         [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
         echo "    hidden: $hidden"
-        echo "    use:"
-        if [ -n "$use" ]; then
-          echo "$use" | tr ',' '\n' | sed 's/^/      - /'
-        else
-          for p in $providers; do echo "      - $p"; done
+        if [ -n "$proxies_val" ]; then
+          echo "    proxies:"
+          echo "$proxies_val" | tr ',' '\n' | sed 's/^/      - /'
         fi
-        register_group "$g"
+        if [ "$use" != "none" ]; then
+          echo "    use:"
+          if [ -n "$use" ]; then
+            echo "$use" | tr ',' '\n' | sed 's/^/      - /'
+          else
+            for p in $providers; do echo "      - $p"; done
+          fi
+        fi
       fi
     done
 
@@ -1471,6 +1493,7 @@ custom_rules_payloads=""
         exclude=$(printenv "${env_name}_EXCLUDE" || echo "$GROUP_EXCLUDE")
         exclude_type=$(printenv "${env_name}_EXCLUDE_TYPE" || echo "$GROUP_EXCLUDE_TYPE")
         use=$(printenv "${env_name}_USE" || echo "$GROUP_USE")
+        proxies_val=$(printenv "${env_name}_PROXIES" 2>/dev/null || echo "$GROUP_PROXIES")
         g_tol=$(printenv "${env_name}_TOLERANCE" || echo "$GROUP_TOLERANCE")
         g_url=$(printenv "${env_name}_URL" || echo "$GROUP_URL")
         g_status=$(printenv "${env_name}_URL_STATUS" || echo "$GROUP_URL_STATUS")
@@ -1502,11 +1525,17 @@ custom_rules_payloads=""
           [ -n "$exclude" ] && echo "    exclude-filter: $exclude"
           [ -n "$exclude_type" ] && echo "    exclude-type: $exclude_type"
           echo "    hidden: $hidden"
-          echo "    use:"
-          if [ -n "$use" ]; then
-            echo "$use" | tr ',' '\n' | sed 's/^/      - /'
-          else
-            for p in $providers; do echo "      - $p"; done
+          if [ -n "$proxies_val" ]; then
+            echo "    proxies:"
+            echo "$proxies_val" | tr ',' '\n' | sed 's/^/      - /'
+          fi
+          if [ "$use" != "none" ]; then
+            echo "    use:"
+            if [ -n "$use" ]; then
+              echo "$use" | tr ',' '\n' | sed 's/^/      - /'
+            else
+              for p in $providers; do echo "      - $p"; done
+            fi
           fi
                 register_group "$name"
         fi
