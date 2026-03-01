@@ -1682,7 +1682,7 @@ done
       for ipcidr in $(echo "$ipcidr_list" | tr ',' ' ' | xargs -n1); do
         [ -z "$ipcidr" ] && continue
         custom_payload="$custom_payload
-      - IP-CIDR,$ipcidr,no-resolve"
+      - IP-CIDR,$ipcidr"
       done
 
       srcipcidr_list=$(printenv "${env_name}_SRCIPCIDR" || echo "")
