@@ -161,6 +161,7 @@ proxies:
     type: direct
     udp: true
     ip-version: ipv4
+    interface-name: $(first_iface)
     routing-mark: $mark
 EOF
 
@@ -286,6 +287,7 @@ proxies:
     type: direct
     udp: true
     ip-version: ipv4
+    interface-name: $(first_iface)
     routing-mark: $mark
 EOF
 
@@ -1957,6 +1959,21 @@ iptables_rules() {
 # ------------------- RUN -------------------
 run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$PROXIES_DIR" "$RULE_SET_DIR"
+
+  UNSPEC_PREF=$(ip rule show | awk '/lookup unspec/ {print $1}' | tr -d :)
+  LOCAL_PREF=$(ip rule show | awk '/lookup local/ {print $1}' | tr -d :)
+  MAIN_PREF=$(ip rule show | awk '/lookup main/ {print $1}' | tr -d :)
+  DEFAULT_PREF=$(ip rule show | awk '/lookup default/ {print $1}' | tr -d :)
+
+  [ -n "$UNSPEC_PREF" ] && ip rule del pref $UNSPEC_PREF
+  ip rule del pref $LOCAL_PREF 2>/dev/null || true
+  ip rule del pref $MAIN_PREF 2>/dev/null || true
+  ip rule del pref $DEFAULT_PREF 2>/dev/null || true
+
+  ip rule add pref 0 lookup local
+  ip rule add pref 32766 lookup main
+  ip rule add pref 32767 lookup default
+
   if lsmod | grep nf_tables >/dev/null 2>&1; then
     nft_rules
   else
