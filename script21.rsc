@@ -195,8 +195,10 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env META_GEOSITE value: meta"} on-error {}
 :do { add key=META_GEOIP list=MihomoProxyRoS value=facebook
 :put "Add env META_GEOIP value: facebook"} on-error {}
-:do { add key=META_AS list=MihomoProxyRoS value=AS32934,AS54115
-:put "Add env META_AS value: AS32934,AS54115"} on-error {}
+:do { add key=META_AS list=MihomoProxyRoS value=AS32934,AS54115,AS63293
+:put "Add env META_AS value: AS32934,AS54115,AS63293"} on-error {}
+:do { add key=META_IPCIDR list=MihomoProxyRoS value=41.189.185.0/24,202.59.209.0/24,223.27.200.0/24,223.27.237.0/24
+:put "Add env META_IPCIDR value: 41.189.185.0/24,202.59.209.0/24,223.27.200.0/24,223.27.237.0/24"} on-error {}
 :do { add key=ROBLOX_GEOSITE list=MihomoProxyRoS value=roblox
 :put "Add env ROBLOX_GEOSITE value: roblox"} on-error {}
 :do { add key=ROBLOX_AS list=MihomoProxyRoS value=AS22697,AS11281,AS136766
@@ -268,6 +270,7 @@ add address=8.8.4.4 list=DNS
 :do {add list=MihomoProxyRoS comment=YT address=www.youtube.com} on-error {}
 :do {add list=MihomoProxyRoS comment=NTCParty address=ntc.party} on-error {}
 :do {add list=MihomoProxyRoS comment=TelegramFromAS31500 address=109.239.140.0/24} on-error {}
+:do {add list=MihomoProxyRoS comment=FacebookFromAS9825 address=202.59.209.0/24} on-error {}
 
 :if ([:len [/system/script/find name="IP_MihomoProxyRoS"]] = 0) do={
 /system script
@@ -292,6 +295,8 @@ add name=IP_MihomoProxyRoS source="# Define global variables\r\
 \n\"geoipv4/facebook\";\r\
 \n\"asnv4/AS32934\";\r\
 \n\"asnv4/AS54115\";\r\
+\n\"asnv4/AS63293\";\r\
+\n\"asnv4/AS45796\";\r\
 \n# NetFlix\r\
 \n\"geoipv4/netflix\";\r\
 \n\"asnv4/AS2906\";\r\
