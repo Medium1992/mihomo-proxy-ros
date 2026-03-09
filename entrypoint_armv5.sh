@@ -1850,12 +1850,13 @@ nft_rules() {
 if [ "${TPROXY}" = "true" ]; then
   nft create table inet mihomo
   nft add chain inet mihomo pre "{type filter hook prerouting priority filter; policy accept;}"
+  nft add rule inet mihomo pre ct state established,related return  
   nft add rule inet mihomo pre meta iifname != "$iface" return 
   nft add rule inet mihomo pre tcp option mptcp exists drop
   nft add rule inet mihomo pre ip daddr { $iface_cidr, 127.0.0.0/8, 224.0.0.0/4, 255.255.255.255 } return
   nft add rule inet mihomo pre meta l4proto { tcp, udp } meta mark set 0x00000001 tproxy ip to 127.0.0.1:12346 accept
   nft add chain inet mihomo divert "{type filter hook prerouting priority mangle -1; policy accept;}"
-  nft add rule inet mihomo divert meta l4proto tcp socket transparent 1 meta mark set 0x00000001 accept
+  nft add rule inet mihomo divert meta l4proto { tcp, udp } socket transparent 1 meta mark set 0x00000001 accept
   ip rule show | grep -q 'fwmark 0x00000001 lookup 100' || ip rule add fwmark 1 table 100
   ip route replace local 0.0.0.0/0 dev lo table 100
   echo "Mode inbound TProxy(tcp,udp) interface $iface"
