@@ -1876,28 +1876,21 @@ nft_rules() {
 
 if [ "${TPROXY}" = "true" ]; then
   nft create table inet mihomo
-  nft add chain inet mihomo pre_nat "{type nat hook prerouting priority dstnat + 1; policy accept;}"
-  nft add rule inet mihomo pre_nat meta iifname != "$iface" return
-  nft add rule inet mihomo pre_nat tcp option mptcp exists drop
-  nft add rule inet mihomo pre_nat ip daddr ${FAKE_IP_RANGE} meta l4proto tcp redirect to 12345
-  nft add rule inet mihomo pre_nat ip daddr { $iface_cidr, 127.0.0.0/8, 224.0.0.0/4, 255.255.255.255 } return
-  nft add rule inet mihomo pre_nat meta l4proto tcp redirect to 12345
-  nft add chain inet mihomo pre_filter "{type filter hook prerouting priority filter + 1; policy accept;}"
-  nft add rule inet mihomo pre_filter meta iifname != "$iface" return 
-  nft add rule inet mihomo pre_filter meta l4proto tcp return 
-  nft add rule inet mihomo pre_filter ip daddr ${FAKE_IP_RANGE} meta l4proto udp meta mark set 0x00000001 tproxy ip to 127.0.0.1:12346 accept
-  nft add rule inet mihomo pre_filter ip daddr { $iface_cidr, 127.0.0.0/8, 224.0.0.0/4, 255.255.255.255 } return
-  nft add rule inet mihomo pre_filter meta l4proto udp meta mark set 0x00000001 tproxy ip to 127.0.0.1:12346 accept
+  nft add chain inet mihomo pre "{type filter hook prerouting priority filter; policy accept;}"
+  nft add rule inet mihomo pre meta iifname != "$iface" return 
+  nft add rule inet mihomo pre tcp option mptcp exists drop
+  nft add rule inet mihomo pre ip daddr { $iface_cidr, 127.0.0.0/8, 224.0.0.0/4, 255.255.255.255 } return
+  nft add rule inet mihomo pre meta l4proto { tcp, udp } meta mark set 0x00000001 tproxy ip to 127.0.0.1:12346 accept
+  nft add chain inet mihomo divert "{type filter hook prerouting priority mangle -1; policy accept;}"
+  nft add rule inet mihomo divert meta l4proto tcp socket transparent 1 meta mark set 0x00000001 accept
   ip rule show | grep -q 'fwmark 0x00000001 lookup 100' || ip rule add fwmark 1 table 100
   ip route replace local 0.0.0.0/0 dev lo table 100
-  echo "Mode inbound Redirect(tcp)+TProxy(udp) interface $iface"
+  echo "Mode inbound TProxy(tcp,udp) interface $iface"
 else
   nft create table inet mihomo
   nft add chain inet mihomo pre "{type nat hook prerouting priority dstnat + 1; policy accept;}"
   nft add rule inet mihomo pre meta iifname != "$iface" return
   nft add rule inet mihomo pre tcp option mptcp exists drop
-  nft add rule inet mihomo pre ip daddr ${FAKE_IP_RANGE} meta l4proto tcp redirect to 12345
-  nft add rule inet mihomo pre meta l4proto { tcp, udp } th dport 53 dnat ip to 198.19.0.2
   nft add rule inet mihomo pre ip daddr { $iface_cidr, 127.0.0.0/8, 198.19.0.0/30, 224.0.0.0/4, 255.255.255.255 } return
   nft add rule inet mihomo pre meta l4proto tcp redirect to 12345
   nft add table nat
@@ -1919,8 +1912,11 @@ for entry in $dscp_to_group; do
   nft add rule inet $table $chain ip dscp != $dscp return
   nft add rule inet $table $chain meta iifname != "$iface" return
   nft add rule inet $table $chain tcp option mptcp exists drop
-  nft add rule inet $table $chain ip daddr ${FAKE_IP_RANGE} meta l4proto tcp redirect to $port
+if [ "${TPROXY}" = "true" ]; then
+  nft add rule inet $table $chain ip daddr { $iface_cidr, 127.0.0.0/8, 224.0.0.0/4, 255.255.255.255 } return
+else
   nft add rule inet $table $chain ip daddr { $iface_cidr, 127.0.0.0/8, 198.19.0.0/30, 224.0.0.0/4, 255.255.255.255 } return
+fi
   nft add rule inet $table $chain meta l4proto tcp redirect to $port
 done
 }
