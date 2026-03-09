@@ -1864,7 +1864,7 @@ if [ "${TPROXY}" = "true" ]; then
   nft add rule inet mihomo pre_nat meta l4proto tcp redirect to 12345
   nft add chain inet mihomo pre_filter "{type filter hook prerouting priority filter + 1; policy accept;}"
   nft add rule inet mihomo pre_filter meta iifname != "$iface" return 
-  nft add rule inet mihomo pre_filter tcp option mptcp exists drop
+  nft add rule inet mihomo pre_filter meta iifname = "$iface" meta l4proto tcp return 
   nft add rule inet mihomo pre_filter ip daddr ${FAKE_IP_RANGE} meta l4proto udp meta mark set 0x00000001 tproxy ip to 127.0.0.1:12346 accept
   nft add rule inet mihomo pre_filter ip daddr { $iface_cidr, 127.0.0.0/8, 224.0.0.0/4, 255.255.255.255 } return
   nft add rule inet mihomo pre_filter meta l4proto udp meta mark set 0x00000001 tproxy ip to 127.0.0.1:12346 accept
