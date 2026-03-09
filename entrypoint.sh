@@ -209,7 +209,7 @@ apply_byedpi_iptables() {
     mark=$((base_mark + idx))
     port=$((base_port + idx))
 
-    iptables -t nat -A mihomo-output -p tcp -m mark --mark $mark -j REDIRECT --to-port $port
+    iptables -t nat -A OUTPUT -p tcp -m mark --mark $mark -j REDIRECT --to-port $port
   done
 }
 
@@ -881,15 +881,8 @@ EOF
     cat >> "$CONFIG_YAML" <<EOF
   - name: tun-in
     type: tun
-    stack: system
-    disable-icmp-forwarding: true
-    auto-detect-interface: false
-    include-interface:
-      - $(first_iface)
-    auto-route: true
-    auto-redirect: false
     inet4-address:
-      - 198.19.0.1/30
+      - 100.64.0.1/32
     udp-timeout: 30
     mtu: 1500
 EOF
@@ -1888,14 +1881,18 @@ if [ "${TPROXY}" = "true" ]; then
   echo "Mode inbound TProxy(tcp,udp) interface $iface"
 else
   nft create table inet mihomo
-  nft add chain inet mihomo pre "{type nat hook prerouting priority dstnat + 1; policy accept;}"
-  nft add rule inet mihomo pre meta iifname != "$iface" return
-  nft add rule inet mihomo pre tcp option mptcp exists drop
-  nft add rule inet mihomo pre ip daddr { $iface_cidr, 127.0.0.0/8, 198.19.0.0/30, 224.0.0.0/4, 255.255.255.255 } return
-  nft add rule inet mihomo pre meta l4proto tcp redirect to 12345
-  nft add table nat
-  nft add chain nat output '{ type nat hook output priority dstnat + 1; policy accept;}'
-  nft add rule nat output meta l4proto tcp oifname "Meta" redirect to 12345
+  nft add chain inet mihomo nat "{type nat hook prerouting priority dstnat + 1; policy accept;}"
+  nft add rule inet mihomo nat meta iifname != "$iface" return
+  nft add rule inet mihomo nat tcp option mptcp exists drop
+  nft add rule inet mihomo nat ip daddr { $iface_cidr, 127.0.0.0/8, 198.19.0.0/30, 224.0.0.0/4, 255.255.255.255 } return
+  nft add rule inet mihomo nat meta l4proto tcp redirect to 12345
+  ip rule show | grep -q 'iif $iface ipproto tcp lookup main' || ip rule add iif $iface ipproto tcp lookup main priority 10000
+  ip rule show | grep -q 'to $iface_cidr lookup main' || ip rule add to $iface_cidr lookup main priority 10001
+  ip rule show | grep -q 'to 127.0.0.0/8 lookup main' || ip rule add to 127.0.0.0/8 lookup main priority 10002
+  ip rule show | grep -q 'to 224.0.0.0/4 lookup main' || ip rule add to 224.0.0.0/4 lookup main priority 10003
+  ip rule show | grep -q 'to 255.255.255.255 lookup main' || ip rule add to 255.255.255.255 lookup main priority 10004
+  ip rule show | grep -q 'iif $iface ipproto udp lookup 110' || ip rule add iif $iface ipproto udp lookup 110 priority 10005
+  ip route replace default via 100.64.0.1 dev Meta table 110
   echo "Mode inbound Redirect(tcp)+TUN(udp) interface $iface"
 fi
 [ -n "$ZAPRET_LIST" ] && apply_zapret_nft 300 300 "$ZAPRET_LIST"  zapret  ZAPRET  "$ZAPRET_PACKETS"
@@ -1930,27 +1927,36 @@ iptables_rules() {
   iptables -t nat -X
   iptables -t mangle -F
   iptables -t mangle -X
-  iptables -t nat -N mihomo-output
-  iptables -t nat -N mihomo-prerouting
-  iptables -t nat -A PREROUTING -j mihomo-prerouting
-  iptables -t nat -A OUTPUT -j mihomo-output
   [ -n "$BYEDPI_LIST" ] && apply_byedpi_iptables
-  iptables -t nat -A mihomo-output -o Meta -p tcp -j REDIRECT --to-ports 12345
-  iptables -t nat -A mihomo-prerouting -i Meta -j RETURN
-  iptables -t nat -A mihomo-prerouting -i $iface -p udp -m udp --dport 53 -j DNAT --to-destination 198.19.0.2
-  iptables -t nat -A mihomo-prerouting -i $iface -p tcp -m tcp --dport 53 -j DNAT --to-destination 198.19.0.2
-  iptables -t nat -A mihomo-prerouting -m addrtype --dst-type LOCAL -j RETURN
-  iptables -t nat -A mihomo-prerouting -m addrtype ! --dst-type UNICAST -j RETURN
+  iptables -t nat -A PREROUTING -m addrtype --dst-type LOCAL -j RETURN
+  iptables -t nat -A PREROUTING -m addrtype ! --dst-type UNICAST -j RETURN
   for entry in $dscp_to_group; do
     dscp=${entry%%:*}
     port=$((7000 + dscp))
-    iptables -t nat -A mihomo-prerouting -i $iface -p tcp -m dscp --dscp $dscp -j REDIRECT --to-ports $port
+    iptables -t nat -A PREROUTING -i $iface -p tcp -m dscp --dscp $dscp -j REDIRECT --to-ports $port
   done
-  iptables -t nat -A mihomo-prerouting -i $iface -p tcp -j REDIRECT --to-ports 12345
+  iptables -t nat -A PREROUTING -i $iface -p tcp -j REDIRECT --to-ports 12345
+  ip rule show | grep -q 'iif $iface ipproto tcp lookup main' || ip rule add iif $iface ipproto tcp lookup main priority 10000
+  ip rule show | grep -q 'to $iface_cidr lookup main' || ip rule add to $iface_cidr lookup main priority 10001
+  ip rule show | grep -q 'to 127.0.0.0/8 lookup main' || ip rule add to 127.0.0.0/8 lookup main priority 10002
+  ip rule show | grep -q 'to 224.0.0.0/4 lookup main' || ip rule add to 224.0.0.0/4 lookup main priority 10003
+  ip rule show | grep -q 'to 255.255.255.255 lookup main' || ip rule add to 255.255.255.255 lookup main priority 10004
+  ip rule show | grep -q 'iif $iface ipproto udp lookup 110' || ip rule add iif $iface ipproto udp lookup 110 priority 10005
+  ip route replace default via 100.64.0.1 dev Meta table 110
   echo "Mode inbound Redirect(tcp)+TUN(udp) interface $iface"
 }
 
 # ------------------- RUN -------------------
+wait_for_meta() {
+  for i in $(seq 1 50); do
+    if ip link show Meta >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
 run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$PROXIES_DIR" "$RULE_SET_DIR"
 
@@ -1970,23 +1976,34 @@ run() {
   ip rule add pref 32766 lookup main
   ip rule add pref 32767 lookup default
 
+  config_file_mihomo
+
+  echo "Starting Mihomo $(./mihomo -v)"
+
+  ./mihomo &
+  MIHOMO_PID=$!
+
+  wait_for_meta
+
   if lsmod | grep nf_tables >/dev/null 2>&1; then
     nft_rules
   else
     iptables_rules
   fi
-  config_file_mihomo
-  echo "Starting Mihomo $(./mihomo -v)"
+
   if lsmod | grep nf_tables >/dev/null 2>&1; then
     start_zapret_processes 300 nfqws  "$ZAPRET_LIST"
     start_zapret_processes 400 nfqws2 "$ZAPRET2_LIST"
     start_zapret2_wg
   fi
+
   if [ "${BYEDPI}" = "true" ]; then
     start_byedpi_processes
   fi
+
   httpd -f -p 80 -h /www >/dev/null 2>&1 &
-  exec ./mihomo
+
+  wait $MIHOMO_PID
 }
 
 run || exit 1
