@@ -1901,7 +1901,9 @@ done
 
 iptables_rules() {
   echo "Applying iptables..."
-  local iface=$(first_iface)
+  iface=$(first_iface)
+  iface_cidr=$(ip -4 -o addr show dev "$iface" scope global | awk '{print $4}')
+  iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
   iptables -F
   iptables -X
   iptables -t nat -F
