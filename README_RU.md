@@ -6,7 +6,7 @@
 
 👉 Ознакомьтесь с [Кодексом поведения](./CODE_OF_CONDUCT.md) перед участием в проекте.
 
-**mihomo-proxy-ros** — это мультиархитектурный Docker-контейнер на базе **Mihomo**, **byedpi**, **zapret(nfqws; только amd64 и arm64)** и **zapret2(nfqws2; только amd64 и arm64)** в одном контейнере,  
+**mihomo-proxy-ros** — это мультиархитектурный Docker-контейнер на базе [**Mihomo**](https://github.com/metacubex/mihomo), [**byedpi**](https://github.com/hufrea/byedpi), [**zapret**](https://github.com/bol-van/zapret)**(nfqws; только amd64 и arm64)** и [**zapret2**](https://github.com/bol-van/zapret2)**(nfqws2; только amd64 и arm64)** в одном контейнере,  
 поддерживающий платформы **ARM**, **ARM64**, **AMD64v1**, **AMD64v2** и **AMD64v3**.  
 Тег latest включает в себя **ARM**, **ARM64**, **AMD64v3**.  
 Если у вас **AMD64v1**,**AMD64v2** то необходимо запулить соответствующий тэг.
