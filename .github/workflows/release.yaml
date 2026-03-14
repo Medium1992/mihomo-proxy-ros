@@ -137,7 +137,7 @@ jobs:
 
           FILE="mihomo-linux-${{ matrix.name }}-${{ needs.check.outputs.tag }}.gz"
 
-          gzip -c out/final/mihomo > dist/$FILE
+          gzip -c out/mihomo > dist/$FILE
 
           sha256sum dist/$FILE > dist/$FILE.sha256
 
