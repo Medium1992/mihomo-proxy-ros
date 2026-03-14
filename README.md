@@ -6,7 +6,7 @@
 
 👉 Please read the [Code of Conduct](./CODE_OF_CONDUCT.md) before participating in the project.
 
-**mihomo-proxy-ros** is a multi-architecture Docker container based on  Mihomo, byedpi, zapret(nfqws; only amd64 and arm64) and zapret2(nfqws2; only amd64 and arm64)  
+**mihomo-proxy-ros** is a multi-architecture Docker container based on  [Mihomo](https://github.com/metacubex/mihomo), [byedpi](https://github.com/hufrea/byedpi), [zapret](https://github.com/bol-van/zapret)(nfqws; only amd64 and arm64) and [zapret2](https://github.com/bol-van/zapret2)(nfqws2; only amd64 and arm64)  
 supporting platforms **ARM**, **ARM64**, **AMD64v1**, **AMD64v2**, and **AMD64v3**.  
 The `latest` tag includes **ARM**, **ARM64**, and **AMD64v3**.  
 If you have **AMD64v1** or **AMD64v2**, you need to pull the corresponding tag.
