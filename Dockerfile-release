@@ -53,3 +53,5 @@ RUN BUILD_TAGS="" && \
         go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
     fi
     
+FROM scratch AS export
+COPY --from=build /final /
