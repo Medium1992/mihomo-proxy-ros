@@ -1,0 +1,176 @@
+name: Build Mihomo Releases
+
+on:
+  schedule:
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+
+jobs:
+
+  check:
+
+    runs-on: ubuntu-latest
+
+    outputs:
+      build_needed: ${{ steps.compare.outputs.build_needed }}
+      tag: ${{ steps.mihomo.outputs.tag }}
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Get latest mihomo release
+        id: mihomo
+        run: |
+          TAG=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r '.tag_name')
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Get my latest release
+        id: mine
+        run: |
+
+          TAG=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+
+          if [ -z "$TAG" ]; then
+            TAG="none"
+          fi
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compare versions
+        id: compare
+        run: |
+
+          MIHOMO="${{ steps.mihomo.outputs.tag }}"
+          MINE="${{ steps.mine.outputs.tag }}"
+
+          echo "mihomo: $MIHOMO"
+          echo "mine: $MINE"
+
+          BASE=$(echo "$MINE" | sed 's/-mihomo-proxy-ros//')
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "build_needed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if [ "$MIHOMO" = "$BASE" ]; then
+            echo "Already latest"
+            echo "build_needed=false" >> $GITHUB_OUTPUT
+          else
+            echo "New version detected"
+            echo "build_needed=true" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+
+    needs: check
+    if: needs.check.outputs.build_needed == 'true'
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+
+          - arch: amd64
+            variant: ""
+            amd64: v1
+            name: amd64-v1
+
+          - arch: amd64
+            variant: ""
+            amd64: v2
+            name: amd64-v2
+
+          - arch: amd64
+            variant: ""
+            amd64: v3
+            name: amd64-v3
+
+          - arch: amd64
+            variant: ""
+            amd64: v4
+            name: amd64-v4
+
+          - arch: arm64
+            variant: ""
+            amd64: ""
+            name: arm64
+
+          - arch: arm
+            variant: v7
+            amd64: ""
+            name: armv7
+
+          - arch: arm
+            variant: v5
+            amd64: ""
+            name: armv5
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        run: |
+
+          docker buildx build \
+            -f Dockerfile-release \
+            --platform linux/${{ matrix.arch }}${{ matrix.variant && format('/{0}', matrix.variant) || '' }} \
+            --build-arg TAG=${{ needs.check.outputs.tag }} \
+            --build-arg AMD64VERSION=${{ matrix.amd64 }} \
+            --build-arg BUILDTIME="$(date)" \
+            --output type=local,dest=out \
+            .
+
+      - name: Prepare artifacts
+        run: |
+
+          mkdir dist
+
+          FILE="mihomo-linux-${{ matrix.name }}-${{ needs.check.outputs.tag }}.gz"
+
+          gzip -c out/final/mihomo > dist/$FILE
+
+          sha256sum dist/$FILE > dist/$FILE.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*
+
+  release:
+
+    needs: [check, build]
+
+    if: needs.check.outputs.build_needed == 'true'
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir release
+          find artifacts -type f -exec cp {} release/ \;
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check.outputs.tag }}-mihomo-proxy-ros
+          name: Mihomo Proxy ROS ${{ needs.check.outputs.tag }}
+          files: release/*
