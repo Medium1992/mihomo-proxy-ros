@@ -3,12 +3,13 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
 ARG AMD64VERSION
-ARG TAG
-ARG WITH_GVISOR=1
-ARG BUILDTIME
-RUN apk add --no-cache curl jq gzip tar unzip git make python3 go
+RUN apk add --no-cache curl jq gzip tar unzip
 RUN mkdir -p /final
-    
+
+RUN curl -s https://api.github.com/repos/medium1992/mihomo-proxy-ros/releases/latest | \
+    jq -r '.assets[].browser_download_url' | grep -E 'mihomo-linux-(amd64|arm64|armv7|armv5)' | \
+    while read url; do curl -L "$url" -o "$(basename "$url")"; done
+
 RUN curl -s https://api.github.com/repos/heiher/hev-socks5-tunnel/releases/latest | \
     jq -r '.assets[].browser_download_url' | grep -E 'arm32|arm32v7|arm64|x86_64' | \
     while read url; do curl -L "$url" -o "$(basename "$url")"; done
@@ -18,6 +19,7 @@ RUN curl -s https://api.github.com/repos/hufrea/byedpi/releases/latest | \
     while read url; do curl -L "$url" -o "$(basename "$url")"; done
 
 RUN for f in *.tar.gz; do tar -xzf "$f"; done
+RUN for f in *.gz; do gunzip "$f"; done
 
 RUN curl -s https://api.github.com/repos/bol-van/zapret/releases/latest | \
     jq -r '.tag_name as $tag | .assets[].browser_download_url | select(endswith(".tar.gz") and (contains("openwrt-embedded") | not))' | \
@@ -50,6 +52,11 @@ RUN curl -L https://github.com/IndeecFOX/zapret4rocket/archive/refs/heads/master
     rm zapret4rocket.zip
 
 RUN mkdir -p /final
+
+RUN if [ "$TARGETARCH" = "amd64" ]; then mv $(ls mihomo-linux-amd64-${AMD64VERSION}-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1) /final/mihomo; \
+    elif [ "$TARGETARCH" = "arm64" ]; then mv $(ls mihomo-linux-arm64-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1) /final/mihomo; \
+    elif [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v7" ]; then mv $(ls mihomo-linux-armv7-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1) /final/mihomo; \
+    else mv $(ls mihomo-linux-armv5-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1) /final/mihomo; fi
 
 RUN if [ "$TARGETARCH" = "amd64" ]; then mv hev-socks5-tunnel-linux-x86_64 /final/hs5t; \
     elif [ "$TARGETARCH" = "arm64" ]; then mv hev-socks5-tunnel-linux-arm64 /final/hs5t; \
@@ -93,60 +100,15 @@ fi
 COPY entrypoint.sh entrypoint_armv5.sh /final/
 COPY www/ /final/www/
 
-# Клонируем репозиторий
-RUN git clone https://github.com/MetaCubeX/mihomo.git /src
-WORKDIR /src
-
-# Переключаемся на нужный тэг
-RUN git fetch --all --tags --prune && git switch --detach "$TAG" 2>/dev/null || git switch "$TAG"
-RUN echo "Updating version.go with TAG=${TAG}-mihomo-proxy-ros and BUILDTIME=${BUILDTIME}" && \
-    sed -i "s|Version\s*=.*|Version = \"${TAG}-mihomo-proxy-ros\"|" constant/version.go && \
-    sed -i "s|BuildTime\s*=.*|BuildTime = \"${BUILDTIME}\"|" constant/version.go
-
-RUN sed -i '/^import (/a\    "github.com/metacubex/mihomo/log"' \
-    adapter/provider/provider.go
-
-RUN sed -i 's@return nil, fmt.Errorf("proxy %d error: %w", idx, err)@name, _ := mapping["name"].(string)\n                log.Warnln("[Provider %s] skip invalid proxy (idx=%d, name=%q): %v", pdName, idx, name, err)\n                continue@g' \
-    adapter/provider/provider.go
-  
-# Формируем список build tags и собираем
-RUN BUILD_TAGS="" && \
-    if [ "$WITH_GVISOR" = "1" ]; then BUILD_TAGS="with_gvisor"; fi && \
-    echo "Building with tags: $BUILD_TAGS" && \
-    if [ "$TARGETARCH" = "amd64" ]; then \
-        echo "Setting GOAMD64=$AMD64VERSION for amd64"; \
-        CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOAMD64=$AMD64VERSION \
-        go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
-    elif [ "$TARGETARCH" = "arm" ]; then \
-        if [ "$TARGETVARIANT" = "v5" ]; then \
-            echo "Building for ARMv5 (GOARM=5)"; \
-            CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=arm GOARM=5 \
-            go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
-        elif [ "$TARGETVARIANT" = "v7" ]; then \
-            echo "Building for ARMv7 (GOARM=7)"; \
-            CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=arm GOARM=7 \
-            go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
-        else \
-            echo "Unknown ARM variant, defaulting to GOARM=7"; \
-            CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=arm GOARM=7 \
-            go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
-        fi; \
-    else \
-        CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-        go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
-    fi
-    
-WORKDIR /
-
 RUN if [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v5" ]; then \
         mv /final/entrypoint_armv5.sh /final/entrypoint.sh; \
     else \
         rm -f /final/entrypoint_armv5.sh; \
     fi && \
     if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
-    chmod +x /final/entrypoint.sh /final/www/cgi-bin/index.sh /final/www/cgi-bin/show_config.sh /final/mihomo /final/byedpi /final/hs5t /final/nfqws /final/nfqws2; \
+    chmod +x /final/entrypoint.sh /final/mihomo /final/byedpi /final/hs5t /final/nfqws /final/nfqws2; \
     else \
-    chmod +x /final/entrypoint.sh /final/www/cgi-bin/index.sh /final/www/cgi-bin/show_config.sh /final/mihomo /final/byedpi /final/hs5t; \
+    chmod +x /final/entrypoint.sh /final/mihomo /final/byedpi /final/hs5t; \
     fi
 
 FROM --platform=linux/amd64 alpine:latest AS linux-amd64
