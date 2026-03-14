@@ -1,0 +1,55 @@
+FROM --platform=$BUILDPLATFORM alpine:latest AS package
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+ARG AMD64VERSION
+ARG TAG
+ARG WITH_GVISOR=1
+ARG BUILDTIME
+RUN apk add --no-cache curl jq gzip tar unzip git make python3 go
+
+RUN mkdir -p /final 
+
+# Клонируем репозиторий
+RUN git clone https://github.com/MetaCubeX/mihomo.git /src
+WORKDIR /src
+
+# Переключаемся на нужный тэг
+RUN git fetch --all --tags --prune && git switch --detach "$TAG" 2>/dev/null || git switch "$TAG"
+RUN echo "Updating version.go with TAG=${TAG}-mihomo-proxy-ros and BUILDTIME=${BUILDTIME}" && \
+    sed -i "s|Version\s*=.*|Version = \"${TAG}-mihomo-proxy-ros\"|" constant/version.go && \
+    sed -i "s|BuildTime\s*=.*|BuildTime = \"${BUILDTIME}\"|" constant/version.go
+
+RUN sed -i '/^import (/a\    "github.com/metacubex/mihomo/log"' \
+    adapter/provider/provider.go
+
+RUN sed -i 's@return nil, fmt.Errorf("proxy %d error: %w", idx, err)@name, _ := mapping["name"].(string)\n                log.Warnln("[Provider %s] skip invalid proxy (idx=%d, name=%q): %v", pdName, idx, name, err)\n                continue@g' \
+    adapter/provider/provider.go
+  
+# Формируем список build tags и собираем
+RUN BUILD_TAGS="" && \
+    if [ "$WITH_GVISOR" = "1" ]; then BUILD_TAGS="with_gvisor"; fi && \
+    echo "Building with tags: $BUILD_TAGS" && \
+    if [ "$TARGETARCH" = "amd64" ]; then \
+        echo "Setting GOAMD64=$AMD64VERSION for amd64"; \
+        CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOAMD64=$AMD64VERSION \
+        go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
+    elif [ "$TARGETARCH" = "arm" ]; then \
+        if [ "$TARGETVARIANT" = "v5" ]; then \
+            echo "Building for ARMv5 (GOARM=5)"; \
+            CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=arm GOARM=5 \
+            go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
+        elif [ "$TARGETVARIANT" = "v7" ]; then \
+            echo "Building for ARMv7 (GOARM=7)"; \
+            CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=arm GOARM=7 \
+            go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
+        else \
+            echo "Unknown ARM variant, defaulting to GOARM=7"; \
+            CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=arm GOARM=7 \
+            go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
+        fi; \
+    else \
+        CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+        go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
+    fi
+    
