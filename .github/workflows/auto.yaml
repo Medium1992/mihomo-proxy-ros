@@ -29,12 +29,12 @@ jobs:
           crane version || { echo "Crane failed to install"; exit 1; }
 
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         
       - name: Get latest versions
         id: latest_versions
         run: |
-          MIHOMO=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r '.tag_name')
+          MIHOMO=$(curl -s https://api.github.com/repos/medium1992/mihomo-proxy-ros/releases/latest | jq -r '.tag_name')
           HS5T=$(curl -s https://api.github.com/repos/heiher/hev-socks5-tunnel/releases/latest | jq -r '.tag_name')
           BYEDPI=$(curl -s https://api.github.com/repos/hufrea/byedpi/releases/latest | jq -r '.tag_name')
           ZAPRET=$(curl -s https://api.github.com/repos/bol-van/zapret/releases/latest | jq -r '.tag_name')
@@ -78,11 +78,11 @@ jobs:
           echo "zapret2=${{ env.zapret2 }}" >> VERSIONS
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         if: steps.check_versions.outputs.build_needed == 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           driver: docker-container
           driver-opts: |
@@ -91,14 +91,14 @@ jobs:
 
       - name: Login to GitHub Container Registry
         if: steps.check_versions.outputs.build_needed == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -117,8 +117,6 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
-            TAG=${{ env.mihomo }}
-            BUILDTIME=${{ env.BUILDTIME }}
             AMD64VERSION=v1
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
@@ -137,8 +135,6 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
-            TAG=${{ env.mihomo }}
-            BUILDTIME=${{ env.BUILDTIME }}
             AMD64VERSION=v2
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
@@ -157,8 +153,6 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
-            TAG=${{ env.mihomo }}
-            BUILDTIME=${{ env.BUILDTIME }}
             AMD64VERSION=v4
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
@@ -177,8 +171,6 @@ jobs:
           platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v5
           push: true
           build-args: |
-            TAG=${{ env.mihomo }}
-            BUILDTIME=${{ env.BUILDTIME }}
             AMD64VERSION=v3
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
