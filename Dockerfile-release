@@ -54,4 +54,4 @@ RUN BUILD_TAGS="" && \
     fi
     
 FROM scratch AS export
-COPY --from=build /final /
+COPY --from=package /final /
