@@ -106,9 +106,9 @@ RUN if [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v5" ]; then \
         rm -f /final/entrypoint_armv5.sh; \
     fi && \
     if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
-    chmod +x /final/entrypoint.sh /final/mihomo /final/byedpi /final/hs5t /final/nfqws /final/nfqws2; \
+    chmod +x /final/entrypoint.sh /final/www/cgi-bin/index.sh /final/www/cgi-bin/show_config.sh /final/mihomo /final/byedpi /final/hs5t /final/nfqws /final/nfqws2; \
     else \
-    chmod +x /final/entrypoint.sh /final/mihomo /final/byedpi /final/hs5t; \
+    chmod +x /final/entrypoint.sh /final/www/cgi-bin/index.sh /final/www/cgi-bin/show_config.sh /final/mihomo /final/byedpi /final/hs5t; \
     fi
 
 FROM --platform=linux/amd64 alpine:latest AS linux-amd64
