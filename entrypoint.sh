@@ -22,7 +22,19 @@ else
   fi
 fi
 
-echo 180  > /proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream >/dev/null 2>&1;
+sysctl -w net.netfilter.nf_conntrack_tcp_loose=0
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_established=86400
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_syn_sent=5
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_syn_recv=5
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_fin_wait=10
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_close_wait=10
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_last_ack=10
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_time_wait=10
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_close=10
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_unacknowledged=300
+sysctl -w net.netfilter.nf_conntrack_udp_timeout_stream=180
+sysctl -w net.ipv4.udp_early_demux=0
+
 for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo") print $2}'); do
 tc qdisc add dev $iface root fq_codel >/dev/null 2>&1;
 ip link set dev $iface multicast off >/dev/null 2>&1;
