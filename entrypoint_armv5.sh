@@ -1865,6 +1865,12 @@ nft_rules() {
   nft add chain inet rawdrop output "{ type filter hook output priority raw; policy drop; }"
   nft add rule inet rawdrop output meta l4proto { tcp, udp } accept
 
+  nft create table ip nat
+  nft add chain ip nat postrouting "{ type nat hook postrouting priority srcnat; policy accept; }"
+for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
+  nft add rule ip nat postrouting oifname "$iface" masquerade
+done
+
 if [ "${TPROXY}" = "true" ]; then
   nft create table inet mihomo
   nft add chain inet mihomo pre "{type filter hook prerouting priority filter; policy accept;}"
@@ -1929,6 +1935,9 @@ iptables_rules() {
   iptables -t mangle -X
   iptables -t raw -F
   iptables -t raw -X
+  for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
+    iptables -t nat -A POSTROUTING -o "$iface" -j MASQUERADE
+  done
   iptables -t raw -A PREROUTING -p tcp -j RETURN
   iptables -t raw -A PREROUTING -p udp -j RETURN
   iptables -t raw -A PREROUTING -j DROP
