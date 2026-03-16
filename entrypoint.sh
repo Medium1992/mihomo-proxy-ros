@@ -1870,7 +1870,6 @@ nft_rules() {
 if [ "${TPROXY}" = "true" ]; then
   nft create table inet mihomo
   nft add chain inet mihomo pre "{type filter hook prerouting priority filter; policy accept;}"
-  nft add rule inet mihomo pre ct state established,related return  
   nft add rule inet mihomo pre meta iifname != "$iface" return 
   nft add rule inet mihomo pre tcp option mptcp exists drop
   nft add rule inet mihomo pre ip daddr { $iface_cidr, 127.0.0.0/8, 224.0.0.0/4, 255.255.255.255 } return
