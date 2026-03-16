@@ -1879,6 +1879,12 @@ nft_rules() {
   iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
   nft flush ruleset || true
 
+  nft create table inet rawdrop
+  nft add chain inet rawdrop prerouting "{ type filter hook prerouting priority raw; policy drop; }"
+  nft add rule inet rawdrop prerouting meta l4proto { tcp, udp } accept
+  nft add chain inet rawdrop output "{ type filter hook output priority raw; policy drop; }"
+  nft add rule inet rawdrop output meta l4proto { tcp, udp } accept
+
 if [ "${TPROXY}" = "true" ]; then
   nft create table inet mihomo
   nft add chain inet mihomo pre "{type filter hook prerouting priority filter; policy accept;}"
@@ -1941,6 +1947,14 @@ iptables_rules() {
   iptables -t nat -X
   iptables -t mangle -F
   iptables -t mangle -X
+  iptables -t raw -F
+  iptables -t raw -X
+  iptables -t raw -A PREROUTING -p tcp -j RETURN
+  iptables -t raw -A PREROUTING -p udp -j RETURN
+  iptables -t raw -A PREROUTING -j DROP
+  iptables -t raw -A OUTPUT -p tcp -j RETURN
+  iptables -t raw -A OUTPUT -p udp -j RETURN
+  iptables -t raw -A OUTPUT -j DROP
   [ -n "$BYEDPI_LIST" ] && apply_byedpi_iptables
   iptables -t nat -A PREROUTING -m addrtype --dst-type LOCAL -j RETURN
   iptables -t nat -A PREROUTING -m addrtype ! --dst-type UNICAST -j RETURN
