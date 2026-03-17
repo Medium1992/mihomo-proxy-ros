@@ -1891,6 +1891,17 @@ for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2
   nft add rule ip nat postrouting oifname "$iface" masquerade
 done
 
+  nft add table inet filter
+  nft add chain inet filter input '{ type filter hook input priority filter; policy accept; }'
+  nft add rule inet filter input ct state { established, related, untracked } accept
+  nft add rule inet filter input ct state invalid drop
+  nft add chain inet filter forward '{ type filter hook forward priority filter; policy accept; }'
+  nft add rule inet filter forward ct state { established, related, untracked } accept
+  nft add rule inet filter forward ct state invalid drop
+  nft add chain inet filter output '{ type filter hook output priority filter; policy accept; }'
+  nft add rule inet filter output ct state { established, related, untracked } accept
+  nft add rule inet filter output ct state invalid drop
+
 if [ "${TPROXY}" = "true" ]; then
   nft create table inet mihomo
   nft add chain inet mihomo pre "{type filter hook prerouting priority filter; policy accept;}"
@@ -1955,6 +1966,8 @@ iptables_rules() {
   iptables -t mangle -X
   iptables -t raw -F
   iptables -t raw -X
+  iptables -t filter -F
+  iptables -t filter -X
   for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
     iptables -t nat -A POSTROUTING -o "$iface" -j MASQUERADE
   done
@@ -1964,6 +1977,12 @@ iptables_rules() {
   iptables -t raw -A OUTPUT -p tcp -j RETURN
   iptables -t raw -A OUTPUT -p udp -j RETURN
   iptables -t raw -A OUTPUT -j DROP
+  iptables -t filter -A INPUT   -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
+  iptables -t filter -A INPUT -m conntrack --ctstate INVALID -j DROP
+  iptables -t filter -A FORWARD   -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
+  iptables -t filter -A FORWARD -m conntrack --ctstate INVALID -j DROP
+  iptables -t filter -A OUTPUT   -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
+  iptables -t filter -A OUTPUT -m conntrack --ctstate INVALID -j DROP 
   [ -n "$BYEDPI_LIST" ] && apply_byedpi_iptables
   iptables -t nat -A PREROUTING -m addrtype --dst-type LOCAL -j RETURN
   iptables -t nat -A PREROUTING -m addrtype ! --dst-type UNICAST -j RETURN
