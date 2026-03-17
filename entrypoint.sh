@@ -1874,9 +1874,7 @@ EOF
 # ------------------- NFT -------------------
 nft_rules() {
   echo "Applying nftables..."
-  iface=$(first_iface)
-  iface_cidr=$(ip -4 -o addr show dev "$iface" scope global | awk '{print $4}')
-  iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
+
   nft flush ruleset || true
 
   nft create table inet rawdrop
@@ -1884,12 +1882,6 @@ nft_rules() {
   nft add rule inet rawdrop prerouting meta l4proto { tcp, udp } accept
   nft add chain inet rawdrop output "{ type filter hook output priority raw; policy drop; }"
   nft add rule inet rawdrop output meta l4proto { tcp, udp } accept
-
-  nft create table ip nat
-  nft add chain ip nat postrouting "{ type nat hook postrouting priority srcnat; policy accept; }"
-for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
-  nft add rule ip nat postrouting oifname "$iface" masquerade
-done
 
   nft add table inet filter
   nft add chain inet filter input '{ type filter hook input priority filter; policy accept; }'
@@ -1901,6 +1893,16 @@ done
   nft add chain inet filter output '{ type filter hook output priority filter; policy accept; }'
   nft add rule inet filter output ct state { established, related, untracked } accept
   nft add rule inet filter output ct state invalid drop
+
+  nft create table ip nat
+  nft add chain ip nat postrouting "{ type nat hook postrouting priority srcnat; policy accept; }"
+for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
+  nft add rule ip nat postrouting oifname "$iface" masquerade
+done
+
+  iface=$(first_iface)
+  iface_cidr=$(ip -4 -o addr show dev "$iface" scope global | awk '{print $4}')
+  iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
 
 if [ "${TPROXY}" = "true" ]; then
   nft create table inet mihomo
@@ -1955,9 +1957,7 @@ done
 
 iptables_rules() {
   echo "Applying iptables..."
-  iface=$(first_iface)
-  iface_cidr=$(ip -4 -o addr show dev "$iface" scope global | awk '{print $4}')
-  iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
+
   iptables -F
   iptables -X
   iptables -t nat -F
@@ -1968,9 +1968,6 @@ iptables_rules() {
   iptables -t raw -X
   iptables -t filter -F
   iptables -t filter -X
-  for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
-    iptables -t nat -A POSTROUTING -o "$iface" -j MASQUERADE
-  done
   iptables -t raw -A PREROUTING -p tcp -j RETURN
   iptables -t raw -A PREROUTING -p udp -j RETURN
   iptables -t raw -A PREROUTING -j DROP
@@ -1983,9 +1980,15 @@ iptables_rules() {
   iptables -t filter -A FORWARD -m conntrack --ctstate INVALID -j DROP
   iptables -t filter -A OUTPUT   -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
   iptables -t filter -A OUTPUT -m conntrack --ctstate INVALID -j DROP 
+  for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
+    iptables -t nat -A POSTROUTING -o "$iface" -j MASQUERADE
+  done
   [ -n "$BYEDPI_LIST" ] && apply_byedpi_iptables
   iptables -t nat -A PREROUTING -m addrtype --dst-type LOCAL -j RETURN
   iptables -t nat -A PREROUTING -m addrtype ! --dst-type UNICAST -j RETURN
+  iface=$(first_iface)
+  iface_cidr=$(ip -4 -o addr show dev "$iface" scope global | awk '{print $4}')
+  iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
   for entry in $dscp_to_group; do
     dscp=${entry%%:*}
     port=$((7000 + dscp))
