@@ -1878,10 +1878,10 @@ nft_rules() {
   nft flush ruleset || true
 
   nft create table inet rawdrop
-  nft add chain inet rawdrop prerouting "{ type filter hook prerouting priority raw; policy drop; }"
-  nft add rule inet rawdrop prerouting meta l4proto { tcp, udp } accept
-  nft add chain inet rawdrop output "{ type filter hook output priority raw; policy drop; }"
-  nft add rule inet rawdrop output meta l4proto { tcp, udp } accept
+  nft add chain inet rawdrop prerouting "{ type filter hook prerouting priority raw; policy accept; }"
+  nft add rule inet rawdrop prerouting ip daddr { $FAKE_IP_RANGE } meta l4proto != { tcp, udp } drop
+  nft add chain inet rawdrop output "{ type filter hook output priority raw; policy accept; }"
+  nft add rule inet rawdrop output ip daddr { $FAKE_IP_RANGE } meta l4proto != { tcp, udp } drop
 
   nft add table inet filter
   nft add chain inet filter input '{ type filter hook input priority filter; policy accept; }'
@@ -1968,12 +1968,12 @@ iptables_rules() {
   iptables -t raw -X
   iptables -t filter -F
   iptables -t filter -X
-  iptables -t raw -A PREROUTING -p tcp -j RETURN
-  iptables -t raw -A PREROUTING -p udp -j RETURN
-  iptables -t raw -A PREROUTING -j DROP
-  iptables -t raw -A OUTPUT -p tcp -j RETURN
-  iptables -t raw -A OUTPUT -p udp -j RETURN
-  iptables -t raw -A OUTPUT -j DROP
+  iptables -t raw -A PREROUTING -d $FAKE_IP_RANGE -p tcp -j RETURN
+  iptables -t raw -A PREROUTING -d $FAKE_IP_RANGE -p udp -j RETURN
+  iptables -t raw -A PREROUTING -d $FAKE_IP_RANGE -j DROP
+  iptables -t raw -A OUTPUT -d $FAKE_IP_RANGE -p tcp -j RETURN
+  iptables -t raw -A OUTPUT -d $FAKE_IP_RANGE -p udp -j RETURN
+  iptables -t raw -A OUTPUT -d $FAKE_IP_RANGE -j DROP
   iptables -t filter -A INPUT   -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
   iptables -t filter -A INPUT -m conntrack --ctstate INVALID -j DROP
   iptables -t filter -A FORWARD   -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
