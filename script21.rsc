@@ -185,8 +185,8 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env TELEGRAM_GEOIP value: telegram"} on-error {}
 :do { add key=TELEGRAM_AS list=MihomoProxyRoS value=AS62041,AS59930,AS62014,AS211157,AS44907
 :put "Add env TELEGRAM_AS value: AS62041,AS59930,AS62014,AS211157,AS44907"} on-error {}
-:do { add key=TELEGRAM_IPCIDR list=MihomoProxyRoS value=109.239.140.0/24,5.28.192.0/18
-:put "Add env TELEGRAM_IPCIDR value: 109.239.140.0/24,5.28.192.0/18"} on-error {}
+:do { add key=TELEGRAM_IPCIDR list=MihomoProxyRoS value=109.239.140.0/24,5.28.192.0/21
+:put "Add env TELEGRAM_IPCIDR value: 109.239.140.0/24,5.28.192.0/21"} on-error {}
 :do { add key=DISCORD_GEOSITE list=MihomoProxyRoS value=discord
 :put "Add env DISCORD_GEOSITE value: telegram"} on-error {}
 :do { add key=DISCORD_GEOIP list=MihomoProxyRoS value=discord
@@ -270,7 +270,7 @@ add address=8.8.4.4 list=DNS
 :do {add list=MihomoProxyRoS comment=YT address=www.youtube.com} on-error {}
 :do {add list=MihomoProxyRoS comment=NTCParty address=ntc.party} on-error {}
 :do {add list=MihomoProxyRoS comment=TelegramFromAS31500 address=109.239.140.0/24} on-error {}
-:do {add list=MihomoProxyRoS comment=TelegramFromAS1273 address=5.28.192.0/18} on-error {}
+:do {add list=MihomoProxyRoS comment=TelegramFromAS1273 address=5.28.192.0/21} on-error {}
 :do {add list=MihomoProxyRoS comment=FacebookFromAS9825 address=202.59.209.0/24} on-error {}
 
 :if ([:len [/system/script/find name="IP_MihomoProxyRoS"]] = 0) do={
