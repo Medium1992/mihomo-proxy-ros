@@ -177,16 +177,8 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env FAKE_IP_TTL value: 10"} on-error {}
 :do {add key=BYEDPI_CMD list=MihomoProxyRoS value="-Ku -a1 -An -d1 -s1+s -d3+s -s6+s -d9+s -s12+s -d15+s -s20+s -d25+s -s30+s -d35+s -At,r,s -s1 -q1 -At,r,s -s5 -o2 -At,r,s -o1 -d1 -r1+s -s1+s -d3+s -At,r,s -f-1 -r1+s -At,r,s -s1 -o1+s -s-1"
 :put "Add env BYEDPI_CMD"} on-error {}
-:do { add key=GROUP list=Block,MihomoProxyRoS value=YouTube,Telegram,Discord,META,Roblox,SuperCell,AI,Twitch
-:put "Add env GROUP value: Block,YouTube,Telegram,Discord,META,Roblox,SuperCell,AI,Twitch"} on-error {}
-:do { add key=BLOCK_USE list=MihomoProxyRoS value=REJECT
-:put "Add env BLOCK_USE value: REJECT"} on-error {}
-:do { add key=BLOCK_IPCIDR list=MihomoProxyRoS value=5.28.195.2/31
-:put "Add env BLOCK_IPCIDR value: 5.28.195.2/31"} on-error {}
-:do { add key=BLOCK_HIDDEN list=MihomoProxyRoS value=true
-:put "Add env BLOCK_HIDDEN value: true"} on-error {}
-:do { add key=BLOCK_PRIORITY list=MihomoProxyRoS value=2
-:put "Add env BLOCK_PRIORITY value: 2"} on-error {}
+:do { add key=GROUP list=MihomoProxyRoS value=YouTube,Telegram,Discord,META,Roblox,SuperCell,AI,Twitch
+:put "Add env GROUP value: YouTube,Telegram,Discord,META,Roblox,SuperCell,AI,Twitch"} on-error {}
 :do { add key=YOUTUBE_GEOSITE list=MihomoProxyRoS value=youtube
 :put "Add env YOUTUBE_GEOSITE value: youtube"} on-error {}
 :do { add key=TELEGRAM_GEOSITE list=MihomoProxyRoS value=telegram
@@ -195,8 +187,8 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env TELEGRAM_GEOIP value: telegram"} on-error {}
 :do { add key=TELEGRAM_AS list=MihomoProxyRoS value=AS62041,AS59930,AS62014,AS211157,AS44907
 :put "Add env TELEGRAM_AS value: AS62041,AS59930,AS62014,AS211157,AS44907"} on-error {}
-:do { add key=TELEGRAM_IPCIDR list=MihomoProxyRoS value=109.239.140.0/24
-:put "Add env TELEGRAM_IPCIDR value: 109.239.140.0/24"} on-error {}
+:do { add key=TELEGRAM_IPCIDR list=MihomoProxyRoS value=109.239.140.0/24,5.28.195.2/31
+:put "Add env TELEGRAM_IPCIDR value: 109.239.140.0/24,5.28.195.2/31"} on-error {}
 :do { add key=DISCORD_GEOSITE list=MihomoProxyRoS value=discord
 :put "Add env DISCORD_GEOSITE value: telegram"} on-error {}
 :do { add key=DISCORD_GEOIP list=MihomoProxyRoS value=discord
