@@ -7,23 +7,6 @@
 :set start [/terminal ask]
 :put "Starting script"
 
-:local flagDNSproxy false
-:local dnsproxy false
-:local dnsproxychoice
-
-:while ($flagDNSproxy=false) do={
-:put "Specify whether you want to install dnsproxy:"
-:put "- yes"
-:put "- no"
-:set dnsproxychoice [/terminal ask]
-:if ($dnsproxychoice="yes") do={
-:set dnsproxy true
-:set flagDNSproxy true
-}
-:if ($dnsproxychoice="no") do={
-:set flagDNSproxy true
-}}
-
 :local pathPull ""
 :if (([:len [/container/find comment="MihomoProxyRoS"]] = 0) or (([:len [/container/find comment="DNSProxy"]] = 0) and $dnsproxy=true)) do={
 :local slotArray 
@@ -32,10 +15,13 @@
 :local slotDisk 
 :local selectSlot 
 foreach i in=[/disk/find where fs=ext4 free>80914560] do={
-:set slotArray ($slotArray, [/disk/get [find where fs=ext4 free>80914560] value-name=slot]);
+:set slotArray ($slotArray, [/disk/get $i value-name=slot]);
+}
+foreach i in=[/disk/find where fs=btrfs free>80914560] do={
+:set slotArray ($slotArray, [/disk/get $i value-name=slot]);
 }
 foreach i in=[/disk/find where fs=tmpfs free>80914560] do={
-:set slotArray ($slotArray, [/disk/get [find where fs=tmpfs free>80914560] value-name=slot]);
+:set slotArray ($slotArray, [/disk/get $i value-name=slot]);
 }
 :while ($flagDisks=false) do={
 :put "Enter the name of the disk slot to which you want to pull the containers. Possible options slot:"
@@ -422,8 +408,63 @@ add name=FWD_update source="# Define global variables\r\
 \n}"
 :put "Add script FWD_update for pull resources to DNS static FWD"}
 
+:if ([:len [/system/script/find name="FWD_update_RU"]] = 0) do={
+/system script
+add name=FWD_update_RU source="# Define global variables\r\
+\n:global AddressList \"\"\r\
+\n:global ForwardTo \"MihomoProxyRoS\"\r\
+\n\r\
+\n# List of resources corresponding to RSC files\r\
+\n:global resources {\r\
+\n\"category-ru\";\r\
+\n\"category-gov-ru\";\r\
+\n\"category-bank-ru\";\r\
+\n\"category-retail-ru\";\r\
+\n\"category-travel-ru\";\r\
+\n\"category-ecommerce-ru\";\r\
+\n\"category-entertainment-ru\";\r\
+\n}\r\
+\n\r\
+\n# Base URL for RSC files\r\
+\n:local baseUrl \"https://raw.githubusercontent.com/Medium1992/MikroTik_DNS_FWD/refs/heads/main/for_scripts\"\r\
+\n\r\
+\n:foreach resource in=\$resources do={\r\
+\n:local url \"\$baseUrl/\$resource.rsc\"\r\
+\n:do {\r\
+\n:local r [/tool fetch url=\$url mode=https output=user as-value]\r\
+\n:if ((\$r->\"status\")=\"finished\") do={\r\
+\n:local content (\$r->\"data\")\r\
+\n:local s [:parse \$content]\r\
+\n\$s\r\
+\n:log warning \"\$resource.rsc loading completed\"\r\
+\n:put \"\$resource.rsc loading completed\"\r\
+\n}\r\
+\n} on-error {}\r\
+\n:local part 1\r\
+\n:local continue true\r\
+\n:while (\$continue) do={\r\
+\n:local url \"\$baseUrl/\$resource_part\$part.rsc\"\r\
+\n:do {\r\
+\n:local r [/tool fetch url=\$url mode=https output=user as-value]\r\
+\n:if ((\$r->\"status\")=\"finished\") do={\r\
+\n:local content (\$r->\"data\")\r\
+\n:local s [:parse \$content]\r\
+\n\$s\r\
+\n:log warning \"\$resource.rsc part\$part loading completed\"\r\
+\n:put \"\$resource.rsc part\$part loading completed\"\r\
+\n}\r\
+\n:set part (\$part + 1)\r\
+\n} on-error {\r\
+\n:set continue false\r\
+\n}\r\
+\n}\r\
+\n}"
+:put "Add script FWD_update_RU for pull resources to DNS static FWD"}
+
 :if ([:len [/system/scheduler/find comment="MihomoProxyRoS"]] = 0) do={
 :do {
+:put "Run script FWD_update_RU, pls wait for DNS static entries pulled"
+/system/script/run FWD_update_RU
 :put "Run script FWD_update, pls wait for DNS static entries pulled"
 /system/script/run FWD_update
 :put "Run script IP_MihomoProxyRoS, pls wait for IPs static entries pulled"
@@ -432,7 +473,8 @@ add name=FWD_update source="# Define global variables\r\
 }
 :do {
 /system scheduler
-add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-event="/system/script/run FWD_update\r\
+add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-event="/system/script/run FWD_update_RU\r\
+\n/system/script/run FWD_update\r\
 \n/system/script/run IP_MihomoProxyRoS"
 :put "Add schedule update resources on 06:30 AM every day"
 } on-error {} 
@@ -485,81 +527,6 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 :delay 1
 }
 :delay 1
-}
-
-:if ($dnsproxy=true) do={
-:do {/interface/veth/add name=DNSProxy address=192.168.255.10/30 gateway=192.168.255.9
-:put "Create VETH DNSProxy"} on-error {}
-:do {/interface/list/member/add interface=DNSProxy list=InAccept
-:put "Add in interfacelist InAccept interface DNSProxy"} on-error {}
-:do {/ip/address/add address=192.168.255.9/30 interface=DNSProxy
-:put "Add address Mikrotik for interface DNSProxy"} on-error {}
-:do {/ip/dns/forwarders/add name=DNSProxy dns-servers=192.168.255.10 verify-doh-cert=no
-:put "Add DNS Forwarders DNSProxy"} on-error {}
-:do {/interface/list/member/add interface=DNSProxy list=Containers
-:put "Add in interfacelist Containers interface DNSProxy"} on-error {}
-
-:set flagContainer false
-:while ($flagContainer = false) do={
-:if ([:len [/container/find comment="DNSProxy"]] = 0) do={
-/container/add remote-image="ghcr.io/medium1992/dns-proxy-ros" interface=DNSProxy cmd="--cache --hosts-files=/hosts --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel" root-dir=($pathPull . "Containers/DNSProxy") start-on-boot=yes comment="DNSProxy"
-:put "Start pull DNSProxy container, pls wait when container starting, pls wait"
-:delay 1
-}
-:if ([:len [/container/find comment="DNSProxy" and stopped]] > 0) do={
-/container/start [find where comment="DNSProxy" and stopped]
-:put "Container DNSProxy started"
-:set $flagContainer true
-}
-:if ([:len [/container/find comment="DNSProxy" and download/extract failed]] > 0) do={
-/container/repull [find where comment="DNSProxy"]
-:put "Container DNSProxy extract failed, repull, pls wait"
-:delay 1
-}
-:if ([:len [/container/find comment="DNSProxy" and (stopped or running)]] > 0) do={
-/container/start [find where comment="DNSProxy" and stopped]
-:delay 3
-:if ([:len [/container/find comment="DNSProxy" and running]] > 0) do={
-:put "Container DNSProxy started"
-:set $flagContainer true
-}
-:if ([:len [/container/find comment="DNSProxy" and stopped]] > 0) do={
-/container/repull [find where comment="DNSProxy"]
-:put "Container DNSProxy extract failed, repull, pls wait"
-:delay 1
-}
-}
-:if ([:len [/container/find comment="DNSProxy" and download/extract failed]] > 0) do={
-/container/repull [find where comment="DNSProxy"]
-:put "Container DNSProxy extract failed, repull, pls wait"
-:delay 1
-}
-:delay 1
-}
-
-:if ([:len [/system/script/find name="changeDNS"]] = 0) do={
-/system script
-add name=changeDNS source=":if ([:len [/container/find comment=\"DNSProxy\" and running]] > 0 and [/ip/dns/get servers]!=192.168.255.10) d\
-o={\r\
-\n/ip dns set use-doh-server=\"\" verify-doh-cert=no\r\
-\n/ip dns set servers=\"\"\r\
-\n/ip dns set servers=192.168.255.10\r\
-\n/ip dns cache flush\r\
-\n:log warning \"change DNS server to DNSProxy\"\r\
-\n} \r\
-\n:if ((([:len [/container/find comment=\"DNSProxy\" and stopped]] > 0) or ([:len [/container/find comment=\"DNSProxy\"]]=0)) and [/ip/dns/get servers]=192.168.255.10) do={\
-\n/ip dns set servers=\"\"\r\
-\n/ip dns set servers=8.8.8.8\r\
-\n/ip dns set use-doh-server=https://dns.google/dns-query verify-doh-cert=yes\r\
-\n/ip dns cache flush\r\
-\n:log warning \"change DNS server to DoH Google\"\r\
-\n}"
-:put "Add script changeDNS"}
-:do {
-/system scheduler
-add interval=10s name=DNSchange on-event=changeDNS
-:put "Add shedule DNSchange check every 10s"
-} on-error {} 
 }
 
 /system/script/environment/remove [find where ]
