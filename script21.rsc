@@ -411,7 +411,7 @@ add name=FWD_update source="# Define global variables\r\
 /system script
 add name=FWD_update_RU source="# Define global variables\r\
 \n:global AddressList \"\"\r\
-\n:global ForwardTo \"MihomoProxyRoS\"\r\
+\n:global ForwardTo \"Yandex\"\r\
 \n\r\
 \n# List of resources corresponding to RSC files\r\
 \n:global resources {\r\
