@@ -1880,8 +1880,6 @@ nft_rules() {
   nft create table inet rawdrop
   nft add chain inet rawdrop prerouting "{ type filter hook prerouting priority raw; policy accept; }"
   nft add rule inet rawdrop prerouting ip daddr { $FAKE_IP_RANGE } meta l4proto != { tcp, udp } drop
-  nft add chain inet rawdrop output "{ type filter hook output priority raw; policy accept; }"
-  nft add rule inet rawdrop output ip daddr { $FAKE_IP_RANGE } meta l4proto != { tcp, udp } drop
 
   nft add table inet filter
   nft add chain inet filter input '{ type filter hook input priority filter; policy accept; }'
@@ -1890,9 +1888,6 @@ nft_rules() {
   nft add chain inet filter forward '{ type filter hook forward priority filter; policy accept; }'
   nft add rule inet filter forward ct state { established, related, untracked } accept
   nft add rule inet filter forward ct state invalid drop
-  nft add chain inet filter output '{ type filter hook output priority filter; policy accept; }'
-  nft add rule inet filter output ct state { established, related, untracked } accept
-  nft add rule inet filter output ct state invalid drop
 
   nft create table ip nat
   nft add chain ip nat postrouting "{ type nat hook postrouting priority srcnat; policy accept; }"
@@ -1971,15 +1966,10 @@ iptables_rules() {
   iptables -t raw -A PREROUTING -d $FAKE_IP_RANGE -p tcp -j RETURN
   iptables -t raw -A PREROUTING -d $FAKE_IP_RANGE -p udp -j RETURN
   iptables -t raw -A PREROUTING -d $FAKE_IP_RANGE -j DROP
-  iptables -t raw -A OUTPUT -d $FAKE_IP_RANGE -p tcp -j RETURN
-  iptables -t raw -A OUTPUT -d $FAKE_IP_RANGE -p udp -j RETURN
-  iptables -t raw -A OUTPUT -d $FAKE_IP_RANGE -j DROP
   iptables -t filter -A INPUT   -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
   iptables -t filter -A INPUT -m conntrack --ctstate INVALID -j DROP
   iptables -t filter -A FORWARD   -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
   iptables -t filter -A FORWARD -m conntrack --ctstate INVALID -j DROP
-  iptables -t filter -A OUTPUT   -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
-  iptables -t filter -A OUTPUT -m conntrack --ctstate INVALID -j DROP 
   for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
     iptables -t nat -A POSTROUTING -o "$iface" -j MASQUERADE
   done
