@@ -22,7 +22,7 @@ RUN echo "Patching version/updater for fork TAG=${TAG} BUILDTIME=${BUILDTIME}" &
     sed -i 's|MihomoName = "mihomo"|MihomoName = "mihomo-proxy-ros"|' constant/version.go && \
     sed -i 's|baseReleaseURL    = "https://github.com/MetaCubeX/mihomo/releases/latest/download/"|baseReleaseURL    = "https://github.com/Medium1992/mihomo-proxy-ros/releases/latest/download/"|' component/updater/update_core.go && \
     sed -i 's|versionReleaseURL = "https://github.com/MetaCubeX/mihomo/releases/latest/download/version.txt"|versionReleaseURL = "https://github.com/Medium1992/mihomo-proxy-ros/releases/latest/download/version.txt"|' component/updater/update_core.go && \
-    sed -i 's|if latestVersion == C.Version && !force {|currentVersion := strings.TrimSuffix(C.Version, "-mihomo-proxy-ros"); if latestVersion == currentVersion && !force {|' component/updater/update_core.go
+    sed -i 's|if latestVersion == C.Version && !force {|if strings.TrimSuffix(C.Version, "-mihomo-proxy-ros") == latestVersion && !force {|' component/updater/update_core.go
 
 RUN sed -i '/^import (/a\    "github.com/metacubex/mihomo/log"' \
     adapter/provider/provider.go
