@@ -16,6 +16,49 @@ WORKDIR /src
 
 # Переключаемся на нужный тэг
 RUN git fetch --all --tags --prune && git switch --detach "$TAG" 2>/dev/null || git switch "$TAG"
+
+# Патч vision panic (slice bounds out of range в filter.go)
+RUN python3 - <<'PY'
+from pathlib import Path
+p = Path("transport/vless/vision/filter.go")
+s = p.read_text(encoding="utf-8")
+
+old1 = '                        vc.cipher = binary.BigEndian.Uint16(buffer[index+43+sessionIDLen+1:])'
+new1 = '''                        cipherPos := index + 43 + sessionIDLen + 1
+                        if cipherPos+2 <= lenP {
+                            vc.cipher = binary.BigEndian.Uint16(buffer[cipherPos:])
+                        }'''
+if old1 not in s:
+    raise SystemExit("patch failed: expected cipher line not found")
+s = s.replace(old1, new1, 1)
+
+old2 = '''        if i < 0 {
+            i = 0
+        }
+        if i+end > lenP {
+            end = lenP
+            vc.remainingServerHello -= uint16(end - i)
+        } else {'''
+new2 = '''        if i < 0 {
+            i = 0
+        }
+        if i > lenP {
+            i = lenP
+        }
+        if i+end > lenP {
+            end = lenP
+            if end > i {
+                vc.remainingServerHello -= uint16(end - i)
+            }
+        } else {'''
+if old2 not in s:
+    raise SystemExit("patch failed: expected bounds block not found")
+s = s.replace(old2, new2, 1)
+
+p.write_text(s, encoding="utf-8")
+print("Applied vision filter bounds patch")
+PY
+
 RUN echo "Patching version/updater for fork TAG=${TAG} BUILDTIME=${BUILDTIME}" && \
     sed -i "s|Version\\s*=.*|Version = \"${TAG}-mihomo-proxy-ros\"|" constant/version.go && \
     sed -i "s|BuildTime\\s*=.*|BuildTime = \"${BUILDTIME}\"|" constant/version.go && \
@@ -58,4 +101,4 @@ RUN BUILD_TAGS="" && \
     fi
     
 FROM scratch AS export
-COPY --from=package /final /
+COPY --from=package /final
