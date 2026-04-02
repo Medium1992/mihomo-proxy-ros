@@ -101,4 +101,4 @@ RUN BUILD_TAGS="" && \
     fi
     
 FROM scratch AS export
-COPY --from=package /final
+COPY --from=package /final /
