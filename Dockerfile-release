@@ -20,40 +20,49 @@ RUN git fetch --all --tags --prune && git switch --detach "$TAG" 2>/dev/null || 
 # Патч vision panic (slice bounds out of range в filter.go)
 RUN python3 - <<'PY'
 from pathlib import Path
+import re
+
 p = Path("transport/vless/vision/filter.go")
 s = p.read_text(encoding="utf-8")
 
-old1 = '                        vc.cipher = binary.BigEndian.Uint16(buffer[index+43+sessionIDLen+1:])'
-new1 = '''                        cipherPos := index + 43 + sessionIDLen + 1
-                        if cipherPos+2 <= lenP {
-                            vc.cipher = binary.BigEndian.Uint16(buffer[cipherPos:])
-                        }'''
-if old1 not in s:
-    raise SystemExit("patch failed: expected cipher line not found")
-s = s.replace(old1, new1, 1)
+# already patched -> skip
+if "cipherPos := index + 43 + sessionIDLen + 1" in s and "if i > lenP {" in s:
+    print("vision filter already patched")
+    raise SystemExit(0)
 
-old2 = '''        if i < 0 {
-            i = 0
-        }
-        if i+end > lenP {
-            end = lenP
-            vc.remainingServerHello -= uint16(end - i)
-        } else {'''
-new2 = '''        if i < 0 {
-            i = 0
-        }
-        if i > lenP {
-            i = lenP
-        }
-        if i+end > lenP {
-            end = lenP
-            if end > i {
-                vc.remainingServerHello -= uint16(end - i)
-            }
-        } else {'''
-if old2 not in s:
-    raise SystemExit("patch failed: expected bounds block not found")
-s = s.replace(old2, new2, 1)
+# patch 1: safe cipher slice bounds
+pat1 = re.compile(
+    r'(\s*sessionIDLen := int\(buffer\[index\+43\]\)\n)\s*vc\.cipher = binary\.BigEndian\.Uint16\(buffer\[index\+43\+sessionIDLen\+1:\]\)'
+)
+rep1 = (
+    r'\1'
+    r'\t\t\t\t\t\tcipherPos := index + 43 + sessionIDLen + 1\n'
+    r'\t\t\t\t\t\tif cipherPos+2 <= lenP {\n'
+    r'\t\t\t\t\t\t\tvc.cipher = binary.BigEndian.Uint16(buffer[cipherPos:])\n'
+    r'\t\t\t\t\t\t}'
+)
+s, n1 = pat1.subn(rep1, s, count=1)
+
+# patch 2: clamp i and safe decrement
+pat2 = re.compile(
+    r'(\s*if i < 0 {\n\s*i = 0\n\s*}\n)\s*if i\+end > lenP {\n\s*end = lenP\n\s*vc\.remainingServerHello -= uint16\(end - i\)\n\s*} else {'
+)
+rep2 = (
+    r'\1'
+    r'\t\tif i > lenP {\n'
+    r'\t\t\ti = lenP\n'
+    r'\t\t}\n'
+    r'\t\tif i+end > lenP {\n'
+    r'\t\t\tend = lenP\n'
+    r'\t\t\tif end > i {\n'
+    r'\t\t\t\tvc.remainingServerHello -= uint16(end - i)\n'
+    r'\t\t\t}\n'
+    r'\t\t} else {'
+)
+s, n2 = pat2.subn(rep2, s, count=1)
+
+if n1 != 1 or n2 != 1:
+    raise SystemExit(f"patch failed: n1={n1}, n2={n2}")
 
 p.write_text(s, encoding="utf-8")
 print("Applied vision filter bounds patch")
