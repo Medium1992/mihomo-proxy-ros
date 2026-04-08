@@ -132,14 +132,16 @@ jobs:
 
       - name: Prepare artifacts
         run: |
+          mkdir -p dist
+          TAG="${{ needs.check.outputs.tag }}"
+          BASENAME="mihomo-linux-${{ matrix.name }}"
+          ARCHIVE="${BASENAME}-${TAG}.gz"
 
-          mkdir dist
+          cp out/mihomo "dist/${BASENAME}"
+          gzip -c "dist/${BASENAME}" > "dist/${ARCHIVE}"
+          rm -f "dist/${BASENAME}"
 
-          FILE="mihomo-linux-${{ matrix.name }}-${{ needs.check.outputs.tag }}.gz"
-
-          gzip -c out/mihomo > dist/$FILE
-
-          sha256sum dist/$FILE > dist/$FILE.sha256
+          sha256sum "dist/${ARCHIVE}" > "dist/${ARCHIVE}.sha256"
 
       - uses: actions/upload-artifact@v4
         with:
