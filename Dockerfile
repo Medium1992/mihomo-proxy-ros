@@ -53,10 +53,16 @@ RUN curl -L https://github.com/IndeecFOX/zapret4rocket/archive/refs/heads/master
 
 RUN mkdir -p /final
 
-RUN if [ "$TARGETARCH" = "amd64" ]; then mv $(ls mihomo-linux-amd64-${AMD64VERSION}-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1) /final/mihomo; \
-    elif [ "$TARGETARCH" = "arm64" ]; then mv $(ls mihomo-linux-arm64-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1) /final/mihomo; \
-    elif [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v7" ]; then mv $(ls mihomo-linux-armv7-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1) /final/mihomo; \
-    else mv $(ls mihomo-linux-armv5-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1) /final/mihomo; fi
+RUN if [ "$TARGETARCH" = "amd64" ]; then \
+      SRC="$(ls mihomo-linux-amd64-${AMD64VERSION} mihomo-linux-amd64-${AMD64VERSION}-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1)"; \
+    elif [ "$TARGETARCH" = "arm64" ]; then \
+      SRC="$(ls mihomo-linux-arm64 mihomo-linux-arm64-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1)"; \
+    elif [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v7" ]; then \
+      SRC="$(ls mihomo-linux-armv7 mihomo-linux-armv7-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1)"; \
+    else \
+      SRC="$(ls mihomo-linux-armv5 mihomo-linux-armv5-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1)"; \
+    fi && \
+    [ -n "$SRC" ] && mv "$SRC" /final/mihomo
 
 RUN if [ "$TARGETARCH" = "amd64" ]; then mv hev-socks5-tunnel-linux-x86_64 /final/hs5t; \
     elif [ "$TARGETARCH" = "arm64" ]; then mv hev-socks5-tunnel-linux-arm64 /final/hs5t; \
