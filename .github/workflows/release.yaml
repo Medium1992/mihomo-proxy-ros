@@ -167,6 +167,10 @@ jobs:
         run: |
           mkdir release
           find artifacts -type f -exec cp {} release/ \;
+          
+      - name: Add version.txt
+        run: |
+          echo "${{ needs.check.outputs.tag }}" > release/version.txt
 
       - name: Create release
         uses: softprops/action-gh-release@v2
