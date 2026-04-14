@@ -468,7 +468,7 @@ add name=route_UP source=\
     \n\"MihomoProxyRoS1\";\
     \n}\
     \n:foreach i in=\$comments do={\
-    \n/ip/route/set [find where comment=\$i ] disabled=no\
+    \n/ip/route/set [find where comment=\$i disabled=yes] disabled=no\
     \n}"
 :put "Add script route_UP"}
 
