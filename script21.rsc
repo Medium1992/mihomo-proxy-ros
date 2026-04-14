@@ -460,6 +460,18 @@ add name=FWD_update_RU source="# Define global variables\r\
 \n}"
 :put "Add script FWD_update_RU for pull resources to DNS static FWD"}
 
+:if ([:len [/system/script/find name="route_UP"]] = 0) do={
+/system script
+add name=route_UP source=\
+    ":global comments {\
+    \n\"MihomoProxyRoS0\";\
+    \n\"MihomoProxyRoS1\";\
+    \n}\
+    \n:foreach i in=\$comments do={\
+    \n/ip/route/set [find where comment=\$i ] disabled=no\
+    \n}"
+:put "Add script route_UP"}
+
 :if ([:len [/system/scheduler/find comment="MihomoProxyRoS"]] = 0) do={
 :do {
 :put "Run script FWD_update_RU, pls wait for DNS static entries pulled"
@@ -476,6 +488,8 @@ add interval=1d name=update_FWD start-time=06:30:00 comment="MihomoProxyRoS" on-
 \n/system/script/run FWD_update\r\
 \n/system/script/run IP_MihomoProxyRoS"
 :put "Add schedule update resources on 06:30 AM every day"
+/system scheduler
+add interval=10s name=route_UP comment="route_UP" on-event="/system/script/run route_UP"
 } on-error {} 
 
 :local flagContainer false
