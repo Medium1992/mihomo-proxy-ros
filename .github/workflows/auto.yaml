@@ -110,7 +110,7 @@ jobs:
 
       - name: Build and push amd64v1
         if: steps.check_versions.outputs.build_needed == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./
           file: ./Dockerfile
@@ -128,7 +128,7 @@ jobs:
  
       - name: Build and push amd64v2
         if: steps.check_versions.outputs.build_needed == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./
           file: ./Dockerfile
@@ -146,7 +146,7 @@ jobs:
 
       - name: Build and push amd64v4
         if: steps.check_versions.outputs.build_needed == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./
           file: ./Dockerfile
@@ -164,7 +164,7 @@ jobs:
 
       - name: Build and push multi-arch
         if: steps.check_versions.outputs.build_needed == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./
           file: ./Dockerfile
