@@ -58,11 +58,11 @@ jobs:
       - name: Get current alpha release version
         id: mine
         run: |
-          RELEASE_TXT_URL=$(gh api repos/${{ github.repository }}/releases/tags/alpha \
-            --jq '.assets[] | select(.name == "release.txt") | .url' 2>/dev/null || true)
+          VERSION_TXT_URL=$(gh api repos/${{ github.repository }}/releases/tags/alpha \
+            --jq '.assets[] | select(.name == "version.txt") | .url' 2>/dev/null || true)
 
-          if [ -n "$RELEASE_TXT_URL" ]; then
-            CURRENT=$(gh api -H "Accept: application/octet-stream" "$RELEASE_TXT_URL" 2>/dev/null | tr -d '\r\n' || true)
+          if [ -n "$VERSION_TXT_URL" ]; then
+            CURRENT=$(gh api -H "Accept: application/octet-stream" "$VERSION_TXT_URL" 2>/dev/null | tr -d '\r\n' || true)
           else
             CURRENT="none"
           fi
@@ -195,8 +195,18 @@ jobs:
 
       - name: Add alpha version files
         run: |
-          echo "${{ needs.alpha-check.outputs.version_tag }}" > release/release.txt
           echo "${{ needs.alpha-check.outputs.version_tag }}" > release/version.txt
+
+      - name: Delete old alpha assets
+        run: |
+          ASSETS=$(gh release view alpha --json assets --jq '.assets[].name' 2>/dev/null || true)
+          if [ -n "$ASSETS" ]; then
+            while IFS= read -r name; do
+              [ -n "$name" ] && gh release delete-asset alpha "$name" --yes || true
+            done <<< "$ASSETS"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Replace alpha release
         run: |
