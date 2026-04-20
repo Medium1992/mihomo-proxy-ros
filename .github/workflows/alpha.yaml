@@ -11,27 +11,49 @@ jobs:
     outputs:
       build_needed: ${{ steps.compare.outputs.build_needed }}
       upstream_tag: ${{ steps.upstream.outputs.upstream_tag }}
+      upstream_ref: ${{ steps.upstream.outputs.upstream_ref }}
       version_tag: ${{ steps.upstream.outputs.version_tag }}
 
     steps:
       - name: Get latest upstream alpha tag
         id: upstream
         run: |
-          TAG=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases?per_page=100 | \
-            jq -r '[.[] | select(.prerelease == true and .draft == false and (.tag_name | test("alpha"; "i")))][0].tag_name')
+          RELEASES_JSON=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases?per_page=100)
+          RELEASE=$(echo "$RELEASES_JSON" | jq -c '[.[] | select(.prerelease == true and .draft == false and (.tag_name | test("alpha"; "i")) )][0]')
 
-          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-            TAG=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases?per_page=100 | \
-              jq -r '[.[] | select(.prerelease == true and .draft == false)][0].tag_name')
+          if [ -z "$RELEASE" ] || [ "$RELEASE" = "null" ]; then
+            RELEASE=$(echo "$RELEASES_JSON" | jq -c '[.[] | select(.prerelease == true and .draft == false)][0]')
           fi
 
-          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+          TAG=$(echo "$RELEASE" | jq -r '.tag_name // empty')
+          VERSION_URL=$(echo "$RELEASE" | jq -r '.assets[] | select(.name == "version.txt") | .browser_download_url' | head -n1)
+
+          if [ -z "$TAG" ]; then
             echo "No prerelease tag found in MetaCubeX/mihomo"
             exit 1
           fi
 
+          if [ -n "$VERSION_URL" ]; then
+            VERSION_TAG=$(curl -fsSL "$VERSION_URL" | tr -d '\r\n')
+          else
+            VERSION_TAG=""
+          fi
+
+          if [ -z "$VERSION_TAG" ]; then
+            echo "upstream version.txt is empty or missing; fallback to tag-based version"
+            VERSION_TAG="${TAG}-alpha"
+          fi
+
+          REF_FROM_VERSION=$(echo "$VERSION_TAG" | sed -nE 's/^alpha-b([0-9a-fA-F]+)$/\1/p')
+          if [ -n "$REF_FROM_VERSION" ]; then
+            UPSTREAM_REF="$REF_FROM_VERSION"
+          else
+            UPSTREAM_REF="$TAG"
+          fi
+
           echo "upstream_tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version_tag=${TAG}-alpha" >> "$GITHUB_OUTPUT"
+          echo "upstream_ref=$UPSTREAM_REF" >> "$GITHUB_OUTPUT"
+          echo "version_tag=$VERSION_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Get current alpha release version
         id: mine
@@ -130,7 +152,7 @@ jobs:
           docker buildx build \
             -f Dockerfile-release \
             --platform linux/${{ matrix.arch }}${{ matrix.variant && format('/{0}', matrix.variant) || '' }} \
-            --build-arg TAG=${{ needs.alpha-check.outputs.upstream_tag }} \
+            --build-arg TAG=${{ needs.alpha-check.outputs.upstream_ref }} \
             --build-arg AMD64VERSION=${{ matrix.amd64 }} \
             --build-arg BUILDTIME="$(date)" \
             --output type=local,dest=out \
