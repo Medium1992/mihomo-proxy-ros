@@ -1,0 +1,524 @@
+﻿name: Build and Publish Alpha
+
+on:
+  schedule:
+    - cron: "0 */12 * * *"
+  workflow_dispatch:
+
+jobs:
+  alpha-check:
+    runs-on: ubuntu-latest
+    outputs:
+      build_needed: ${{ steps.compare.outputs.build_needed }}
+      upstream_tag: ${{ steps.upstream.outputs.upstream_tag }}
+      version_tag: ${{ steps.upstream.outputs.version_tag }}
+
+    steps:
+      - name: Get latest upstream alpha tag
+        id: upstream
+        run: |
+          TAG=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases?per_page=100 | \
+            jq -r '[.[] | select(.prerelease == true and .draft == false and (.tag_name | test("alpha"; "i")))][0].tag_name')
+
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            TAG=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases?per_page=100 | \
+              jq -r '[.[] | select(.prerelease == true and .draft == false)][0].tag_name')
+          fi
+
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "No prerelease tag found in MetaCubeX/mihomo"
+            exit 1
+          fi
+
+          echo "upstream_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version_tag=${TAG}-alpha" >> "$GITHUB_OUTPUT"
+
+      - name: Get current alpha release version
+        id: mine
+        run: |
+          RELEASE_TXT_URL=$(gh api repos/${{ github.repository }}/releases/tags/alpha \
+            --jq '.assets[] | select(.name == "release.txt") | .url' 2>/dev/null || true)
+
+          if [ -n "$RELEASE_TXT_URL" ]; then
+            CURRENT=$(gh api -H "Accept: application/octet-stream" "$RELEASE_TXT_URL" 2>/dev/null | tr -d '\r\n' || true)
+          else
+            CURRENT="none"
+          fi
+
+          if [ -z "$CURRENT" ]; then
+            CURRENT="none"
+          fi
+
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compare alpha versions
+        id: compare
+        run: |
+          TARGET="${{ steps.upstream.outputs.version_tag }}"
+          CURRENT="${{ steps.mine.outputs.current }}"
+
+          echo "target alpha version: $TARGET"
+          echo "current alpha version: $CURRENT"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "build_needed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$TARGET" = "$CURRENT" ]; then
+            echo "Already latest alpha binaries"
+            echo "build_needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New alpha detected"
+            echo "build_needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  alpha-build:
+    needs: alpha-check
+    if: needs.alpha-check.outputs.build_needed == 'true'
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            variant: ""
+            amd64: v1
+            name: amd64-v1
+
+          - arch: amd64
+            variant: ""
+            amd64: v2
+            name: amd64-v2
+
+          - arch: amd64
+            variant: ""
+            amd64: v3
+            name: amd64-v3
+
+          - arch: amd64
+            variant: ""
+            amd64: v4
+            name: amd64-v4
+
+          - arch: arm64
+            variant: ""
+            amd64: ""
+            name: arm64
+
+          - arch: arm
+            variant: v7
+            amd64: ""
+            name: armv7
+
+          - arch: arm
+            variant: v5
+            amd64: ""
+            name: armv5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build alpha binary
+        run: |
+          docker buildx build \
+            -f Dockerfile-release \
+            --platform linux/${{ matrix.arch }}${{ matrix.variant && format('/{0}', matrix.variant) || '' }} \
+            --build-arg TAG=${{ needs.alpha-check.outputs.upstream_tag }} \
+            --build-arg AMD64VERSION=${{ matrix.amd64 }} \
+            --build-arg BUILDTIME="$(date)" \
+            --output type=local,dest=out \
+            .
+
+      - name: Prepare alpha artifacts
+        run: |
+          mkdir -p dist
+          VERSION_TAG="${{ needs.alpha-check.outputs.version_tag }}"
+          BASENAME="mihomo-linux-${{ matrix.name }}"
+          ARCHIVE="${BASENAME}-${VERSION_TAG}.gz"
+
+          cp out/mihomo "dist/${BASENAME}"
+          gzip -c "dist/${BASENAME}" > "dist/${ARCHIVE}"
+          rm -f "dist/${BASENAME}"
+
+          sha256sum "dist/${ARCHIVE}" > "dist/${ARCHIVE}.sha256"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: alpha-${{ matrix.name }}
+          path: dist/*
+
+  alpha-release:
+    needs: [alpha-check, alpha-build]
+    if: needs.alpha-check.outputs.build_needed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec cp {} release/ \;
+
+      - name: Add alpha version files
+        run: |
+          echo "${{ needs.alpha-check.outputs.version_tag }}" > release/release.txt
+          echo "${{ needs.alpha-check.outputs.version_tag }}" > release/version.txt
+
+      - name: Replace alpha release
+        run: |
+          gh release view alpha >/dev/null 2>&1 && gh release delete alpha --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create alpha release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: alpha
+          name: Mihomo Proxy ROS Alpha ${{ needs.alpha-check.outputs.version_tag }}
+          prerelease: true
+          make_latest: false
+          files: release/*
+
+  check-and-build:
+    needs: [alpha-check, alpha-build, alpha-release]
+    if: ${{ always() && needs.alpha-check.result == 'success' && (needs.alpha-build.result == 'success' || needs.alpha-build.result == 'skipped') && (needs.alpha-release.result == 'success' || needs.alpha-release.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PACKAGE_OWNER: medium1992
+      PACKAGE_NAME: mihomo-proxy-ros
+      PACKAGE_NAME_ENCODED: mihomo-proxy-ros
+      DELETE_UNTAGGED: "true"
+
+    steps:
+      - name: Install jq and crane
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          curl -sL https://github.com/google/go-containerregistry/releases/download/v0.20.2/go-containerregistry_Linux_x86_64.tar.gz | sudo tar -C /usr/local/bin -xz crane
+          chmod +x /usr/local/bin/crane
+          crane version || { echo "Crane failed to install"; exit 1; }
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Get latest versions
+        id: latest_versions
+        run: |
+          MIHOMO="${{ needs.alpha-check.outputs.version_tag }}"
+          HS5T=$(curl -s https://api.github.com/repos/heiher/hev-socks5-tunnel/releases/latest | jq -r '.tag_name')
+          BYEDPI=$(curl -s https://api.github.com/repos/hufrea/byedpi/releases/latest | jq -r '.tag_name')
+          ZAPRET=$(curl -s https://api.github.com/repos/bol-van/zapret/releases/latest | jq -r '.tag_name')
+          ZAPRET2=$(curl -s https://api.github.com/repos/bol-van/zapret2/releases/latest | jq -r '.tag_name')
+
+          echo "mihomo=$MIHOMO" >> $GITHUB_ENV
+          echo "hev_socks5_tunnel=$HS5T" >> $GITHUB_ENV
+          echo "byedpi=$BYEDPI" >> $GITHUB_ENV
+          echo "zapret=$ZAPRET" >> $GITHUB_ENV
+          echo "zapret2=$ZAPRET2" >> $GITHUB_ENV
+
+      - name: Compare with VERSIONS_ALPHA
+        id: check_versions
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual run -> force build"
+            echo "build_needed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if [ ! -f VERSIONS_ALPHA ]; then
+            echo "No VERSIONS_ALPHA file, need build"
+            echo "build_needed=true" >> $GITHUB_OUTPUT
+          else
+            NEED_BUILD=false
+            while IFS='=' read -r name version; do
+              LATEST=${!name}
+              if [ "$LATEST" != "$version" ]; then
+                NEED_BUILD=true
+                break
+              fi
+            done < VERSIONS_ALPHA
+            echo "build_needed=$NEED_BUILD" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update VERSIONS_ALPHA
+        if: steps.check_versions.outputs.build_needed == 'true'
+        run: |
+          echo "mihomo=${{ env.mihomo }}" > VERSIONS_ALPHA
+          echo "hev_socks5_tunnel=${{ env.hev_socks5_tunnel }}" >> VERSIONS_ALPHA
+          echo "byedpi=${{ env.byedpi }}" >> VERSIONS_ALPHA
+          echo "zapret=${{ env.zapret }}" >> VERSIONS_ALPHA
+          echo "zapret2=${{ env.zapret2 }}" >> VERSIONS_ALPHA
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        if: steps.check_versions.outputs.build_needed == 'true'
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker-container
+          driver-opts: |
+            image=moby/buildkit:master
+            network=host
+
+      - name: Login to GitHub Container Registry
+        if: steps.check_versions.outputs.build_needed == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set variables
+        id: vars
+        run: |
+          echo "BUILDTIME=$(date)" >> $GITHUB_ENV
+
+      - name: Build and push amd64v1
+        if: steps.check_versions.outputs.build_needed == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            AMD64VERSION=v1
+            MIHOMO_RELEASE_TAG=alpha
+          tags: |
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-alpha
+            medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
+            medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}
+            medium1992/mihomo-proxy-ros:amd64v1-alpha
+
+      - name: Build and push amd64v2
+        if: steps.check_versions.outputs.build_needed == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            AMD64VERSION=v2
+            MIHOMO_RELEASE_TAG=alpha
+          tags: |
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-alpha
+            medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
+            medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}
+            medium1992/mihomo-proxy-ros:amd64v2-alpha
+
+      - name: Build and push amd64v4
+        if: steps.check_versions.outputs.build_needed == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            AMD64VERSION=v4
+            MIHOMO_RELEASE_TAG=alpha
+          tags: |
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-alpha
+            medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
+            medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}
+            medium1992/mihomo-proxy-ros:amd64v4-alpha
+
+      - name: Build and push multi-arch
+        if: steps.check_versions.outputs.build_needed == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v5
+          push: true
+          build-args: |
+            AMD64VERSION=v3
+            MIHOMO_RELEASE_TAG=alpha
+          tags: |
+            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
+            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}
+            ghcr.io/medium1992/mihomo-proxy-ros:alpha
+            medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
+            medium1992/mihomo-proxy-ros:${{ env.mihomo }}
+            medium1992/mihomo-proxy-ros:alpha
+
+      - name: Commit and push VERSIONS_ALPHA
+        if: steps.check_versions.outputs.build_needed == 'true'
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add VERSIONS_ALPHA
+          git commit -m "Auto-update: VERSIONS_ALPHA" || exit 0
+          git push
+
+      - name: Log in to GHCR with crane
+        if: steps.check_versions.outputs.build_needed == 'true'
+        run: echo "${GITHUB_TOKEN}" | crane auth login ghcr.io -u ${PACKAGE_OWNER} --password-stdin
+
+      - name: Analyze GHCR packages (dry-run)
+        if: steps.check_versions.outputs.build_needed == 'true'
+        id: analyze
+        run: |
+          set -e
+
+          echo "Fetching package versions for ${PACKAGE_OWNER}/${PACKAGE_NAME}..."
+          page=1
+          packages_json="[]"
+          last_first_id=""
+          while true; do
+            echo "Fetching page $page..."
+            chunk=$(timeout 30s gh api -H "Accept: application/vnd.github+json" \
+              /users/${PACKAGE_OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions?per_page=100&page=$page || echo "TIMEOUT")
+            if [[ "$chunk" == "TIMEOUT" ]]; then
+              echo "Error: gh api timed out on page $page"
+              exit 1
+            fi
+            echo "Page $page raw chunk: ${chunk:0:50}..."
+            chunk_count=$(echo "$chunk" | jq length)
+            echo "Page $page: $chunk_count versions"
+            if [[ "$chunk_count" -eq 0 ]]; then
+              echo "No more versions on page $page (empty response)"
+              break
+            fi
+            first_id=$(echo "$chunk" | jq -r '.[0].id // ""')
+            if [[ -n "$last_first_id" && "$first_id" == "$last_first_id" ]]; then
+              echo "Page $page has same data as previous (ID: $first_id), stopping"
+              break
+            fi
+            last_first_id="$first_id"
+            if [[ "$packages_json" == "[]" ]]; then
+              packages_json="$chunk"
+            else
+              packages_json=$(jq -s '.[0] + .[1]' <(echo "$packages_json") <(echo "$chunk"))
+            fi
+            ((page++))
+            if [[ $page -gt 10 ]]; then
+              echo "Reached max page limit (10)"
+              break
+            fi
+          done
+
+          total=$(echo "$packages_json" | jq length)
+          echo "Total versions found: $total (pages processed: $((page-1)))"
+          echo ""
+
+          declare -A protected_digests
+          declare -A child_digests
+          declare -A manifest_ids
+
+          echo "=== Tagged manifests ==="
+          for row in $(echo "$packages_json" | jq -r '.[] | select(.metadata.container.tags | length > 0) | @base64'); do
+            _jq() { echo "$row" | base64 --decode | jq -r "$1"; }
+            id=$(_jq '.id')
+            digest=$(_jq '.name')
+            tags=$(_jq '.metadata.container.tags | join(", ")')
+            created=$(_jq '.created_at')
+            mediaType=$(_jq '.metadata.container.manifest.mediaType // "unknown"')
+            manifest_ids[$id]=1
+            protected_digests[$digest]=1
+            echo "  Inspecting manifest for tags: [$tags]"
+            for tag in $(_jq '.metadata.container.tags[]' | sort -u); do
+              manifest_json=$(timeout 10s crane manifest ghcr.io/${PACKAGE_OWNER}/${PACKAGE_NAME}:${tag} 2>/dev/null || echo "{}")
+              sub_digests=$(echo "$manifest_json" | jq -r '.manifests[].digest // empty')
+              for sd in $sub_digests; do
+                if [[ -n "$sd" ]]; then
+                  child_digests[$sd]=1
+                  protected_digests[$sd]=1
+                  echo "    -> Protected child digest: $sd"
+                fi
+              done
+            done
+            echo "- ID: $id | Digest: $digest | Tags: [$tags] | Created: $created | Type: manifest ($mediaType)"
+          done
+
+          echo ""
+          echo "Protected child digests count: ${#child_digests[@]}"
+          echo ""
+
+          echo "=== Untagged images ==="
+          untagged_ids=()
+          for id in $(echo "$packages_json" | jq -r '.[] | select(.metadata.container.tags | length == 0) | .id'); do
+            untagged_ids+=("$id")
+          done
+          safe_untagged_ids=()
+
+          for id in "${untagged_ids[@]}"; do
+            data=$(timeout 10s gh api -H "Accept: application/vnd.github+json" \
+              /users/${PACKAGE_OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions/$id || echo "{}")
+            digest=$(echo "$data" | jq -r '.name // "unknown"')
+            created=$(echo "$data" | jq -r '.created_at // "unknown"')
+            mediaType=$(echo "$data" | jq -r '.metadata.container.manifest.mediaType // "unknown"')
+            if [[ "$digest" == "unknown" ]]; then
+              echo "Error: Failed to fetch data for ID $id (possibly already deleted)"
+              continue
+            fi
+            if [[ -n "${child_digests[$digest]}" || -n "${protected_digests[$digest]}" ]]; then
+              echo "- ID: $id | Digest: $digest | Created: $created | Type: $mediaType -> skipped (child or referenced)"
+            else
+              echo "- ID: $id | Digest: $digest | Created: $created | Type: $mediaType -> delete candidate"
+              safe_untagged_ids+=("$id")
+            fi
+          done
+
+          echo ""
+          echo "Safe untagged IDs (before validation): ${safe_untagged_ids[*]}"
+          validated_ids=()
+          for id in "${safe_untagged_ids[@]}"; do
+            if gh api -H "Accept: application/vnd.github+json" \
+              /users/${PACKAGE_OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions/$id >/dev/null 2>&1; then
+              validated_ids+=("$id")
+              echo "Version $id exists, added to deletion list"
+            else
+              echo "Version $id not found, skipping"
+            fi
+          done
+
+          echo ""
+          echo "Validated untagged IDs: ${validated_ids[*]}"
+          if [ ${#validated_ids[@]} -eq 0 ]; then
+            echo "No valid untagged IDs to delete"
+            echo "safe_untagged_ids_comma=" >> $GITHUB_OUTPUT
+          else
+            safe_untagged_ids_comma=$(echo "${validated_ids[*]}" | tr ' ' ', ')
+            echo "safe_untagged_ids_comma=$safe_untagged_ids_comma" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Cleanup untagged GHCR versions
+        if: env.DELETE_UNTAGGED == 'true' && steps.analyze.outputs.safe_untagged_ids_comma != ''
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: '${{ env.PACKAGE_NAME }}'
+          package-type: 'container'
+          package-version-ids: '${{ steps.analyze.outputs.safe_untagged_ids_comma }}'
+          token: ${{ env.GITHUB_TOKEN }}

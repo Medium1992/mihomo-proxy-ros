@@ -3,10 +3,16 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
 ARG AMD64VERSION
+ARG MIHOMO_RELEASE_TAG=latest
 RUN apk add --no-cache curl jq gzip tar unzip
 RUN mkdir -p /final
 
-RUN curl -s https://api.github.com/repos/medium1992/mihomo-proxy-ros/releases/latest | \
+RUN if [ "$MIHOMO_RELEASE_TAG" = "latest" ]; then \
+      MIHOMO_API_URL="https://api.github.com/repos/medium1992/mihomo-proxy-ros/releases/latest"; \
+    else \
+      MIHOMO_API_URL="https://api.github.com/repos/medium1992/mihomo-proxy-ros/releases/tags/${MIHOMO_RELEASE_TAG}"; \
+    fi && \
+    curl -s "$MIHOMO_API_URL" | \
     jq -r '.assets[].browser_download_url' | grep -E 'mihomo-linux-(amd64|arm64|armv7|armv5)' | \
     while read url; do curl -L "$url" -o "$(basename "$url")"; done
 
