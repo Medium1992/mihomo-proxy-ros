@@ -4,6 +4,7 @@ ARG TARGETARCH
 ARG TARGETVARIANT
 ARG AMD64VERSION
 ARG TAG
+ARG VERSION_OVERRIDE=""
 ARG WITH_GVISOR=1
 ARG BUILDTIME
 RUN apk add --no-cache curl jq gzip tar unzip git make python3 go
@@ -96,8 +97,10 @@ p.write_text(s, encoding="utf-8")
 print("Applied vision filter panic fix + malformed TLS warning")
 PY
 
-RUN echo "Patching version/updater for fork TAG=${TAG} BUILDTIME=${BUILDTIME}" && \
-    sed -i "s|Version\\s*=.*|Version = \"${TAG}-mihomo-proxy-ros\"|" constant/version.go && \
+RUN VERSION_FOR_BUILD="${TAG}" && \
+    if [ -n "${VERSION_OVERRIDE}" ]; then VERSION_FOR_BUILD="${VERSION_OVERRIDE}"; fi && \
+    echo "Patching version/updater for fork TAG=${TAG} VERSION=${VERSION_FOR_BUILD} BUILDTIME=${BUILDTIME}" && \
+    sed -i "s|Version\\s*=.*|Version = \"${VERSION_FOR_BUILD}-mihomo-proxy-ros\"|" constant/version.go && \
     sed -i "s|BuildTime\\s*=.*|BuildTime = \"${BUILDTIME}\"|" constant/version.go && \
     sed -i 's|MihomoName = "mihomo"|MihomoName = "mihomo-proxy-ros"|' constant/version.go && \
     sed -i 's|baseReleaseURL    = "https://github.com/MetaCubeX/mihomo/releases/latest/download/"|baseReleaseURL    = "https://github.com/Medium1992/mihomo-proxy-ros/releases/latest/download/"|' component/updater/update_core.go && \
