@@ -174,9 +174,9 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :do { add key=TELEGRAM_IPCIDR list=MihomoProxyRoS value=109.239.140.0/24,5.28.192.0/18,194.221.61.2/32,172.121.110.0/24,142.252.197.0/24
 :put "Add env TELEGRAM_IPCIDR value: 109.239.140.0/24,5.28.192.0/18,194.221.61.2/32,172.121.110.0/24,142.252.197.0/24"} on-error {}
 :do { add key=DISCORD_GEOSITE list=MihomoProxyRoS value=discord
-:put "Add env DISCORD_GEOSITE value: telegram"} on-error {}
+:put "Add env DISCORD_GEOSITE value: discord"} on-error {}
 :do { add key=DISCORD_GEOIP list=MihomoProxyRoS value=discord
-:put "Add env DISCORD_GEOIP value: telegram"} on-error {}
+:put "Add env DISCORD_GEOIP value: discord"} on-error {}
 :do { add key=META_GEOSITE list=MihomoProxyRoS value=meta
 :put "Add env META_GEOSITE value: meta"} on-error {}
 :do { add key=META_GEOIP list=MihomoProxyRoS value=facebook
