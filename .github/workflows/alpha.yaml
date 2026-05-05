@@ -198,20 +198,17 @@ jobs:
         run: |
           echo "${{ needs.alpha-check.outputs.version_tag }}" > release/version.txt
 
-      - name: Delete old alpha assets
-        run: |
-          ASSETS=$(gh release view alpha --json assets --jq '.assets[].name' 2>/dev/null || true)
-          if [ -n "$ASSETS" ]; then
-            while IFS= read -r name; do
-              [ -n "$name" ] && gh release delete-asset alpha "$name" --yes || true
-            done <<< "$ASSETS"
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Replace alpha release
         run: |
-          gh release view alpha >/dev/null 2>&1 && gh release delete alpha --yes --cleanup-tag || true
+          RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/alpha --jq '.id' 2>/dev/null || true)
+          if [ -n "$RELEASE_ID" ]; then
+            gh api -X DELETE repos/${{ github.repository }}/releases/$RELEASE_ID
+          fi
+
+          TAG_REF=$(gh api repos/${{ github.repository }}/git/refs/tags/alpha --jq '.ref' 2>/dev/null || true)
+          if [ -n "$TAG_REF" ]; then
+            gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/alpha
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
