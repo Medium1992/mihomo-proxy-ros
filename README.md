@@ -20,15 +20,13 @@ If you find this project useful, you can support it via donation:
 
 ## 🌟 Features of the Automated Installation Script for MikroTik Routers
 
-The repository contains an **interactive automated installation script** for **RouterOS MikroTik**,  
-which also If set installs and runs standalone dnsproxy from AdGuardHome **dnsproxy** from **AdGuardHome**.
+The repository contains an **interactive automated installation script** for **RouterOS MikroTik**.
 
 - 🌍 Multi-architecture: ARM, ARM64, AMD64v1-v3  
 - ⚙️ Automated installation via MikroTik terminal using the script at the end of this description  
 - 🔐 DPI bypass via ByeDPI (You can change the strategy in the container’s ENVs. For selecting strategies, there is an option called [byedpi-orchestrator](https://hub.docker.com/r/vindibona/byedpi-orchestrator).)
 - 🔐 DPI bypass using Zapret (nfqws) (amd64 and arm64 only) — strategies must be selected separately from the container according to the instructions from the author of [zapret](https://github.com/bol-van/zapret)
 - 🔐 DPI bypass using Zapret2 (nfqws2) (amd64 and arm64 only) — strategies must be selected separately from the container according to the instructions from the author of [zapret2](https://github.com/bol-van/zapret2)
-- 🌐 DNSProxy: multi-resolve from multiple DNS servers, supports all DNS protocols (Optional)
 - 🧩 Flexible routing and management of domain, IP, and AS pools via ENVs  
 - 🛡️ Ability to add multiple proxy links and subscriptions (including RemnaWave subscriptions with HWID) via ENVs  
 - 🚀 Integration of multiple WG, AWG VPNs by copying config files into the mount folder  
