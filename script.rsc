@@ -234,6 +234,10 @@ add address=8.8.4.4 list=DNS
 :put "Add address list DNS"
 } on-error {}
 
+/ip firewall nat
+:if ([:len [find comment="GitHub_Fastly_fix_dstnat"]] = 0) do={add action=netmap chain=dstnat dst-address=185.199.110.0/23 to-addresses=185.199.108.0/23 comment="GitHub_Fastly_fix_dstnat"; :put "Add nat rule GitHub_Fastly_fix_dstnat"}
+:if ([:len [find comment="GitHub_Fastly_fix_output"]] = 0) do={add action=netmap chain=output dst-address=185.199.110.0/23 to-addresses=185.199.108.0/23 comment="GitHub_Fastly_fix_output"; :put "Add nat rule GitHub_Fastly_fix_output"}
+
 /ip firewall mangle
 :if ([:len [find comment="YT_MSS"]] = 0) do={add action=change-mss chain=forward dst-address-list=YT in-interface=MihomoProxyRoS new-mss=88 protocol=tcp tcp-flags=syn connection-state=new comment="YT_MSS"; :put "Add mangle rules YT_MSS"}
 :if ([:len [find comment="Accept_no_mark"]] = 0) do={add action=accept chain=prerouting connection-mark=no-mark connection-state=established comment="Accept_no_mark"; :put "Add mangle rules 1"}
