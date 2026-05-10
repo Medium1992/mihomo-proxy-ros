@@ -339,93 +339,93 @@ add name=IP_MihomoProxyRoS source="# Define global variables\r\
 
 :if ([:len [/system/script/find name="FWD_update"]] = 0) do={
 /system script
-add name=FWD_update source="# Define global variables\
-\n:global AddressList \"\"\
-\n:global ForwardTo \"MihomoProxyRoS\"\
-\n\
-\n:global LoadRscResources do={\
-\n:foreach resource in=\$resources do={\
-\n:local url (\$baseUrl . \"/\" . \$resource . \".rsc\")\
-\n:do {\
-\n:local r [/tool fetch url=\$url mode=https output=user as-value]\
-\n:if ((\$r->\"status\") = \"finished\") do={\
-\n:local content (\$r->\"data\")\
-\n:local s [:parse \$content]\
-\n\$s\
-\n:log warning (\$resource . \".rsc loading completed\")\
-\n:put (\$resource . \".rsc loading completed\")\
-\n}\
-\n} on-error={}\
-\n:local part 1\
-\n:local continue true\
-\n:while (\$continue) do={\
-\n:local partUrl (\$baseUrl . \"/\" . \$resource . \"_part\" . \$part . \".rsc\")\
-\n:do {\
-\n:local r [/tool fetch url=\$partUrl mode=https output=user as-value]\
-\n:if ((\$r->\"status\") = \"finished\") do={\
-\n:local content (\$r->\"data\")\
-\n:local s [:parse \$content]\
-\n\$s\
-\n:log warning (\$resource . \".rsc part\" . \$part . \" loading completed\")\
-\n:put (\$resource . \".rsc part\" . \$part . \" loading completed\")\
-\n:set part (\$part + 1)\
-\n} else={\
-\n:set continue false\
-\n}\
-\n} on-error={\
-\n:set continue false\
-\n}\
-\n}\
-\n}\
-\n}\
-\n\
-\n# First resources set\
-\n:local baseUrl \"https://raw.githubusercontent.com/Medium1992/MikroTik_DNS_FWD/refs/heads/main/for_scripts\"\
-\n\
-\n:local resources {\
-\n\"youtube\";\
-\n\"meta\";\
-\n\"netflix\";\
-\n\"discord\";\
-\n\"rutracker\";\
-\n\"torrent\";\
-\n\"adguard\";\
-\n\"anime\";\
-\n\"deepl\";\
-\n\"category-ai-!cn\";\
-\n\"openai\";\
-\n\"google-gemini\";\
-\n\"canva\";\
-\n\"art\";\
-\n\"tidal\";\
-\n\"tiktok\";\
-\n\"music\";\
-\n\"tmdb\";\
-\n\"x\";\
-\n\"kinopub\";\
-\n\"xhamster\";\
-\n\"porn\";\
-\n\"video\";\
-\n\"claude\";\
-\n\"xai\";\
-\n\"notion\";\
-\n\"twitch\";\
-\n\"supercell\";\
-\n\"xbox\";\
-\n\"roblox\";\
-\n\"pornhub\";\
-\n}\
-\n\
-\n\$LoadRscResources resources=\$resources baseUrl=\$baseUrl\
-\n\
-\n# Second resources\
-\n:local baseUrl \"https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/custom_list\"\
-\n\
-\n:local resources {\
-\n\"domain_custom\";\
-\n}\
-\n\
-\n\$LoadRscResources resources=\$resources baseUrl=\$baseUrl\
+add name=FWD_update source="# Define global variables\r\
+\n:global AddressList \"\"\r\
+\n:global ForwardTo \"MihomoProxyRoS\"\r\
+\n\r\
+\n:global LoadRscResources do={\r\
+\n:foreach resource in=\$resources do={\r\
+\n:local url (\$baseUrl . \"/\" . \$resource . \".rsc\")\r\
+\n:do {\r\
+\n:local r [/tool fetch url=\$url mode=https output=user as-value]\r\
+\n:if ((\$r->\"status\") = \"finished\") do={\r\
+\n:local content (\$r->\"data\")\r\
+\n:local s [:parse \$content]\r\
+\n\$s\r\
+\n:log warning (\$resource . \".rsc loading completed\")\r\
+\n:put (\$resource . \".rsc loading completed\")\r\
+\n}\r\
+\n} on-error={}\r\
+\n:local part 1\r\
+\n:local continue true\r\
+\n:while (\$continue) do={\r\
+\n:local partUrl (\$baseUrl . \"/\" . \$resource . \"_part\" . \$part . \".rsc\")\r\
+\n:do {\r\
+\n:local r [/tool fetch url=\$partUrl mode=https output=user as-value]\r\
+\n:if ((\$r->\"status\") = \"finished\") do={\r\
+\n:local content (\$r->\"data\")\r\
+\n:local s [:parse \$content]\r\
+\n\$s\r\
+\n:log warning (\$resource . \".rsc part\" . \$part . \" loading completed\")\r\
+\n:put (\$resource . \".rsc part\" . \$part . \" loading completed\")\r\
+\n:set part (\$part + 1)\r\
+\n} else={\r\
+\n:set continue false\r\
+\n}\r\
+\n} on-error={\r\
+\n:set continue false\r\
+\n}\r\
+\n}\r\
+\n}\r\
+\n}\r\
+\n\r\
+\n# First resources set\r\
+\n:local baseUrl \"https://raw.githubusercontent.com/Medium1992/MikroTik_DNS_FWD/refs/heads/main/for_scripts\"\r\
+\n\r\
+\n:local resources {\r\
+\n\"youtube\";\r\
+\n\"meta\";\r\
+\n\"netflix\";\r\
+\n\"discord\";\r\
+\n\"rutracker\";\r\
+\n\"torrent\";\r\
+\n\"adguard\";\r\
+\n\"anime\";\r\
+\n\"deepl\";\r\
+\n\"category-ai-!cn\";\r\
+\n\"openai\";\r\
+\n\"google-gemini\";\r\
+\n\"canva\";\r\
+\n\"art\";\r\
+\n\"tidal\";\r\
+\n\"tiktok\";\r\
+\n\"music\";\r\
+\n\"tmdb\";\r\
+\n\"x\";\r\
+\n\"kinopub\";\r\
+\n\"xhamster\";\r\
+\n\"porn\";\r\
+\n\"video\";\r\
+\n\"claude\";\r\
+\n\"xai\";\r\
+\n\"notion\";\r\
+\n\"twitch\";\r\
+\n\"supercell\";\r\
+\n\"xbox\";\r\
+\n\"roblox\";\r\
+\n\"pornhub\";\r\
+\n}\r\
+\n\r\
+\n\$LoadRscResources resources=\$resources baseUrl=\$baseUrl\r\
+\n\r\
+\n# Second resources\r\
+\n:local baseUrl \"https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/custom_list\"\r\
+\n\r\
+\n:local resources {\r\
+\n\"domain_custom\";\r\
+\n}\r\
+\n\r\
+\n\$LoadRscResources resources=\$resources baseUrl=\$baseUrl\r\
 \n"
 :put "Add script FWD_update for pull resources to DNS static FWD"}
 
