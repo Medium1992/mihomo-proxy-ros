@@ -259,20 +259,51 @@ add address=8.8.4.4 list=DNS
 :do {add list=YT comment=YT_MSS address=www.youtube.com} on-error {}
 :do {add list=MihomoProxyRoS comment=YT address=www.youtube.com} on-error {}
 :do {add list=MihomoProxyRoS comment=NTCParty address=ntc.party} on-error {}
-:do {add list=MihomoProxyRoS comment=TelegramFromAS31500 address=109.239.140.0/24} on-error {}
-:do {add list=MihomoProxyRoS comment=TelegramFromAS1273 address=5.28.192.0/18} on-error {}
-:do {add list=MihomoProxyRoS comment=TelegramFromAS1273 address=194.221.61.2} on-error {}
-:do {add list=MihomoProxyRoS comment=TelegramFromAS44893 address=142.252.197.0/24} on-error {}
-:do {add list=MihomoProxyRoS comment=TelegramFromAS44893 address=172.121.110.0/24} on-error {}
-:do {add list=MihomoProxyRoS comment=FacebookFromAS9825 address=202.59.209.0/24} on-error {}
 
 :if ([:len [/system/script/find name="IP_MihomoProxyRoS"]] = 0) do={
 /system script
 add name=IP_MihomoProxyRoS source="# Define global variables\r\
 \n:global AddressList \"MihomoProxyRoS\"\r\
 \n\r\
-\n# List of resources corresponding to RSC files\r\
-\n:global resources {\r\
+\n:global LoadRscResources do={\r\
+\n:foreach resource in=\$resources do={\r\
+\n:local url (\$baseUrl . \"/\" . \$resource . \".rsc\")\r\
+\n:do {\r\
+\n:local r [/tool fetch url=\$url mode=https output=user as-value]\r\
+\n:if ((\$r->\"status\") = \"finished\") do={\r\
+\n:local content (\$r->\"data\")\r\
+\n:local s [:parse \$content]\r\
+\n\$s\r\
+\n:log warning (\$resource . \".rsc loading completed\")\r\
+\n:put (\$resource . \".rsc loading completed\")\r\
+\n}\r\
+\n} on-error={}\r\
+\n:local part 1\r\
+\n:local continue true\r\
+\n:while (\$continue) do={\r\
+\n:local partUrl (\$baseUrl . \"/\" . \$resource . \"_part\" . \$part . \".rsc\")\r\
+\n:do {\r\
+\n:local r [/tool fetch url=\$partUrl mode=https output=user as-value]\r\
+\n:if ((\$r->\"status\") = \"finished\") do={\r\
+\n:local content (\$r->\"data\")\r\
+\n:local s [:parse \$content]\r\
+\n\$s\r\
+\n:log warning (\$resource . \".rsc part\" . \$part . \" loading completed\")\r\
+\n:put (\$resource . \".rsc part\" . \$part . \" loading completed\")\r\
+\n:set part (\$part + 1)\r\
+\n} else={\r\
+\n:set continue false\r\
+\n}\r\
+\n} on-error={\r\
+\n:set continue false\r\
+\n}\r\
+\n}\r\
+\n}\r\
+\n}\r\
+\n\r\
+\n# First resources\r\
+\n:local baseUrl \"https://raw.githubusercontent.com/Medium1992/MikroTik_IPlist/refs/heads/main/for_scripts\"\r\
+\n:local resources {\r\
 \n# Telegram\r\
 \n\"geoipv4/telegram\";\r\
 \n\"asnv4/AS62041\";\r\
@@ -300,41 +331,17 @@ add name=IP_MihomoProxyRoS source="# Define global variables\r\
 \n\"asnv4/AS136766\";\r\
 \n}\r\
 \n\r\
-\n# Base URL for RSC files\r\
-\n:local baseUrl \"https://raw.githubusercontent.com/Medium1992/MikroTik_IPlist/refs/heads/main/for_scripts\
-\"\r\
+\n\$LoadRscResources resources=\$resources baseUrl=\$baseUrl\r\
 \n\r\
-\n:foreach resource in=\$resources do={\r\
-\n:local url \"\$baseUrl/\$resource.rsc\"\r\
-\n:do {\r\
-\n:local r [/tool fetch url=\$url mode=https output=user as-value]\r\
-\n:if ((\$r->\"status\")=\"finished\") do={\r\
-\n:local content (\$r->\"data\")\r\
-\n:local s [:parse \$content]\r\
-\n\$s\r\
-\n:log warning \"\$resource.rsc loading completed\"\r\
-\n:put \"\$resource.rsc loading completed\"\r\
+\n\r\
+\n# Second resources\r\
+\n:local baseUrl \"https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/custom_list\"\r\
+\n:local resources {\r\
+\n\"ipcidr_address_list_custom\";\r\
 \n}\r\
-\n} on-error {}\r\
-\n:local part 1\r\
-\n:local continue true\r\
-\n:while (\$continue) do={\r\
-\n:local url \"\$baseUrl/\$resource_part\$part.rsc\"\r\
-\n:do {\r\
-\n:local r [/tool fetch url=\$url mode=https output=user as-value]\r\
-\n:if ((\$r->\"status\")=\"finished\") do={\r\
-\n:local content (\$r->\"data\")\r\
-\n:local s [:parse \$content]\r\
-\n\$s\r\
-\n:log warning \"\$resource.rsc part\$part loading completed\"\r\
-\n:put \"\$resource.rsc part\$part loading completed\"\r\
-\n}\r\
-\n:set part (\$part + 1)\r\
-\n} on-error {\r\
-\n:set continue false\r\
-\n}\r\
-\n}\r\
-\n}"
+\n\r\
+\n\$LoadRscResources resources=\$resources baseUrl=\$baseUrl\r\
+\n"
 :put "Add script IP_AddressList for pull IPs to ip firewall address-list"}
 
 :if ([:len [/system/script/find name="FWD_update"]] = 0) do={
