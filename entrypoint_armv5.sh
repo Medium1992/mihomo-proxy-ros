@@ -1840,14 +1840,17 @@ hosts:
   
 sniffer:
   enable: ${SNIFFER:-true}
+  force-dns-mapping: false
+  parse-pure-ip: false
+  override-destination: false
   sniff:
     QUIC:
-      ports: [ 443 ]
+      ports: [443, 8443]
     TLS:
       ports: [443, 8443]
     HTTP:
-      ports: [80, 8080]
-      override-destination: true
+      ports: [80, 8080-8880]
+      override-destination: false
 EOF
 }
 
