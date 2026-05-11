@@ -2,6 +2,8 @@
 
 sleep 1
 
+log() { echo "[$(date +'%H:%M:%S')] $*"; }
+
 if ! lsmod | grep nf_tables >/dev/null 2>&1; then
   if ! apk info -e iptables iptables-legacy >/dev/null 2>&1; then
     echo "Install iptables"
@@ -138,8 +140,6 @@ for var in $(env | grep -E '_DSCP=' | cut -d= -f1 | sort); do
   used_dscps="$used_dscps $dscp"
   dscp_to_group="$dscp_to_group $dscp:$group"
 done
-
-log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
 health_check_block() {
   cat <<EOF
@@ -426,7 +426,7 @@ start_zapret_processes() {
 # ------------------- AWG / WG -------------------
 parse_awg_config() {
   local config_file="$1"
-  local awg_name=$(basename "$config_file" .conf)
+  local awg_name="${2:-$(basename "$config_file" .conf)}"
 
 read_cfg() {
   local key="$1"
@@ -460,16 +460,19 @@ read_cfg() {
   local ip_v4=""
   local ip_v6=""
   if [ -n "$address" ]; then
-    while IFS= read -r addr; do
+    OLDIFS=$IFS
+    IFS=','
+    for addr in $address; do
       addr=$(echo "$addr" | sed 's/[[:space:]]//g')
       if echo "$addr" | grep -q ':'; then
         [ -n "$ip_v6" ] && ip_v6="$ip_v6,"
-        ip_v6="${ip_v6}${addr}"
+        ip_v6="${ip_v6}${addr%%/*}"
       else
         [ -n "$ip_v4" ] && ip_v4="$ip_v4,"
-        ip_v4="${ip_v4}${addr}"
+        ip_v4="${ip_v4}${addr%%/*}"
       fi
-    done < <(echo "$address" | tr ',' '\n')
+    done
+    IFS=$OLDIFS
   fi
 
   local server=""
@@ -531,7 +534,7 @@ read_cfg() {
   echo "    allowed-ips: [$allowed_ips_yaml]"
   echo "    udp: true"
   local dns_raw=$(read_cfg "DNS")
-  if [ -n "$dns_raw" ]; then
+  if [ -n "$dns_raw" ] && ! echo "$dns_raw" | grep -q '\$'; then
     local dns_list=$(echo "$dns_raw" | tr ',' '\n' | \
       sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | \
       grep -v '^$' | sed 's/.*/"&"/' | paste -sd, -)
@@ -551,6 +554,13 @@ read_cfg() {
 
   local awg_params="jc jmin jmax s1 s2 s3 s4 h1 h2 h3 h4 i1 i2 i3 i4 i5 j1 j2 j3 itime"
   local has_awg_param=0
+  for v in i1 i2 i3 i4 i5; do
+    eval val=\$$v
+    case "$val" in
+      \<*\>) ;;
+      *) eval "$v=" ;;
+    esac
+  done
   for v in $awg_params; do
     eval val=\$$v
     [ -n "$val" ] && has_awg_param=1
@@ -580,6 +590,668 @@ read_cfg() {
     [ -n "$itime" ]  && echo "      itime: $itime"
   fi
   echo ""
+}
+
+json_strings_by_key() {
+  local file="$1"
+  local key="$2"
+
+  awk -v key="$key" '
+    {
+      data = data $0 "\n"
+    }
+    END {
+      needle = "\"" key "\""
+      pos = 1
+      while (pos <= length(data)) {
+        rel = index(substr(data, pos), needle)
+        if (rel == 0) {
+          break
+        }
+        i = pos + rel - 1 + length(needle)
+        while (i <= length(data) && substr(data, i, 1) ~ /[ \t\r\n]/) i++
+        if (substr(data, i, 1) != ":") {
+          pos = i + 1
+          continue
+        }
+        i++
+        while (i <= length(data) && substr(data, i, 1) ~ /[ \t\r\n]/) i++
+        if (substr(data, i, 1) != "\"") {
+          pos = i + 1
+          continue
+        }
+        i++
+        out = ""
+        esc = 0
+        for (; i <= length(data); i++) {
+          c = substr(data, i, 1)
+          if (esc) {
+            out = out "\\" c
+            esc = 0
+            continue
+          }
+          if (c == "\\") {
+            esc = 1
+            continue
+          }
+          if (c == "\"") {
+            print out
+            pos = i + 1
+            break
+          }
+          out = out c
+        }
+      }
+    }
+  ' "$file"
+}
+
+json_values_by_key() {
+  local file="$1"
+  local key="$2"
+
+  awk -v key="$key" '
+    {
+      data = data $0 "\n"
+    }
+    END {
+      needle = "\"" key "\""
+      pos = 1
+      while (pos <= length(data)) {
+        rel = index(substr(data, pos), needle)
+        if (rel == 0) {
+          break
+        }
+        i = pos + rel - 1 + length(needle)
+        while (i <= length(data) && substr(data, i, 1) ~ /[ \t\r\n]/) i++
+        if (substr(data, i, 1) != ":") {
+          pos = i + 1
+          continue
+        }
+        i++
+        while (i <= length(data) && substr(data, i, 1) ~ /[ \t\r\n]/) i++
+
+        if (substr(data, i, 1) == "\"") {
+          i++
+          out = ""
+          esc = 0
+          for (; i <= length(data); i++) {
+            c = substr(data, i, 1)
+            if (esc) {
+              out = out "\\" c
+              esc = 0
+              continue
+            }
+            if (c == "\\") {
+              esc = 1
+              continue
+            }
+            if (c == "\"") {
+              print out
+              pos = i + 1
+              break
+            }
+            out = out c
+          }
+          continue
+        }
+
+        out = ""
+        for (; i <= length(data); i++) {
+          c = substr(data, i, 1)
+          if (c == "," || c == "}" || c == "]" || c ~ /[ \t\r\n]/) {
+            break
+          }
+          out = out c
+        }
+        if (out != "") {
+          print out
+        }
+        pos = i + 1
+      }
+    }
+  ' "$file"
+}
+
+json_unescape() {
+  awk '
+    {
+      data = data $0 "\n"
+    }
+    END {
+      esc = 0
+      unicode = 0
+      hex = ""
+      for (i = 1; i <= length(data); i++) {
+        c = substr(data, i, 1)
+        if (unicode) {
+          hex = hex c
+          if (length(hex) == 4) {
+            unicode = 0
+            hex = ""
+          }
+          continue
+        }
+        if (esc) {
+          if (c == "n") printf "\n"
+          else if (c == "r") printf "\r"
+          else if (c == "t") printf "\t"
+          else if (c == "b") printf "\b"
+          else if (c == "f") printf "\f"
+          else if (c == "u") {
+            unicode = 1
+            hex = ""
+          } else {
+            printf "%s", c
+          }
+          esc = 0
+          continue
+        }
+        if (c == "\\") {
+          esc = 1
+          continue
+        }
+        printf "%s", c
+      }
+    }
+  '
+}
+
+json_get() {
+  local file="$1"
+  local key="$2"
+
+  json_values_by_key "$file" "$key" | head -n1 | json_unescape | tr -d '\r'
+}
+
+json_get_line() {
+  local file="$1"
+  local key="$2"
+
+  awk -v key="$key" '
+    function trim(s) {
+      gsub(/^[ \t\r\n]+/, "", s)
+      gsub(/[ \t\r\n]+$/, "", s)
+      return s
+    }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      needle = "\"" key "\""
+      p = index(line, needle)
+      if (p == 0) {
+        next
+      }
+      rest = substr(line, p + length(needle))
+      rest = trim(rest)
+      if (substr(rest, 1, 1) != ":") {
+        next
+      }
+      rest = trim(substr(rest, 2))
+      sub(/,$/, "", rest)
+      rest = trim(rest)
+      if (substr(rest, 1, 1) == "\"") {
+        rest = substr(rest, 2)
+        out = ""
+        esc = 0
+        for (i = 1; i <= length(rest); i++) {
+          c = substr(rest, i, 1)
+          if (esc) {
+            out = out "\\" c
+            esc = 0
+            continue
+          }
+          if (c == "\\") {
+            esc = 1
+            continue
+          }
+          if (c == "\"") {
+            print out
+            exit
+          }
+          out = out c
+        }
+      } else {
+        print rest
+        exit
+      }
+    }
+  ' "$file" | json_unescape | tr -d '\r'
+}
+
+json_get_line_after() {
+  local file="$1"
+  local marker="$2"
+  local key="$3"
+
+  awk -v marker="$marker" -v key="$key" '
+    function trim(s) {
+      gsub(/^[ \t\r\n]+/, "", s)
+      gsub(/[ \t\r\n]+$/, "", s)
+      return s
+    }
+    function value_from_line(line, key,    needle,p,rest,out,esc,i,c) {
+      needle = "\"" key "\""
+      p = index(line, needle)
+      if (p == 0) {
+        return ""
+      }
+      rest = substr(line, p + length(needle))
+      rest = trim(rest)
+      if (substr(rest, 1, 1) != ":") {
+        return ""
+      }
+      rest = trim(substr(rest, 2))
+      sub(/,$/, "", rest)
+      rest = trim(rest)
+      if (substr(rest, 1, 1) == "\"") {
+        rest = substr(rest, 2)
+        out = ""
+        esc = 0
+        for (i = 1; i <= length(rest); i++) {
+          c = substr(rest, i, 1)
+          if (esc) {
+            out = out "\\" c
+            esc = 0
+            continue
+          }
+          if (c == "\\") {
+            esc = 1
+            continue
+          }
+          if (c == "\"") {
+            return out
+          }
+          out = out c
+        }
+        return out
+      }
+      return rest
+    }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (!seen && index(line, "\"" marker "\"")) {
+        seen = 1
+      }
+      if (seen) {
+        out = value_from_line(line, key)
+        if (out != "") {
+          print out
+          exit
+        }
+      }
+    }
+  ' "$file" | json_unescape | tr -d '\r'
+}
+
+yaml_quote() {
+  sed 's/\\/\\\\/g; s/"/\\"/g; s/.*/"&"/'
+}
+
+qcompress_expected_len() {
+  local bin_file="$1"
+  local bytes
+
+  bytes=$(od -An -t u1 -N 4 "$bin_file" 2>/dev/null) || return 1
+  set -- $bytes
+  [ "$#" -eq 4 ] || return 1
+  echo $((($1 * 16777216) + ($2 * 65536) + ($3 * 256) + $4))
+}
+
+decoded_vpn_json_is_complete() {
+  local json_file="$1"
+  local expected_len="$2"
+  local actual_len
+
+  [ -s "$json_file" ] || return 1
+  actual_len=$(wc -c < "$json_file" | tr -d ' ')
+  [ "$actual_len" = "$expected_len" ] || return 1
+  grep -q '"containers"' "$json_file" 2>/dev/null || return 1
+  grep -q '"defaultContainer"' "$json_file" 2>/dev/null || return 1
+  awk '
+    {
+      for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        if (c !~ /[ \t\r\n]/) {
+          last = c
+        }
+      }
+    }
+    END {
+      exit(last == "}" ? 0 : 1)
+    }
+  ' "$json_file"
+}
+
+try_vpn_json_result() {
+  local provider_name="$1"
+  local method="$2"
+  local json_file="$3"
+  local expected_len="$4"
+  local actual_len=0
+
+  [ -f "$json_file" ] && actual_len=$(wc -c < "$json_file" | tr -d ' ')
+  if decoded_vpn_json_is_complete "$json_file" "$expected_len"; then
+    log "vpn:// $provider_name decoded by $method: $actual_len/$expected_len bytes"
+    return 0
+  fi
+
+  log "vpn:// $provider_name $method produced incomplete JSON: $actual_len/$expected_len bytes"
+  return 1
+}
+
+decode_vpn_url_to_json() {
+  local url="$1"
+  local out_json="$2"
+  local tmp_prefix="$3"
+  local provider_name="${4:-vpn}"
+  local payload b64 mod
+  local bin_file="${tmp_prefix}.bin"
+  local zlib_file="${tmp_prefix}.zlib"
+  local raw_file="${tmp_prefix}.raw"
+  local gzip_file="${tmp_prefix}.gz"
+  local bin_size raw_count expected_len
+
+  payload="${url#vpn://}"
+  b64=$(printf '%s' "$payload" | tr '_-' '/+')
+  mod=$(( ${#b64} % 4 ))
+  case "$mod" in
+    2) b64="${b64}==" ;;
+    3) b64="${b64}=" ;;
+    1) return 1 ;;
+  esac
+
+  printf '%s' "$b64" | base64 -d > "$bin_file" 2>/dev/null || return 1
+  expected_len=$(qcompress_expected_len "$bin_file") || return 1
+  bin_size=$(wc -c < "$bin_file" | tr -d ' ')
+  log "vpn:// $provider_name base64 ok: raw=$bin_size bytes, expected-json=$expected_len bytes"
+  dd if="$bin_file" of="$zlib_file" bs=1 skip=4 >/dev/null 2>&1 || return 1
+
+  gzip -dc "$zlib_file" > "$out_json" 2>/dev/null || true
+  if try_vpn_json_result "$provider_name" "gzip-zlib" "$out_json" "$expected_len"; then
+    return 0
+  fi
+
+  zcat "$zlib_file" > "$out_json" 2>/dev/null || true
+  if try_vpn_json_result "$provider_name" "zcat-zlib" "$out_json" "$expected_len"; then
+    return 0
+  fi
+
+  # qCompress stores a zlib stream after the 4-byte Qt length header.
+  # BusyBox gzip/zcat may reject zlib headers, so wrap the raw deflate
+  # payload into a tiny gzip stream. The dummy trailer makes gzip return
+  # a checksum error after writing output; we accept the result if JSON
+  # content was produced.
+  raw_count=$((bin_size - 10))
+  if [ "$raw_count" -gt 0 ]; then
+    dd if="$bin_file" of="$raw_file" bs=1 skip=6 count="$raw_count" >/dev/null 2>&1 || return 1
+    {
+      printf '\037\213\010\000\000\000\000\000\000\003'
+      cat "$raw_file"
+      printf '\000\000\000\000\000\000\000\000'
+    } > "$gzip_file"
+    gzip -dc "$gzip_file" > "$out_json" 2>/dev/null || true
+    if try_vpn_json_result "$provider_name" "gzip-raw-deflate" "$out_json" "$expected_len"; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+vpn_awg_value() {
+  local last_file="$1"
+  local json_file="$2"
+  local key="$3"
+  local value
+
+  value=$(json_get_line "$last_file" "$key")
+  [ -n "$value" ] || value=$(json_get "$last_file" "$key")
+  [ -n "$value" ] || value=$(json_get "$json_file" "$key")
+  printf '%s' "$value"
+}
+
+emit_vpn_wireguard_proxy() {
+  local last_file="$1"
+  local json_file="$2"
+  local name="$3"
+  local private_key client_ip server port public_key psk keepalive mtu
+  local ip_v4="" ip_v6="" addr
+  local jc jmin jmax s1 s2 s3 s4 h1 h2 h3 h4 i1 i2 i3 i4 i5 j1 j2 j3 itime
+  local has_awg_param=0
+
+  private_key=$(vpn_awg_value "$last_file" "$json_file" "client_priv_key")
+  [ -n "$private_key" ] || private_key=$(vpn_awg_value "$last_file" "$json_file" "private_key")
+  client_ip=$(vpn_awg_value "$last_file" "$json_file" "client_ip")
+  server=$(vpn_awg_value "$last_file" "$json_file" "hostName")
+  port=$(vpn_awg_value "$last_file" "$json_file" "port")
+  public_key=$(vpn_awg_value "$last_file" "$json_file" "server_pub_key")
+  [ -n "$public_key" ] || public_key=$(vpn_awg_value "$last_file" "$json_file" "public_key")
+  psk=$(vpn_awg_value "$last_file" "$json_file" "psk_key")
+  keepalive=$(vpn_awg_value "$last_file" "$json_file" "persistent_keep_alive")
+  mtu=$(vpn_awg_value "$last_file" "$json_file" "mtu")
+
+  [ -n "$private_key" ] || return 1
+  [ -n "$client_ip" ] || return 1
+  [ -n "$server" ] || return 1
+  [ -n "$port" ] || return 1
+  [ -n "$public_key" ] || return 1
+
+  OLDIFS=$IFS
+  IFS=','
+  for addr in $client_ip; do
+    addr=$(echo "$addr" | sed 's/[[:space:]]//g')
+    addr=${addr%%/*}
+    if echo "$addr" | grep -q ':'; then
+      [ -n "$ip_v6" ] && ip_v6="$ip_v6,"
+      ip_v6="${ip_v6}${addr}"
+    else
+      [ -n "$ip_v4" ] && ip_v4="$ip_v4,"
+      ip_v4="${ip_v4}${addr}"
+    fi
+  done
+  IFS=$OLDIFS
+
+  [ -n "$ip_v4$ip_v6" ] || return 1
+
+  jc=$(vpn_awg_value "$last_file" "$json_file" "Jc")
+  jmin=$(vpn_awg_value "$last_file" "$json_file" "Jmin")
+  jmax=$(vpn_awg_value "$last_file" "$json_file" "Jmax")
+  s1=$(vpn_awg_value "$last_file" "$json_file" "S1")
+  s2=$(vpn_awg_value "$last_file" "$json_file" "S2")
+  s3=$(vpn_awg_value "$last_file" "$json_file" "S3")
+  s4=$(vpn_awg_value "$last_file" "$json_file" "S4")
+  h1=$(vpn_awg_value "$last_file" "$json_file" "H1")
+  h2=$(vpn_awg_value "$last_file" "$json_file" "H2")
+  h3=$(vpn_awg_value "$last_file" "$json_file" "H3")
+  h4=$(vpn_awg_value "$last_file" "$json_file" "H4")
+  i1=$(vpn_awg_value "$last_file" "$json_file" "I1")
+  i2=$(vpn_awg_value "$last_file" "$json_file" "I2")
+  i3=$(vpn_awg_value "$last_file" "$json_file" "I3")
+  i4=$(vpn_awg_value "$last_file" "$json_file" "I4")
+  i5=$(vpn_awg_value "$last_file" "$json_file" "I5")
+  j1=$(vpn_awg_value "$last_file" "$json_file" "J1")
+  j2=$(vpn_awg_value "$last_file" "$json_file" "J2")
+  j3=$(vpn_awg_value "$last_file" "$json_file" "J3")
+  itime=$(vpn_awg_value "$last_file" "$json_file" "ITime")
+
+  for v in i1 i2 i3 i4 i5; do
+    eval val=\$$v
+    case "$val" in
+      \<*\>) ;;
+      *) eval "$v=" ;;
+    esac
+  done
+
+  for v in jc jmin jmax s1 s2 s3 s4 h1 h2 h3 h4 i1 i2 i3 i4 i5 j1 j2 j3 itime; do
+    eval val=\$$v
+    [ -n "$val" ] && has_awg_param=1
+  done
+
+  echo "  - name: \"$name\""
+  echo "    type: wireguard"
+  echo "    private-key: $private_key"
+  echo "    server: $server"
+  echo "    port: $port"
+  [ -n "$ip_v4" ] && echo "    ip: $ip_v4"
+  [ -n "$ip_v6" ] && echo "    ipv6: $ip_v6"
+  echo "    public-key: $public_key"
+  [ -n "$psk" ] && echo "    pre-shared-key: $psk"
+  [ -n "$keepalive" ] && echo "    persistent-keepalive: $keepalive"
+  [ -n "$mtu" ] && echo "    mtu: $mtu"
+  echo "    allowed-ips: [\"0.0.0.0/0\", \"::/0\"]"
+  echo "    udp: true"
+
+  if [ "$has_awg_param" -eq 1 ]; then
+    echo "    amnezia-wg-option:"
+    [ -n "$jc" ]     && echo "      jc: $jc"
+    [ -n "$jmin" ]   && echo "      jmin: $jmin"
+    [ -n "$jmax" ]   && echo "      jmax: $jmax"
+    [ -n "$s1" ]     && echo "      s1: $s1"
+    [ -n "$s2" ]     && echo "      s2: $s2"
+    [ -n "$s3" ]     && echo "      s3: $s3"
+    [ -n "$s4" ]     && echo "      s4: $s4"
+    [ -n "$h1" ]     && echo "      h1: $h1"
+    [ -n "$h2" ]     && echo "      h2: $h2"
+    [ -n "$h3" ]     && echo "      h3: $h3"
+    [ -n "$h4" ]     && echo "      h4: $h4"
+    [ -n "$i1" ]     && printf '      i1: %s\n' "$(printf '%s' "$i1" | yaml_quote)"
+    [ -n "$i2" ]     && printf '      i2: %s\n' "$(printf '%s' "$i2" | yaml_quote)"
+    [ -n "$i3" ]     && printf '      i3: %s\n' "$(printf '%s' "$i3" | yaml_quote)"
+    [ -n "$i4" ]     && printf '      i4: %s\n' "$(printf '%s' "$i4" | yaml_quote)"
+    [ -n "$i5" ]     && printf '      i5: %s\n' "$(printf '%s' "$i5" | yaml_quote)"
+    [ -n "$j1" ]     && echo "      j1: $j1"
+    [ -n "$j2" ]     && echo "      j2: $j2"
+    [ -n "$j3" ]     && echo "      j3: $j3"
+    [ -n "$itime" ]  && echo "      itime: $itime"
+  fi
+  echo ""
+}
+
+emit_vpn_xray_vless_proxy() {
+  local last_file="$1"
+  local name="$2"
+  local server port uuid flow network security fingerprint servername public_key short_id spider_x
+
+  grep -q '"protocol"[[:space:]]*:[[:space:]]*"vless"' "$last_file" 2>/dev/null || return 1
+
+  server=$(json_get_line "$last_file" "address")
+  port=$(json_get_line_after "$last_file" "address" "port")
+  uuid=$(json_get_line "$last_file" "id")
+  flow=$(json_get_line "$last_file" "flow")
+  network=$(json_get_line "$last_file" "network")
+  security=$(json_get_line "$last_file" "security")
+  fingerprint=$(json_get_line "$last_file" "fingerprint")
+  servername=$(json_get_line "$last_file" "serverName")
+  public_key=$(json_get_line "$last_file" "publicKey")
+  short_id=$(json_get_line "$last_file" "shortId")
+  spider_x=$(json_get_line "$last_file" "spiderX")
+
+  [ -n "$server" ] || return 1
+  [ -n "$port" ] || return 1
+  [ -n "$uuid" ] || return 1
+
+  echo "  - name: \"$name\""
+  echo "    type: vless"
+  echo "    server: $server"
+  echo "    port: $port"
+  echo "    uuid: $uuid"
+  [ -n "$network" ] && echo "    network: $network"
+  [ -n "$flow" ] && echo "    flow: $flow"
+  echo "    udp: true"
+
+  case "$security" in
+    tls|reality)
+      echo "    tls: true"
+      ;;
+  esac
+
+  [ -n "$servername" ] && echo "    servername: $servername"
+  [ -n "$fingerprint" ] && echo "    client-fingerprint: $fingerprint"
+
+  if [ "$security" = "reality" ]; then
+    [ -n "$public_key" ] || return 1
+    echo "    reality-opts:"
+    echo "      public-key: $public_key"
+    [ -n "$short_id" ] && echo "      short-id: $short_id"
+    [ -n "$spider_x" ] && printf '      spider-x: %s\n' "$(printf '%s' "$spider_x" | yaml_quote)"
+  fi
+  echo ""
+}
+
+generate_vpn_provider() {
+  local url="$1"
+  local provider_name="$2"
+  local yaml_file="$3"
+  local tmp_prefix="$CONFIG_DIR/.${provider_name}_vpn"
+  local json_file="${tmp_prefix}.json"
+  local last_file="${tmp_prefix}.last.json"
+  local conf_file="${tmp_prefix}.conf"
+  local count=0
+
+  rm -f "${tmp_prefix}."*
+
+  if ! decode_vpn_url_to_json "$url" "$json_file" "$tmp_prefix" "$provider_name"; then
+    log "ERROR: $provider_name vpn:// decode failed"
+    return 1
+  fi
+
+  echo "proxies:" > "$yaml_file"
+  echo "0" > "${tmp_prefix}.count"
+
+  json_strings_by_key "$json_file" "last_config" | while IFS= read -r last_raw; do
+    [ -z "$last_raw" ] && continue
+
+    printf '%s' "$last_raw" | json_unescape > "$last_file"
+
+    count_file="${tmp_prefix}.count"
+    count=$(cat "$count_file" 2>/dev/null || echo 0)
+    count=$((count + 1))
+    if [ "$count" -eq 1 ]; then
+      proxy_name="$provider_name"
+    else
+      proxy_name="${provider_name}_${count}"
+    fi
+
+    if emit_vpn_wireguard_proxy "$last_file" "$json_file" "$proxy_name" >> "$yaml_file"; then
+      echo "$count" > "$count_file"
+      continue
+    fi
+
+    if emit_vpn_xray_vless_proxy "$last_file" "$proxy_name" >> "$yaml_file"; then
+      echo "$count" > "$count_file"
+      continue
+    fi
+
+    json_strings_by_key "$last_file" "config" | while IFS= read -r cfg_raw; do
+      [ -z "$cfg_raw" ] && continue
+
+      printf '%s' "$cfg_raw" | json_unescape > "$conf_file"
+
+      if grep -q '^\[Interface\]' "$conf_file" && grep -q '^\[Peer\]' "$conf_file"; then
+        count=$(cat "$count_file" 2>/dev/null || echo 0)
+        count=$((count + 1))
+        echo "$count" > "$count_file"
+        if [ "$count" -eq 1 ]; then
+          parse_awg_config "$conf_file" "$provider_name" >> "$yaml_file"
+        else
+          parse_awg_config "$conf_file" "${provider_name}_${count}" >> "$yaml_file"
+        fi
+      fi
+    done
+  done
+
+  count=$(cat "${tmp_prefix}.count" 2>/dev/null || echo 0)
+  rm -f "${tmp_prefix}."*
+
+  if [ "$count" -eq 0 ]; then
+    log "ERROR: $provider_name vpn:// has no supported WireGuard/AmneziaWG/VLESS config"
+    return 1
+  fi
+
+  log "Converted $provider_name vpn:// configs: $count"
+  return 0
 }
 
 generate_awg_providers() {
@@ -917,11 +1589,20 @@ EOF
 
   # LINK
   if env | grep -qE '^LINK[0-9]*='; then
-    for varname in $(env | grep -E '^LINK[0-9]*=' | sort -t '=' -k1 | cut -d'=' -f1); do
-      eval "url=\"\$$varname\""
+    for varname in $(env | grep -E '^LINK[0-9]*=' | cut -d'=' -f1 | sort -V); do
+      url=$(printenv "$varname")
       provider_name="$varname"
       yaml_file="$CONFIG_DIR/${provider_name}.yaml"
-      printf '%s\n' "$url" > "$yaml_file"
+      case "$url" in
+        vpn://*)
+          if ! generate_vpn_provider "$url" "$provider_name" "$yaml_file"; then
+            echo "proxies: []" > "$yaml_file"
+          fi
+          ;;
+        *)
+          printf '%s\n' "$url" > "$yaml_file"
+          ;;
+      esac
       cat >> "$CONFIG_YAML" <<EOF
   $provider_name:
     type: file
@@ -943,6 +1624,8 @@ EOF
   providers="${providers}${mounted_provs}"
 
   # SUB_LINK
+  sub_link_envs="$CONFIG_DIR/.sub_link_envs"
+  env | grep -E '^SUB_LINK[0-9]+=' | sort -V > "$sub_link_envs" || true
   while IFS= read -r var; do
     name=$(echo "$var" | cut -d '=' -f1)
     url=$(echo "$var" | cut -d '=' -f2- | tr -d '\r')
@@ -991,7 +1674,8 @@ EOF
     fi
     providers="$providers $name"
     dns_other="$dns_other $name"
-  done < <(env | grep -E '^SUB_LINK[0-9]+=' | sort -V)
+  done < "$sub_link_envs"
+  rm -f "$sub_link_envs"
 
   # AWG
   awg_provs=$(generate_awg_providers)
@@ -999,6 +1683,8 @@ EOF
   dns_other="${dns_other}${awg_provs}"
 
 # SOCKS5
+  socks_envs="$CONFIG_DIR/.socks_envs"
+  env | grep -E '^SOCKS[0-9]+=' | sort -V > "$socks_envs" || true
   while IFS= read -r var; do
     name=$(echo "$var" | cut -d '=' -f1)
     value=$(echo "$var" | cut -d '=' -f2-)
@@ -1058,7 +1744,8 @@ EOF
     fi
     providers="$providers $name"
     dns_other="$dns_other $name"
-  done < <(env | grep -E '^SOCKS[0-9]+=' | sort -V)
+  done < "$socks_envs"
+  rm -f "$socks_envs"
 
   # ZAPRET
   if lsmod | grep nf_tables >/dev/null 2>&1; then
@@ -1090,18 +1777,11 @@ for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2
     else
         gw=$(echo "$net_addr" | awk -F. '{printf "%d.%d.%d.%d", $1, $2, $3, $4+1}')
     fi
-    if [ $i = 200 ]; then
-        ip route del default 2>/dev/null || true
-        ip route replace default via "$gw" dev "$iface"
-    else
-        ip route replace default via "$gw" dev "$iface" table $i
-        ip rule add fwmark $i table $i pref 150 2>/dev/null || true
-    fi
   if [ $i = 200 ]; then
-    ip route del default
-    ip route replace default via $gw dev $iface
+    ip route del default 2>/dev/null || true
+    ip route replace default via "$gw" dev "$iface"
   else
-    ip route replace default via $gw dev $iface table $i
+    ip route replace default via "$gw" dev "$iface" table $i
     ip rule del table $i 2>/dev/null
     ip rule add fwmark $i table $i pref 150
   fi
@@ -1467,6 +2147,7 @@ custom_rules_payloads=""
             for p in $providers; do echo "      - $p"; done
           fi
         fi
+        register_group "$g"
       fi
     done
 
@@ -1476,13 +2157,17 @@ custom_rules_payloads=""
 
     # Проходим по уже собранным custom name
     if [ -n "$custom_rules_payloads" ]; then
-      echo "$custom_rules_payloads" | grep -v '^$' | sort -t'|' -k1 -n | while IFS='|' read -r idx name payload_file; do
+      custom_rules_sorted="$CONFIG_DIR/.custom_rules_sorted"
+      echo "$custom_rules_payloads" | grep -v '^$' | sort -t'|' -k1 -n > "$custom_rules_sorted" || true
+      while IFS='|' read -r idx name payload_file; do
+        [ -z "$name" ] && continue
         env_name=$(echo "$name" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
         prio=$(printenv "${env_name}_PRIORITY" 2>/dev/null || echo "")
         [ -z "$prio" ] && prio=$((2000 + custom_idx))   # дефолт, если нет ENV
         custom_group_prio_list="$custom_group_prio_list $name|$prio"
         custom_idx=$((custom_idx + 1))
-      done
+      done < "$custom_rules_sorted"
+      rm -f "$custom_rules_sorted"
     fi
 
     # Сортировка custom групп по приоритету
@@ -1745,6 +2430,8 @@ dscp=$(printenv "${env_name}_DSCP" || true)
 
 # Добавляем inline rule-providers для custom
 if [ -n "$custom_rules_payloads" ]; then
+  custom_rules_sorted="$CONFIG_DIR/.custom_rules_sorted"
+  echo "$custom_rules_payloads" | grep -v '^$' | sort -t'|' -k1 -n > "$custom_rules_sorted" || true
   while IFS='|' read -r idx name payload_file; do
     # Защита от пустого имени
     [ -z "$name" ] && continue
@@ -1766,9 +2453,11 @@ fi
 env_name=$(echo "$name" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
 dns=$(printenv "${env_name}_DNS" 2>/dev/null || true)
 [ -n "$dns" ] && add_dns_policy "rule-set:${rs_name}" "$dns"
+prio=$(printenv "${env_name}_PRIORITY" 2>/dev/null || echo $((2000 + idx)))
 
 add_rule "RULE-SET,$rs_name,$name" "$prio"
-  done < <(echo "$custom_rules_payloads" | grep -v '^$' | sort -t'|' -k1 -n)
+  done < "$custom_rules_sorted"
+  rm -f "$custom_rules_sorted"
 fi
 
     cat <<EOF
@@ -1789,8 +2478,7 @@ while IFS='|' read -r idx name payload; do
   env_name=$(echo "$name" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
   prio=$(printenv "${env_name}_PRIORITY" 2>/dev/null || echo $((2000 + idx)))
 
-  all_rules="${all_rules}
-${prio}|RULE-SET,${name}_ruleset,${name}"
+  add_rule "RULE-SET,${name}_ruleset,${name}" "$prio"
 done <<EOF
 $(echo "$custom_rules_payloads" | grep -v '^$' | sort -t'|' -k1 -n)
 EOF
