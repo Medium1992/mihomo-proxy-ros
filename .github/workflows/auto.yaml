@@ -338,6 +338,102 @@ jobs:
             medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             medium1992/mihomo-proxy-ros:${{ env.mihomo }}
             medium1992/mihomo-proxy-ros:latest
+
+      - name: Publish container archives to Telegram
+        if: steps.check_versions.outputs.build_needed == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_THREAD_ID: ${{ secrets.TELEGRAM_THREAD_ID }}
+          IMAGE_REPO: medium1992/mihomo-proxy-ros
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
+            echo "Telegram secrets are not configured, skipping Telegram publish."
+            exit 0
+          fi
+
+          telegram_api() {
+            local method="$1"
+            shift
+
+            response=$(curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${method}" "$@")
+            echo "$response" | grep -q '"ok":true' || {
+              echo "Telegram API call failed:"
+              echo "$response"
+              exit 1
+            }
+          }
+
+          retry() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              "$@" && return 0
+              echo "Attempt ${attempt} failed, retrying..."
+              sleep 10
+            done
+            "$@"
+          }
+
+          thread_data_args=()
+          thread_form_args=()
+          if [ -n "${TELEGRAM_THREAD_ID}" ]; then
+            thread_data_args=(-d "message_thread_id=${TELEGRAM_THREAD_ID}")
+            thread_form_args=(-F "message_thread_id=${TELEGRAM_THREAD_ID}")
+          fi
+
+          mkdir -p telegram-images
+
+          export_image() {
+            local name="$1"
+            local platform="$2"
+            local image="$3"
+            local file="telegram-images/mihomo-proxy-ros-${name}-${mihomo}.tar.gz"
+
+            retry docker pull --platform "${platform}" "${image}"
+            docker save "${image}" | gzip -9 > "${file}"
+            docker image rm "${image}" || true
+          }
+
+          export_image "amd64-v1" "linux/amd64" "${IMAGE_REPO}:amd64v1-${mihomo}"
+          export_image "amd64-v2" "linux/amd64" "${IMAGE_REPO}:amd64v2-${mihomo}"
+          export_image "amd64-v3" "linux/amd64" "${IMAGE_REPO}:${mihomo}"
+          export_image "amd64-v4" "linux/amd64" "${IMAGE_REPO}:amd64v4-${mihomo}"
+          export_image "arm64" "linux/arm64" "${IMAGE_REPO}:${mihomo}"
+          export_image "armv7" "linux/arm/v7" "${IMAGE_REPO}:${mihomo}"
+          export_image "armv5" "linux/arm/v5" "${IMAGE_REPO}:${mihomo}"
+
+          sha256sum telegram-images/*.tar.gz > telegram-images/sha256sums.txt
+
+          files_list=$(find telegram-images -maxdepth 1 -name '*.tar.gz' -type f -printf '%f\n' | sort)
+          message=$(printf 'Mihomo Proxy ROS container images\n\nmihomo: %s\nhev-socks5-tunnel: %s\nbyedpi: %s\nzapret: %s\nzapret2: %s\n\nDocker Hub: https://hub.docker.com/r/%s\n\nFiles:\n%s\n\nChecksums: sha256sums.txt' \
+            "${mihomo}" \
+            "${hev_socks5_tunnel}" \
+            "${byedpi}" \
+            "${zapret}" \
+            "${zapret2}" \
+            "${IMAGE_REPO}" \
+            "${files_list}")
+
+          telegram_api sendMessage \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            "${thread_data_args[@]}" \
+            --data-urlencode "text=${message}"
+
+          while IFS= read -r file; do
+            telegram_api sendDocument \
+              -F "chat_id=${TELEGRAM_CHAT_ID}" \
+              "${thread_form_args[@]}" \
+              -F "document=@${file}" \
+              -F "caption=$(basename "$file")"
+          done < <(find telegram-images -maxdepth 1 -name '*.tar.gz' -type f | sort)
+
+          telegram_api sendDocument \
+            -F "chat_id=${TELEGRAM_CHAT_ID}" \
+            "${thread_form_args[@]}" \
+            -F "document=@telegram-images/sha256sums.txt" \
+            -F "caption=sha256sums.txt"
           
       - name: Commit and push VERSIONS
         if: steps.check_versions.outputs.build_needed == 'true'
