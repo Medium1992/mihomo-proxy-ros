@@ -338,6 +338,8 @@ jobs:
           build-args: |
             AMD64VERSION=v1
             MIHOMO_RELEASE_TAG=alpha
+          secrets: |
+            "awg=${{ secrets.AWG }}"
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}
@@ -357,6 +359,8 @@ jobs:
           build-args: |
             AMD64VERSION=v2
             MIHOMO_RELEASE_TAG=alpha
+          secrets: |
+            "awg=${{ secrets.AWG }}"
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}
@@ -376,6 +380,8 @@ jobs:
           build-args: |
             AMD64VERSION=v4
             MIHOMO_RELEASE_TAG=alpha
+          secrets: |
+            "awg=${{ secrets.AWG }}"
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}
@@ -395,6 +401,8 @@ jobs:
           build-args: |
             AMD64VERSION=v3
             MIHOMO_RELEASE_TAG=alpha
+          secrets: |
+            "awg=${{ secrets.AWG }}"
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}

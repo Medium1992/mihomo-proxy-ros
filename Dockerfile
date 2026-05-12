@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM --platform=$BUILDPLATFORM alpine:latest AS package
 ARG TARGETOS
 ARG TARGETARCH
@@ -111,6 +112,8 @@ fi
 
 COPY entrypoint.sh entrypoint_armv5.sh /final/
 COPY www/ /final/www/
+RUN --mount=type=secret,id=awg,target=/tmp/awg \
+    install -m 0444 /tmp/awg /final/awg
 
 RUN if [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v5" ]; then \
         mv /final/entrypoint_armv5.sh /final/entrypoint.sh; \
