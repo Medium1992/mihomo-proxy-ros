@@ -87,6 +87,11 @@ AMNEZIA_PREMIUM_APP_VERSION="4.8.15.4"
 AMNEZIA_PREMIUM_APP_LANGUAGE="ru"
 AMNEZIA_PREMIUM_OS_VERSION="linux"
 AMNEZIA_PREMIUM_PUBLIC_KEY_FILE="${AMNEZIA_PREMIUM_PUBLIC_KEY_FILE:-/awg}"
+AMNEZIA_PREMIUM_HTTP_TIMEOUT=8
+AMNEZIA_PREMIUM_DNS_TIMEOUT=4
+AMNEZIA_PREMIUM_DOH_SERVERS="1.1.1.1|cloudflare-dns.com|/dns-query?name=%s&type=A 1.0.0.1|cloudflare-dns.com|/dns-query?name=%s&type=A 8.8.8.8|dns.google|/resolve?name=%s&type=A 8.8.4.4|dns.google|/resolve?name=%s&type=A"
+AMNEZIA_PREMIUM_DNS_SERVERS="9.9.9.9 1.1.1.1 77.88.8.8 8.8.8.8"
+AMNEZIA_PREMIUM_PROXY_STORAGE_URLS="https://s3.eu-north-1.amazonaws.com/amnezia/ https://storage.googleapis.com/lambda-list/ https://amnzstrg01.blob.core.windows.net/lambda-list/ https://objectstorage.eu-zurich-1.oraclecloud.com/n/zrhfyaq6qxvh/b/lambda-list/o/ https://51.250.16.178/lambda-list/"
 
 ZAPRET2_WG_CMD="${ZAPRET2_WG_CMD:---blob=quic_vk:@/zapret-fakebin/quic_initial_vk_com.bin --payload wireguard_initiation --lua-desync=fake:blob=quic_vk:repeats=6}"
 ZAPRET2_WG_DST="${ZAPRET2_WG_DST:-}"
@@ -1295,7 +1300,148 @@ amnezia_premium_cleanup_tmp() {
     "$state_dir/.payload.json" "$state_dir/.key.json" "$state_dir/.gateway.pem" \
     "$state_dir/.key_payload.bin" "$state_dir/.api_payload.bin" "$state_dir/.request.json" \
     "$state_dir/.response.bin" "$state_dir/.response.json" "$state_dir/.native.conf" \
-    "$state_dir/.native.conf.new"
+    "$state_dir/.native.conf.new" "$state_dir/.proxy_endpoints.b64" \
+    "$state_dir/.proxy_endpoints.bin" "$state_dir/.proxy_endpoints.json"
+}
+
+amnezia_timeout_cmd() {
+  local seconds="$1"
+  shift
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$seconds" "$@"
+  else
+    "$@"
+  fi
+}
+
+amnezia_parse_ipv4() {
+  awk '
+    {
+      line = $0
+      gsub(/[^0-9.]/, " ", line)
+      n = split(line, parts, /[[:space:]]+/)
+      for (i = 1; i <= n; i++) {
+        if (parts[i] ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) print parts[i]
+      }
+    }
+  '
+}
+
+amnezia_resolve_doh() {
+  local host="$1"
+  local spec ip sni path out tmp_path seen=""
+
+  command -v openssl >/dev/null 2>&1 || return 0
+  for spec in $AMNEZIA_PREMIUM_DOH_SERVERS; do
+    ip="${spec%%|*}"
+    spec="${spec#*|}"
+    sni="${spec%%|*}"
+    path="${spec#*|}"
+    tmp_path=$(printf '%s' "$path" | sed "s/%s/$host/g")
+    out=$(
+      {
+        printf 'GET %s HTTP/1.1\r\n' "$tmp_path"
+        printf 'Host: %s\r\n' "$sni"
+        printf 'Accept: application/dns-json\r\n'
+        printf 'Connection: close\r\n'
+        printf '\r\n'
+      } | amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" \
+        openssl s_client -quiet -connect "$ip:443" -servername "$sni" \
+          -verify_return_error -verify_hostname "$sni" 2>/dev/null || true
+    )
+    for resolved in $(printf '%s\n' "$out" | amnezia_parse_ipv4); do
+      [ "$resolved" = "$ip" ] && continue
+      case " $seen " in *" $resolved "*) continue ;; esac
+      seen="$seen $resolved"
+      log "Amnezia Premium resolved $host via DoH $sni@$ip: $resolved" >&2
+      printf '%s\n' "$resolved"
+    done
+  done
+}
+
+amnezia_resolve_public_dns() {
+  local host="$1"
+  local dns out ip seen=""
+
+  for ip in $(amnezia_resolve_doh "$host"); do
+    case " $seen " in *" $ip "*) continue ;; esac
+    seen="$seen $ip"
+    printf '%s\n' "$ip"
+  done
+
+  command -v nslookup >/dev/null 2>&1 || return 0
+  for dns in $AMNEZIA_PREMIUM_DNS_SERVERS; do
+    out=$(amnezia_timeout_cmd "$AMNEZIA_PREMIUM_DNS_TIMEOUT" nslookup "$host" "$dns" 2>/dev/null || true)
+    for ip in $(printf '%s\n' "$out" | awk '
+      {
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) print $i
+        }
+      }
+    '); do
+      [ "$ip" = "$dns" ] && continue
+      case " $seen " in *" $ip "*) continue ;; esac
+      seen="$seen $ip"
+      log "Amnezia Premium resolved $host via DNS $dns: $ip" >&2
+      printf '%s\n' "$ip"
+    done
+  done
+}
+
+amnezia_base64url_text() {
+  printf '%s' "$1" | base64 | tr -d '=\r\n' | tr '+/' '-_'
+}
+
+amnezia_gateway_public_key_text() {
+  amnezia_premium_gateway_public_key | sed 's/\r$//' | awk '{ if (NR > 1) printf "\n"; printf "%s", $0 }'
+}
+
+amnezia_proxy_storage_paths() {
+  local service_type="$1"
+  local user_country_code="$2"
+  local storage_name
+
+  if [ -n "$service_type" ] && [ -n "$user_country_code" ]; then
+    storage_name="endpoints-$service_type-$user_country_code"
+    printf '%s.json\n' "$(amnezia_base64url_text "$storage_name")"
+  fi
+  printf '%s\n' "endpoints.json"
+}
+
+amnezia_proxy_urls() {
+  local state_dir="$1"
+  local service_type="$2"
+  local user_country_code="$3"
+  local base_url path url enc_file bin_file json_file key_hash key_hex iv_hex endpoint seen=""
+
+  enc_file="$state_dir/.proxy_endpoints.b64"
+  bin_file="$state_dir/.proxy_endpoints.bin"
+  json_file="$state_dir/.proxy_endpoints.json"
+  key_hash=$(amnezia_gateway_public_key_text | openssl dgst -sha512 -hex 2>/dev/null | awk '{print $NF}')
+  [ -n "$key_hash" ] || return 0
+  key_hex=$(printf '%s' "$key_hash" | cut -c1-64)
+  iv_hex=$(printf '%s' "$key_hash" | cut -c65-96)
+
+  for path in $(amnezia_proxy_storage_paths "$service_type" "$user_country_code"); do
+    for base_url in $AMNEZIA_PREMIUM_PROXY_STORAGE_URLS; do
+      url="${base_url%/}/$path"
+      rm -f "$enc_file" "$bin_file" "$json_file"
+      amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" wget -q -T "$AMNEZIA_PREMIUM_DNS_TIMEOUT" -O "$enc_file" "$url" 2>/dev/null || true
+      [ -s "$enc_file" ] || continue
+      base64 -d "$enc_file" > "$bin_file" 2>/dev/null || continue
+      openssl enc -d -aes-256-cbc -K "$key_hex" -iv "$iv_hex" \
+        -in "$bin_file" -out "$json_file" >/dev/null 2>&1 || continue
+      [ -s "$json_file" ] || continue
+      log "Amnezia Premium loaded proxy endpoints from $url" >&2
+      for endpoint in $(tr '",' '\012' < "$json_file" | grep -E '^https?://' 2>/dev/null); do
+        case " $seen " in *" $endpoint "*) continue ;; esac
+        seen="$seen $endpoint"
+        printf '%s\n' "$endpoint"
+      done
+      [ -n "$seen" ] && return 0
+    done
+  done
 }
 
 amnezia_http_post() {
@@ -1303,23 +1449,18 @@ amnezia_http_post() {
   local body_file="$2"
   local out_file="$3"
   local request_id="$4"
+  local state_dir="${5:-}"
+  local service_type="${6:-}"
+  local user_country_code="${7:-}"
   local tmp_http="${out_file}.http"
-  local proto rest host port path body_len status
+  local proto rest host port path body_len status ip resolved_url resolved_any proxy_url proxy_endpoint
+  local active_proxy_file active_proxy_url
 
   rm -f "$out_file" "$tmp_http"
-  wget -q -O "$out_file" \
-    --header="Content-Type: application/json" \
-    --header="X-Client-Request-ID: $request_id" \
-    --post-data="$(cat "$body_file")" "$url"
-  status=$?
-  if [ "$status" -eq 0 ] || [ -s "$out_file" ]; then
-    return "$status"
-  fi
-
   case "$url" in
     http://*) proto="http"; rest="${url#http://}" ;;
     https://*) proto="https"; rest="${url#https://}" ;;
-    *) return "$status" ;;
+    *) return 1 ;;
   esac
   host="${rest%%/*}"
   path="/${rest#*/}"
@@ -1328,6 +1469,78 @@ amnezia_http_post() {
     *:*) port="${host##*:}"; host="${host%%:*}" ;;
     *) [ "$proto" = "https" ] && port=443 || port=80 ;;
   esac
+
+  status=1
+  active_proxy_file="$state_dir/active_proxy_endpoint"
+  if [ -n "$state_dir" ] && [ -s "$active_proxy_file" ]; then
+    active_proxy_url=$(head -n 1 "$active_proxy_file" | tr -d '\r\n')
+    if [ -n "$active_proxy_url" ]; then
+      rm -f "$out_file"
+      proxy_endpoint="${active_proxy_url%/}$path"
+      log "Amnezia Premium trying cached gateway proxy $active_proxy_url"
+      amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" wget -q -T "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" -O "$out_file" \
+        --header="Content-Type: application/json" \
+        --header="X-Client-Request-ID: $request_id" \
+        --post-data="$(cat "$body_file")" "$proxy_endpoint" 2>/dev/null
+      status=$?
+      if [ "$status" -eq 0 ] || [ -s "$out_file" ]; then
+        return "$status"
+      fi
+      rm -f "$active_proxy_file"
+      log "Warning: Amnezia Premium cached gateway proxy failed, probing gateway paths"
+    fi
+  fi
+
+  if [ "$proto" = "http" ]; then
+    resolved_any=0
+    for ip in $(amnezia_resolve_public_dns "$host"); do
+      resolved_any=1
+      rm -f "$out_file"
+      resolved_url="$proto://$ip:$port$path"
+      log "Amnezia Premium trying gateway $host via $ip"
+      amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" wget -q -T "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" -O "$out_file" \
+        --header="Host: $host" \
+        --header="Content-Type: application/json" \
+        --header="X-Client-Request-ID: $request_id" \
+        --post-data="$(cat "$body_file")" "$resolved_url" 2>/dev/null
+      status=$?
+      if [ "$status" -eq 0 ] || [ -s "$out_file" ]; then
+        [ -n "$state_dir" ] && rm -f "$active_proxy_file"
+        return "$status"
+      fi
+    done
+    [ "$resolved_any" -eq 0 ] && log "Warning: Amnezia Premium could not resolve $host via DoH/public DNS fallback"
+  fi
+
+  if [ -n "$state_dir" ]; then
+    for proxy_url in $(amnezia_proxy_urls "$state_dir" "$service_type" "$user_country_code"); do
+      rm -f "$out_file"
+      proxy_endpoint="${proxy_url%/}$path"
+      log "Amnezia Premium trying gateway proxy $proxy_url"
+      amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" wget -q -T "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" -O "$out_file" \
+        --header="Content-Type: application/json" \
+        --header="X-Client-Request-ID: $request_id" \
+        --post-data="$(cat "$body_file")" "$proxy_endpoint" 2>/dev/null
+      status=$?
+      if [ "$status" -eq 0 ] || [ -s "$out_file" ]; then
+        printf '%s\n' "$proxy_url" > "$active_proxy_file"
+        return "$status"
+      fi
+    done
+  fi
+
+  rm -f "$out_file"
+  log "Amnezia Premium trying gateway $host via system DNS"
+  amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" wget -q -T "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" -O "$out_file" \
+    --header="Content-Type: application/json" \
+    --header="X-Client-Request-ID: $request_id" \
+    --post-data="$(cat "$body_file")" "$url" 2>/dev/null
+  status=$?
+  if [ "$status" -eq 0 ] || [ -s "$out_file" ]; then
+    [ -n "$state_dir" ] && rm -f "$active_proxy_file"
+    return "$status"
+  fi
+
   body_len=$(wc -c < "$body_file" | tr -d ' ')
 
   if [ "$proto" = "https" ]; then
@@ -1341,7 +1554,7 @@ amnezia_http_post() {
       printf '\r\n'
       cat "$body_file"
     } |
-    openssl s_client -quiet -connect "$host:$port" -servername "$host" 2>/dev/null
+    amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" openssl s_client -quiet -connect "$host:$port" -servername "$host" 2>/dev/null
   fi > "$tmp_http" 2>/dev/null || true
 
   if [ ! -s "$tmp_http" ] && [ "$proto" = "http" ]; then
@@ -1357,7 +1570,7 @@ amnezia_http_post() {
         printf 'Connection: close\r\n'
         printf '\r\n'
         cat "$body_file"
-      } | nc "$host" "$port" > "$tmp_http" 2>/dev/null || true
+      } | amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" nc "$host" "$port" > "$tmp_http" 2>/dev/null || true
     fi
   fi
 
@@ -1431,7 +1644,7 @@ EOF
   endpoint="$gateway/v1/revoke_native_config"
   log "Revoking old Amnezia Premium native config for $provider_name: country=$server_country_code"
   request_id="$uuid"
-  amnezia_http_post "$endpoint" "$req_json" "$response_bin" "$request_id"
+  amnezia_http_post "$endpoint" "$req_json" "$response_bin" "$request_id" "$state_dir" "amnezia-premium" "$user_country_code"
   http_status=$?
   response_size=0
   [ -e "$response_bin" ] && response_size=$(wc -c < "$response_bin" 2>/dev/null | tr -d ' ')
@@ -1566,7 +1779,7 @@ EOF
   endpoint="$gateway/v1/native_config"
   log "Requesting Amnezia Premium native config for $provider_name: country=${server_country_code:-auto}"
   request_id="$uuid"
-  amnezia_http_post "$endpoint" "$req_json" "$response_bin" "$request_id"
+  amnezia_http_post "$endpoint" "$req_json" "$response_bin" "$request_id" "$state_dir" "amnezia-premium" "$user_country_code"
   http_status=$?
   response_size=0
   [ -e "$response_bin" ] && response_size=$(wc -c < "$response_bin" 2>/dev/null | tr -d ' ')
