@@ -16,3 +16,4 @@
 :if ([:len [find name="cdntogo.net"]] = 0) do={ add address-list=$AddressList forward-to=$ForwardTo comment="kinopub" match-subdomain=yes type=FWD name="cdntogo.net" }
 :if ([:len [find name="cdn32.lol"]] = 0) do={ add address-list=$AddressList forward-to=$ForwardTo comment="kinopub" match-subdomain=yes type=FWD name="cdn32.lol" }
 :if ([:len [find name="flexcdn.cloud"]] = 0) do={ add address-list=$AddressList forward-to=$ForwardTo comment="kinopub" match-subdomain=yes type=FWD name="flexcdn.cloud" }
+:if ([:len [find name="trbcdn.net"]] = 0) do={ add address-list=$AddressList forward-to=$ForwardTo comment="kinopub" match-subdomain=yes type=FWD name="trbcdn.net" }
