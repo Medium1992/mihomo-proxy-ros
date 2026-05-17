@@ -1,0 +1,32 @@
+proxies:
+  - name: awg-example
+    type: wireguard
+    server: server.example.com
+    port: 51820
+    ip: 10.0.0.2
+    private-key: <client private key>
+    public-key: <server public key>
+    pre-shared-key: <psk, optional>
+    mtu: 1408
+    udp: true
+    remote-dns-resolve: true
+    dns:
+      - 1.1.1.1
+    allowed-ips:
+      - 0.0.0.0/0
+      - ::/0
+    amnezia-wg-option:
+      jc: 4
+      jmin: 40
+      jmax: 70
+      s1: 50
+      s2: 100
+      h1: 1
+      h2: 2
+      h3: 3
+      h4: 4
+      i1: <hex>
+      i2: <hex>
+      i3: <hex>
+      i4: <hex>
+      i5: <hex>

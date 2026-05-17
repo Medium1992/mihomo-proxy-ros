@@ -1042,8 +1042,9 @@ input:focus, textarea:focus, select:focus {
 }
 
 .mount-link {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
   padding: 10px 12px;
   border: 1px solid var(--line);
@@ -1055,27 +1056,40 @@ input:focus, textarea:focus, select:focus {
   border-color: var(--accent);
 }
 
-.rule-set-file,
-.proxy-file {
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 8px;
+.mount-link-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
 }
-.rule-set-file span,
-.proxy-file span { grid-column: 1; }
-.rule-set-file small,
-.proxy-file small { grid-column: 1; }
+.mount-link-title:hover { color: var(--accent); }
+
 .file-actions {
-  grid-column: 2;
-  grid-row: 1 / 3;
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
+  flex: 0 0 auto;
 }
-.file-actions button {
-  min-height: 34px;
+.file-actions button,
+.file-actions a {
+  min-height: 30px;
   padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface-2, transparent);
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
 }
+.file-actions a:hover,
+.file-actions button:hover { border-color: var(--accent); }
 
 .mount-link span,
 .mount-link small {
@@ -1088,6 +1102,33 @@ input:focus, textarea:focus, select:focus {
   color: var(--muted);
   font-size: 11px;
 }
+
+/* "Новый файл" + upload row — fixed height, side-by-side */
+.mount-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  align-self: end;
+}
+.mount-actions > button,
+.mount-actions > .upload-label {
+  flex: 1 1 160px;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mount-actions > button:hover,
+.mount-actions > .upload-label:hover { border-color: var(--accent); }
+.upload-label input[type="file"] { display: none; }
 
 pre {
   max-width: 100%;
@@ -1328,3 +1369,80 @@ pre {
   button, .ghost, .primary, .theme-btn { width: 100%; }
   .subhead { align-items: stretch; flex-direction: column; }
 }
+
+/* Template row and validation result blocks */
+.template-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin: 4px 0 8px;
+  flex-wrap: wrap;
+}
+.template-row > label { flex: 1 1 240px; }
+.template-row > button { flex: 0 0 auto; }
+.validate-result {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--border, #2c313a);
+}
+.validate-ok   { background: rgba( 60,180, 90, .12); border-color: rgba( 60,180, 90, .4); }
+.validate-fail { background: rgba(220, 70, 70, .12); border-color: rgba(220, 70, 70, .4); }
+.upload-row { display: flex; gap: 8px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+.mount-link.binary small.kind { color: var(--muted, #7d869a); margin-left: 4px; }
+
+/* DPI page — compact grid for fakebin/zlist */
+.dpi-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  align-items: center;
+}
+.dpi-toolbar .dpi-filter {
+  flex: 1 1 200px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: inherit;
+}
+.dpi-toolbar > button,
+.dpi-toolbar > .upload-label {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.dpi-toolbar > button:hover,
+.dpi-toolbar > .upload-label:hover { border-color: var(--accent); }
+
+.mount-links.dpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px;
+}
+.mount-link-compact {
+  padding: 6px 10px;
+  gap: 6px;
+}
+.mount-link-compact .mount-link-title small { font-size: 10px; }
+.mount-link-compact .file-actions button,
+.mount-link-compact .file-actions a {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.mount-link.hidden { display: none; }

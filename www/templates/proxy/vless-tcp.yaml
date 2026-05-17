@@ -1,0 +1,15 @@
+proxies:
+  - name: vless-tcp-example
+    type: vless
+    server: server.example.com
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000000
+    network: tcp
+    udp: true
+    tls: true
+    flow: xtls-rprx-vision
+    servername: server.example.com
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: <reality public key>
+      short-id: <short id>

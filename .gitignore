@@ -1,2 +1,11 @@
 awg
 awg.secret
+
+# Pre-rendered HTML — генерируется www/render_static.sh из cgi-bin/index.sh,
+# может содержать чувствительные значения ENV (subscription URL, ключи и т.д.).
+# Никогда не пушить в репо.
+www/*.html
+
+# Промежуточные файлы рендера
+www/*.html.raw
+www/*.html.tmp

@@ -1,0 +1,11 @@
+proxies:
+  - name: ssh-example
+    type: ssh
+    server: server.example.com
+    port: 22
+    username: root
+    password: <password>
+    # private-key: |
+    #   -----BEGIN OPENSSH PRIVATE KEY-----
+    #   ...
+    #   -----END OPENSSH PRIVATE KEY-----

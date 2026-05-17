@@ -1,0 +1,12 @@
+proxies:
+  - name: trojan-example
+    type: trojan
+    server: server.example.com
+    port: 443
+    password: <password>
+    udp: true
+    sni: server.example.com
+    skip-cert-verify: false
+    alpn:
+      - h2
+      - http/1.1

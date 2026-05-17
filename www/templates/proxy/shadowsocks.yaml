@@ -1,0 +1,8 @@
+proxies:
+  - name: ss-example
+    type: ss
+    server: server.example.com
+    port: 8388
+    cipher: aes-256-gcm
+    password: <password>
+    udp: true

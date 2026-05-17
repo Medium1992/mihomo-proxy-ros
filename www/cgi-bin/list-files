@@ -1,0 +1,68 @@
+#!/bin/sh
+echo "Content-Type: application/json; charset=utf-8"
+echo ""
+
+CONFIG_DIR="${CONFIG_DIR:-/root/.config/mihomo}"
+
+qs_get() {
+  printf '%s' "$QUERY_STRING" | tr '&' '\n' | awk -F= -v k="$1" '$1==k{print $2; exit}'
+}
+
+dir_type=$(qs_get type)
+[ -z "$dir_type" ] && dir_type="proxy"
+case "$dir_type" in
+  ruleset) TARGET_DIR="$CONFIG_DIR/rule_set_list" ;;
+  proxy)   TARGET_DIR="$CONFIG_DIR/proxies_mount" ;;
+  awg)     TARGET_DIR="$CONFIG_DIR/awg" ;;
+  fakebin) TARGET_DIR="/zapret-fakebin" ;;
+  zlist)   TARGET_DIR="/zapret-lists" ;;
+  *) printf '{"ok":false,"error":"invalid type"}\n'; exit 0 ;;
+esac
+
+json_escape() {
+  awk '
+    BEGIN { for (i = 0; i < 32; i++) ctrl[sprintf("%c", i)] = sprintf("\\u%04x", i) }
+    {
+      gsub(/\\/, "\\\\"); gsub(/"/, "\\\"")
+      for (c in ctrl) gsub(c, ctrl[c])
+      if (NR > 1) printf "\\n"
+      printf "%s", $0
+    }
+  '
+}
+
+if [ ! -d "$TARGET_DIR" ]; then
+  printf '{"ok":true,"type":"%s","dir":"%s","files":[]}\n' "$dir_type" "$TARGET_DIR"
+  exit 0
+fi
+
+printf '{"ok":true,"type":"%s","dir":"%s","files":[' "$dir_type" "$TARGET_DIR"
+
+first=1
+for f in "$TARGET_DIR"/*; do
+  [ -f "$f" ] || continue
+  base=$(basename "$f")
+  size=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
+  name=""
+  if [ "$dir_type" = "proxy" ]; then
+    # All `name:` values found in the file, comma-separated
+    name=$(awk '
+      /^[[:space:]]*-?[[:space:]]*name:[[:space:]]*/ {
+        sub(/^[[:space:]]*-?[[:space:]]*name:[[:space:]]*/, "")
+        sub(/[[:space:]]*$/, "")
+        sub(/^"/, ""); sub(/"$/, "")
+        sub(/^'\''/, ""); sub(/'\''$/, "")
+        if (out != "") out = out ","
+        out = out $0
+      }
+      END { print out }
+    ' "$f" 2>/dev/null)
+  fi
+  if [ $first -eq 0 ]; then printf ','; fi
+  first=0
+  ebase=$(printf '%s' "$base" | json_escape)
+  ename=$(printf '%s' "$name" | json_escape)
+  printf '{"file":"%s","size":%s,"name":"%s"}' "$ebase" "${size:-0}" "$ename"
+done
+
+printf ']}\n'

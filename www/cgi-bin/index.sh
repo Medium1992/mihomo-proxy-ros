@@ -409,1470 +409,9 @@ footer() {
     </section>
   </main>
 </div>
-<script>
-const containerName = "mihomo-proxy-ros";
-const defaultEnvListName = "MihomoProxyRoS";
-
-function mtEscape(value) {
-  return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-function envKey(name) { return "mihomo-env:" + name; }
-function originalKey(name) { return "mihomo-original:" + name; }
-function pageKey(name) { return "mihomo-page:" + name; }
-
-function getEnvListName() {
-  const el = document.getElementById("commandEnvList");
-  const value = el ? el.value.trim() : "";
-  return value || defaultEnvListName;
-}
-
-function fieldValue(el) {
-  if (el.type === "checkbox") return el.checked ? "true" : "false";
-  return el.value.trim();
-}
-
-function setFieldValue(el, value) {
-  if (el.type === "checkbox") el.checked = value === "true";
-  else el.value = value;
-}
-
-function rememberField(el) {
-  if (!el.name) return;
-  if (localStorage.getItem(originalKey(el.name)) === null) {
-    localStorage.setItem(originalKey(el.name), fieldValue(el));
-  }
-  localStorage.setItem(envKey(el.name), fieldValue(el));
-  localStorage.setItem(pageKey(el.name), location.pathname);
-}
-
-function wireFieldEvents(root) {
-  root.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
-    const serverValue = fieldValue(el);
-    const storedOriginal = localStorage.getItem(originalKey(el.name));
-    if (storedOriginal === null || (serverValue !== "" && storedOriginal !== serverValue)) {
-      localStorage.setItem(originalKey(el.name), serverValue);
-      localStorage.setItem(envKey(el.name), serverValue);
-    }
-    localStorage.setItem(pageKey(el.name), location.pathname);
-    const saved = localStorage.getItem(envKey(el.name));
-    if (saved !== null) setFieldValue(el, saved);
-    el.addEventListener("input", () => rememberField(el));
-    el.addEventListener("change", () => rememberField(el));
-  });
-}
-
-function normalizeFieldMeta(root) {
-  (root || document).querySelectorAll(".field, .toggle").forEach((box) => {
-    const status = box.querySelector(":scope > i");
-    const hint = box.querySelector(":scope > small");
-    if (!status || status.closest(".field-meta")) return;
-    const meta = document.createElement("div");
-    meta.className = "field-meta";
-    if (hint) meta.appendChild(hint);
-    meta.appendChild(status);
-    box.appendChild(meta);
-  });
-}
-
-function commandFor(name, original, value) {
-  const envListName = getEnvListName();
-  const hasOriginal = original !== "";
-  const hasValue = value !== "";
-  if (!hasOriginal && !hasValue) return "";
-  if (hasOriginal && !hasValue) return `/container/envs/remove [find list="${envListName}" key="${name}"]`;
-  if (!hasOriginal && hasValue) return `/container/envs/add list="${envListName}" key="${name}" value="${mtEscape(value)}"`;
-  if (original !== value) return `/container/envs/set [find list="${envListName}" key="${name}"] value="${mtEscape(value)}"`;
-  return "";
-}
-
-function collectPageCommands() {
-  const fields = [...document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]")];
-  const commands = [];
-  const seen = new Set();
-  fields.forEach((el) => {
-    if (seen.has(el.name)) return;
-    seen.add(el.name);
-    rememberField(el);
-    const original = localStorage.getItem(originalKey(el.name)) || "";
-    const value = fieldValue(el);
-    const cmd = commandFor(el.name, original, value);
-    if (cmd) commands.push(cmd);
-  });
-  return commands;
-}
-
-function collectAllCommands() {
-  const commands = [];
-  const names = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith("mihomo-env:")) names.push(key.slice("mihomo-env:".length));
-  }
-  names.sort().forEach((name) => {
-    const original = localStorage.getItem(originalKey(name)) || "";
-    const value = localStorage.getItem(envKey(name)) || "";
-    const cmd = commandFor(name, original, value);
-    if (cmd) commands.push(cmd);
-  });
-  return commands;
-}
-
-function formatCommands(title, commands) {
-  let text = "# " + title + "\n";
-  text += "# container=\"" + containerName + "\" env-list=\"" + getEnvListName() + "\"\n\n";
-  text += commands.length ? commands.join("\n") : "# Нет изменений.";
-  text += "\n\n/container/stop [find where name=\"" + containerName + "\"]\n";
-  text += ":delay 5s\n";
-  text += "/container/start [find where name=\"" + containerName + "\"]\n";
-  return text;
-}
-
-function generateCommands() {
-  syncDnsPolicy();
-  syncWgDst();
-  localStorage.setItem("mihomo-command-env-list", getEnvListName());
-  const pageCommands = collectPageCommands();
-  const allCommands = collectAllCommands();
-  document.getElementById("commandsText").value = formatCommands("Команды для текущей страницы", pageCommands);
-  document.getElementById("commandsAllText").value = formatCommands("Суммарные команды для всех измененных env", allCommands);
-  document.getElementById("commands").hidden = false;
-  document.getElementById("commands").scrollIntoView({behavior: "smooth", block: "start"});
-}
-
-function copyCommands() {
-  const el = document.getElementById("commandsAllText");
-  el.focus();
-  el.select();
-  document.execCommand("copy");
-}
-
-function applyTheme(theme) {
-  document.body.dataset.theme = theme;
-  localStorage.setItem("mihomo-theme", theme);
-  const label = document.getElementById("themeLabel");
-  if (label) label.textContent = theme === "dark" ? "Светлая" : "Темная";
-}
-
-function toggleTheme() {
-  applyTheme(document.body.dataset.theme === "dark" ? "light" : "dark");
-}
-
-function resetUiDraft() {
-  [...Array(localStorage.length)].map((_, i) => localStorage.key(i)).forEach((key) => {
-    if (key && (key.startsWith("mihomo-env:") || key.startsWith("mihomo-original:") || key.startsWith("mihomo-page:"))) localStorage.removeItem(key);
-  });
-  location.reload(true);
-}
-
-function resetCurrentPageDraft() {
-  const names = new Set([...document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]")].map((el) => el.name));
-  const path = location.pathname;
-  [...Array(localStorage.length)].map((_, i) => localStorage.key(i)).forEach((key) => {
-    if (!key) return;
-    if (key.startsWith("mihomo-page:") && localStorage.getItem(key) === path) names.add(key.slice("mihomo-page:".length));
-  });
-  names.forEach((name) => {
-    localStorage.removeItem(envKey(name));
-    localStorage.removeItem(originalKey(name));
-    localStorage.removeItem(pageKey(name));
-  });
-  location.reload(true);
-}
-
-function addRow(containerId, prefix, startAtOne) {
-  const wrap = document.getElementById(containerId);
-  const used = [...wrap.querySelectorAll("[data-index]")].map((x) => Number(x.dataset.index)).filter(Number.isFinite);
-  let idx = startAtOne ? 1 : 0;
-  while (used.includes(idx)) idx++;
-  const maxIndex = (prefix === "BYEDPI_CMD" || prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") ? 99 : null;
-  if (maxIndex !== null && idx > maxIndex) return;
-  let key = idx === 0 && !startAtOne ? prefix : prefix + idx;
-  if (prefix === "RULE_SET") key = "RULE_SET" + idx + "_BASE64";
-  const div = document.createElement("div");
-  div.className = "env-row";
-  if (prefix === "RULES" || prefix === "RULE_SET") div.className = "env-row rule-row";
-  if (prefix === "BYEDPI_CMD") div.className = "env-row dpi-single-row";
-  if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") div.className = "env-row dpi-packet-row";
-  div.dataset.index = idx;
-  div.dataset.prefix = prefix;
-  div.dataset.startAtOne = startAtOne ? "true" : "false";
-  if (prefix === "BYEDPI_CMD" || prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") div.dataset.maxIndex = "99";
-  if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") {
-    const packets = prefix === "ZAPRET_CMD" ? "ZAPRET_PACKETS" : "ZAPRET2_PACKETS";
-    const packetsKey = packets + idx;
-    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="--dpi-desync=..."></label><label><span>${packetsKey}</span><input name="${packetsKey}" placeholder="12"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-  } else if (prefix === "RULE_SET") {
-    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Редактировать">&#10002;</button><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-  } else if (prefix === "RULES") {
-    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="DOMAIN,example.com,GLOBAL"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-  } else {
-    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="значение env"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-  }
-  wrap.appendChild(div);
-  wireFieldEvents(div);
-  ensureIndexedRowControls(div);
-  sortIndexedRows(wrap);
-  if (typeof renderRulesPreview === 'function') renderRulesPreview();
-}
-
-function sortIndexedRows(wrap) {
-  if (!wrap) return;
-  [...wrap.children]
-    .filter((row) => row.dataset && row.dataset.index !== undefined)
-    .sort((a, b) => Number(a.dataset.index) - Number(b.dataset.index))
-    .forEach((row) => wrap.appendChild(row));
-}
-
-function usedIndexes(wrap, skipRow) {
-  return [...wrap.querySelectorAll("[data-index]")]
-    .filter((row) => row !== skipRow)
-    .map((x) => Number(x.dataset.index))
-    .filter(Number.isInteger);
-}
-
-function nextFreeIndex(wrap, startAtOne, maxIndex) {
-  const used = usedIndexes(wrap);
-  let idx = startAtOne ? 1 : 0;
-  while (used.includes(idx)) idx++;
-  if (Number.isInteger(maxIndex) && idx > maxIndex) return null;
-  return idx;
-}
-
-function escapeAttr(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function fakeFilterName(idx) {
-  return "FAKE_IP_FILTER" + idx;
-}
-
-function baseIndexedName(prefix, idx, zeroPlain) {
-  return idx === 0 && zeroPlain ? prefix : prefix + idx;
-}
-
-function indexedRowConfig(row) {
-  const names = [...row.querySelectorAll("input[name], textarea[name], select[name]")].map((el) => el.name);
-  const maxFromRow = Number(row.dataset.maxIndex);
-  const rowMax = Number.isInteger(maxFromRow) ? maxFromRow : null;
-  if (names.some((name) => /^FAKE_IP_FILTER[0-9]+$/.test(name))) return {kind: "base", prefix: "FAKE_IP_FILTER", min: 1};
-  if (names.some((name) => /^RULES[0-9]+$/.test(name))) return {kind: "base", prefix: "RULES", min: 1};
-  if (names.some((name) => /^RULE_SET[0-9]+_BASE64$/.test(name))) return {kind: "ruleset", min: 1};
-  if (names.some((name) => /^SOCKS[0-9]+$/.test(name))) return {kind: "base", prefix: "SOCKS", min: 1};
-  if (names.some((name) => /^SUB_LINK[0-9]+/.test(name))) return {kind: "multi", prefix: "SUB_LINK", min: 1};
-  if (names.some((name) => /^LINK[0-9]*/.test(name))) return {kind: "multi", prefix: "LINK", min: 0, zeroPlain: true};
-  if (names.some((name) => /^BYEDPI_CMD[0-9]*$/.test(name))) return {kind: "base", prefix: "BYEDPI_CMD", min: 0, zeroPlain: true, max: 99};
-  if (names.some((name) => /^ZAPRET2_CMD[0-9]*$/.test(name))) return {kind: "zapret", prefix: "ZAPRET2_CMD", packets: "ZAPRET2_PACKETS", min: 0, zeroPlain: true, max: 99};
-  if (names.some((name) => /^ZAPRET_CMD[0-9]*$/.test(name))) return {kind: "zapret", prefix: "ZAPRET_CMD", packets: "ZAPRET_PACKETS", min: 0, zeroPlain: true, max: 99};
-  if (row.dataset.prefix) return {kind: row.dataset.prefix === "RULE_SET" ? "ruleset" : "base", prefix: row.dataset.prefix, min: row.dataset.startAtOne === "true" ? 1 : 0, zeroPlain: row.dataset.startAtOne !== "true", max: rowMax};
-  return null;
-}
-
-function rewriteIndexedName(name, cfg, oldIdx, newIdx) {
-  if (cfg.kind === "ruleset") return name.replace(new RegExp("^RULE_SET" + oldIdx + "_BASE64$"), "RULE_SET" + newIdx + "_BASE64");
-  const oldBase = baseIndexedName(cfg.prefix, oldIdx, cfg.zeroPlain);
-  const newBase = baseIndexedName(cfg.prefix, newIdx, cfg.zeroPlain);
-  if (name === oldBase || name.indexOf(oldBase + "_") === 0) return newBase + name.slice(oldBase.length);
-  if (cfg.kind === "zapret") {
-    const oldPackets = baseIndexedName(cfg.packets, oldIdx, cfg.zeroPlain);
-    const newPackets = baseIndexedName(cfg.packets, newIdx, cfg.zeroPlain);
-    if (name === oldPackets) return newPackets;
-    if (name === cfg.packets + oldIdx) return cfg.packets + newIdx;
-  }
-  return name;
-}
-
-function renameIndexedRow(row, nextIndex) {
-  const cfg = indexedRowConfig(row);
-  if (!cfg) return false;
-  const oldIndex = Number(row.dataset.index);
-  if (usedIndexes(row.parentElement, row).includes(nextIndex)) return false;
-  row.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
-    const oldName = el.name;
-    const newName = rewriteIndexedName(oldName, cfg, oldIndex, nextIndex);
-    if (oldName === newName) return;
-    localStorage.setItem(envKey(oldName), "");
-    trackRemovedEnv(oldName);
-    if (localStorage.getItem(originalKey(newName)) === null) localStorage.setItem(originalKey(newName), "");
-    el.name = newName;
-    const caption = el.closest("label")?.querySelector("span");
-    if (caption) caption.textContent = newName;
-    rememberField(el);
-  });
-  row.dataset.index = nextIndex;
-  const indexInput = row.querySelector(".env-index input");
-  if (indexInput) indexInput.value = nextIndex;
-  sortIndexedRows(row.parentElement);
-  return true;
-}
-
-function applyIndexedRowNumber(row, nextIndex) {
-  const cfg = indexedRowConfig(row);
-  if (!cfg) return false;
-  const minIndex = Number.isInteger(cfg.min) ? cfg.min : 0;
-  if (!Number.isInteger(nextIndex) || nextIndex < minIndex || (Number.isInteger(cfg.max) && nextIndex > cfg.max)) return false;
-  return renameIndexedRow(row, nextIndex);
-}
-
-function indexedRowsIn(wrap) {
-  return [...wrap.querySelectorAll(".env-row[data-index]")]
-    .filter((item) => indexedRowConfig(item))
-    .sort((a, b) => Number(a.dataset.index) - Number(b.dataset.index));
-}
-
-function applyIndexedBatch(wrap, moves) {
-  const ops = [];
-  moves.forEach(({row, to}) => {
-    const cfg = indexedRowConfig(row);
-    const from = Number(row.dataset.index);
-    row.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
-      const oldName = el.name;
-      const newName = rewriteIndexedName(oldName, cfg, from, to);
-      ops.push({row, el, oldName, newName, value: fieldValue(el), to});
-    });
-  });
-  ops.forEach(({oldName, newName, value}) => {
-    if (oldName === newName) return;
-    localStorage.setItem(envKey(oldName), "");
-    trackRemovedEnv(oldName);
-    if (localStorage.getItem(originalKey(newName)) === null) localStorage.setItem(originalKey(newName), value);
-  });
-  ops.forEach(({row, el, newName, value, to}) => {
-    el.name = newName;
-    if (el.type === "checkbox") el.checked = value === "true";
-    else el.value = value;
-    const caption = el.closest("label")?.querySelector("span");
-    if (caption) caption.textContent = newName;
-    localStorage.setItem(envKey(newName), value);
-    row.dataset.index = to;
-    const indexInput = row.querySelector(".env-index input");
-    if (indexInput) indexInput.value = to;
-  });
-  sortIndexedRows(wrap);
-  if (typeof renderRulesPreview === "function") renderRulesPreview();
-}
-
-function cleanupRemovedIndexedRows() {
-  document.querySelectorAll(".rows").forEach((wrap) => {
-    [...wrap.querySelectorAll(".env-row[data-index]")].forEach((row) => {
-      const inputs = [...row.querySelectorAll("input[name], textarea[name], select[name]")];
-      const allEmpty = inputs.every((el) => (localStorage.getItem(envKey(el.name)) || "") === "");
-      const hasOriginal = inputs.some((el) => localStorage.getItem(originalKey(el.name)) !== null);
-      if (allEmpty && hasOriginal) row.remove();
-    });
-  });
-}
-
-function restoreMissingIndexedRows() {
-  const map = {
-    "rules": {prefix: "RULES", startAtOne: true},
-    "rulesets": {prefix: "RULE_SET", startAtOne: true},
-    "byedpi": {prefix: "BYEDPI_CMD", startAtOne: false},
-    "zapret": {prefix: "ZAPRET_CMD", startAtOne: false},
-    "zapret2": {prefix: "ZAPRET2_CMD", startAtOne: false},
-    "fakeFilters": {prefix: "FAKE_IP_FILTER", startAtOne: true}
-  };
-  Object.entries(map).forEach(([id, cfg]) => {
-    const wrap = document.getElementById(id);
-    if (!wrap) return;
-    const used = [...wrap.querySelectorAll("[data-index]")].map((r) => Number(r.dataset.index)).filter(Number.isFinite);
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key || !key.startsWith("mihomo-env:")) continue;
-      const name = key.slice("mihomo-env:".length);
-      const value = localStorage.getItem(key) || "";
-      if (value === "") continue;
-      const re = new RegExp("^" + cfg.prefix + "(\\d+)(_BASE64)?$");
-      const m = name.match(re);
-      if (!m) continue;
-      const idx = Number(m[1]);
-      if (used.includes(idx)) continue;
-      const div = document.createElement("div");
-      div.className = "env-row";
-      if (cfg.prefix === "RULES" || cfg.prefix === "RULE_SET") div.className = "env-row rule-row";
-      if (cfg.prefix === "BYEDPI_CMD") div.className = "env-row dpi-single-row";
-      if (cfg.prefix === "ZAPRET_CMD" || cfg.prefix === "ZAPRET2_CMD") div.className = "env-row dpi-packet-row";
-      if (cfg.prefix === "FAKE_IP_FILTER") div.className = "env-row env-row-stack fake-filter-row";
-      div.dataset.index = idx;
-      div.dataset.prefix = cfg.prefix;
-      div.dataset.startAtOne = cfg.startAtOne ? "true" : "false";
-      if (cfg.prefix === "RULE_SET") {
-        const keyName = "RULE_SET" + idx + "_BASE64";
-        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Редактировать">&#10002;</button><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-      } else if (cfg.prefix === "RULES") {
-        const keyName = "RULES" + idx;
-        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="DOMAIN,example.com,GLOBAL"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-      } else if (cfg.prefix === "FAKE_IP_FILTER") {
-        const keyName = "FAKE_IP_FILTER" + idx;
-        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="DOMAIN,www.youtube.com,real-ip"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-      } else {
-        const zeroPlain = !cfg.startAtOne;
-        const keyName = idx === 0 && zeroPlain ? cfg.prefix : cfg.prefix + idx;
-        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="значение env"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-      }
-      wrap.appendChild(div);
-      wireFieldEvents(div);
-      ensureIndexedRowControls(div);
-      used.push(idx);
-    }
-  });
-}
-
-function shiftIndexedRow(row, targetIndex) {
-  const cfg = indexedRowConfig(row);
-  if (!cfg) return false;
-  const current = Number(row.dataset.index);
-  const minIndex = Number.isInteger(cfg.min) ? cfg.min : 0;
-  if (!Number.isInteger(targetIndex) || targetIndex < minIndex || (Number.isInteger(cfg.max) && targetIndex > cfg.max)) return false;
-  if (targetIndex === current) return true;
-  const wrap = row.parentElement;
-  const rows = indexedRowsIn(wrap);
-  const moves = [{row, to: targetIndex}];
-  if (targetIndex > current) {
-    rows.forEach((item) => {
-      const idx = Number(item.dataset.index);
-      if (item !== row && idx > current && idx <= targetIndex) moves.push({row: item, to: idx - 1});
-    });
-  } else {
-    rows.forEach((item) => {
-      const idx = Number(item.dataset.index);
-      if (item !== row && idx >= targetIndex && idx < current) moves.push({row: item, to: idx + 1});
-    });
-  }
-  applyIndexedBatch(wrap, moves);
-  return true;
-}
-
-function moveIndexedRow(row, direction) {
-  const cfg = indexedRowConfig(row);
-  if (!cfg) return;
-  const current = Number(row.dataset.index);
-  const minIndex = Number.isInteger(cfg.min) ? cfg.min : 0;
-  const target = current + direction;
-  if (target < minIndex || (Number.isInteger(cfg.max) && target > cfg.max)) return;
-  const other = indexedRowsIn(row.parentElement).find((item) => item !== row && Number(item.dataset.index) === target);
-  const moves = [{row, to: target}];
-  if (other) moves.push({row: other, to: current});
-  applyIndexedBatch(row.parentElement, moves);
-}
-
-function ensureIndexedRowControls(row) {
-  const cfg = indexedRowConfig(row);
-  if (!cfg) return;
-  row.classList.add("indexed-row");
-  let grip = row.querySelector(":scope > .env-grip");
-  if (!grip) {
-    grip = document.createElement("div");
-    grip.className = "env-grip";
-    grip.draggable = true;
-    grip.title = "\u041f\u0435\u0440\u0435\u0442\u0430\u0449\u0438\u0442\u044c";
-    grip.textContent = "\u22ee\u22ee";
-    row.insertBefore(grip, row.firstElementChild);
-  } else {
-    grip.draggable = true;
-  }
-  const existing = row.querySelector(".env-index");
-  if (existing && existing.querySelector("input")) {
-    wireIndexedRow(row);
-    return;
-  }
-  if (existing) existing.remove();
-  const current = Number(row.dataset.index);
-  const label = document.createElement("label");
-  label.className = "env-index";
-  label.innerHTML = `<input type="number" step="1" value="${current}" min="${cfg.min}" aria-label="ENV number">`;
-  if (Number.isInteger(cfg.max)) label.querySelector("input").max = cfg.max;
-  row.insertBefore(label, grip.nextSibling);
-  wireIndexedRow(row);
-}
-
-function wireIndexedRow(row) {
-  const input = row.querySelector(".env-index input");
-  if (!input || input.dataset.wired === "true") return;
-  input.dataset.wired = "true";
-  const cfg = indexedRowConfig(row);
-  const minIndex = cfg && Number.isInteger(cfg.min) ? cfg.min : 0;
-  input.min = minIndex;
-  if (cfg && Number.isInteger(cfg.max)) input.max = cfg.max;
-  input.addEventListener("change", () => {
-    const nextIndex = Number(input.value);
-    const overMax = cfg && Number.isInteger(cfg.max) && nextIndex > cfg.max;
-    if (!Number.isInteger(nextIndex) || nextIndex < minIndex || overMax || !shiftIndexedRow(row, nextIndex)) {
-      input.value = row.dataset.index;
-      input.setCustomValidity("Номер вне допустимого диапазона");
-      input.reportValidity();
-      setTimeout(() => input.setCustomValidity(""), 1200);
-    }
-    if (typeof renderRulesPreview === "function") renderRulesPreview();
-  });
-}
-
-function initDragAndDropForAll() {
-  document.querySelectorAll(".rows").forEach((wrap) => initDragAndDrop(wrap));
-}
-
-function initDragAndDrop(wrap) {
-  if (!wrap || wrap.dataset.dragWired === "true") return;
-  wrap.dataset.dragWired = "true";
-  let draggedRow = null;
-
-  wrap.addEventListener("dragstart", (e) => {
-    const grip = e.target.closest(".env-grip");
-    const row = e.target.closest(".env-row[data-index]");
-    if (!grip || !row || !indexedRowConfig(row)) {
-      e.preventDefault();
-      return;
-    }
-    draggedRow = row;
-    row.classList.add("dragging");
-    e.dataTransfer.effectAllowed = "move";
-    try { e.dataTransfer.setData("text/plain", row.dataset.index); } catch (_) {}
-  });
-
-  wrap.addEventListener("dragend", (e) => {
-    const row = e.target.closest(".env-row[data-index]");
-    if (row) row.classList.remove("dragging");
-    draggedRow = null;
-    dropIndicatorClear(wrap);
-  });
-
-  wrap.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    if (!draggedRow) return;
-    const target = computeDropTarget(wrap, e.clientY);
-    dropIndicatorClear(wrap);
-    if (target && target.row !== draggedRow) {
-      target.row.classList.add(target.after ? "drop-target-bottom" : "drop-target-top");
-    }
-    const scrollZone = 60;
-    const scrollSpeed = 16;
-    if (e.clientY < scrollZone) {
-      window.scrollBy(0, -scrollSpeed);
-    } else if (e.clientY > window.innerHeight - scrollZone) {
-      window.scrollBy(0, scrollSpeed);
-    }
-  });
-
-  wrap.addEventListener("drop", (e) => {
-    e.preventDefault();
-    if (!draggedRow) return;
-    const target = computeDropTarget(wrap, e.clientY);
-    dropIndicatorClear(wrap);
-    if (!target || target.row === draggedRow) return;
-    reorderIndexedRowsByVisualOrder(draggedRow, target.row, target.after);
-  });
-}
-
-function computeDropTarget(wrap, clientY) {
-  const rows = [...wrap.querySelectorAll(".env-row[data-index]")].filter((r) => indexedRowConfig(r) && !r.classList.contains("dragging"));
-  let closest = null;
-  let minDist = Infinity;
-  for (const row of rows) {
-    const rect = row.getBoundingClientRect();
-    const center = rect.top + rect.height / 2;
-    const dist = Math.abs(clientY - center);
-    if (dist < minDist) {
-      minDist = dist;
-      closest = {row, after: clientY > center};
-    }
-  }
-  return closest;
-}
-
-function dropIndicatorClear(wrap) {
-  wrap.querySelectorAll(".env-row[data-index]").forEach((r) => {
-    r.classList.remove("drop-target-top", "drop-target-bottom");
-  });
-}
-
-function reorderIndexedRowsByVisualOrder(draggedRow, targetRow, after) {
-  const wrap = draggedRow.parentElement;
-  const cfg = indexedRowConfig(draggedRow);
-  if (!cfg) return;
-  const rows = [...wrap.children].filter((item) => item.matches && item.matches(".env-row[data-index]") && indexedRowConfig(item));
-  const draggedPos = rows.indexOf(draggedRow);
-  let targetPos = rows.indexOf(targetRow);
-  if (draggedPos < 0 || targetPos < 0) return;
-  if (after) targetPos += 1;
-  if (draggedPos === targetPos || draggedPos + 1 === targetPos) return;
-  rows.splice(draggedPos, 1);
-  const insertPos = targetPos > draggedPos ? targetPos - 1 : targetPos;
-  rows.splice(insertPos, 0, draggedRow);
-  const maxAllowed = Number.isInteger(cfg.max) ? cfg.max : Infinity;
-  if ((cfg.min || 0) + rows.length - 1 > maxAllowed) return;
-  const moves = [];
-  rows.forEach((row, i) => {
-    const newIdx = (cfg.min || 0) + i;
-    if (Number(row.dataset.index) !== newIdx) moves.push({row, to: newIdx});
-  });
-  if (moves.length) applyIndexedBatch(wrap, moves);
-}
-
-function ruleSetB64Decode(value) {
-  const text = String(value || "");
-  const hash = text.indexOf("#");
-  const name = hash >= 0 ? text.slice(hash + 1) : "";
-  const b64 = hash >= 0 ? text.slice(0, hash) : text;
-  try {
-    const plain = decodeURIComponent(escape(atob(b64)));
-    return {plain, name};
-  } catch (e) {
-    return {plain: "", name: name || ""};
-  }
-}
-
-function ruleSetB64Encode(plain, name) {
-  if (!plain) return "";
-  return btoa(unescape(encodeURIComponent(plain))) + (name ? "#" + name : "");
-}
-
-let ruleSetModalTarget = null;
-
-function openRuleSetModal(btn) {
-  const row = btn.closest(".env-row");
-  if (!row) return;
-  const input = row.querySelector('input[name^="RULE_SET"]');
-  if (!input) return;
-  ruleSetModalTarget = input;
-  const decoded = ruleSetB64Decode(input.value);
-  const nameEl = document.getElementById("ruleSetModalName");
-  const plainEl = document.getElementById("ruleSetModalPlain");
-  const previewEl = document.getElementById("ruleSetModalPreview");
-  if (nameEl) nameEl.value = decoded.name;
-  if (plainEl) plainEl.value = decoded.plain;
-  if (previewEl) previewEl.textContent = input.value;
-  if (plainEl) {
-    const sync = () => {
-      const v = ruleSetB64Encode(plainEl.value, nameEl ? nameEl.value : "");
-      if (previewEl) previewEl.textContent = v;
-    };
-    plainEl.oninput = sync;
-    if (nameEl) nameEl.oninput = sync;
-    sync();
-  }
-  document.getElementById("ruleSetModal").hidden = false;
-}
-
-function closeRuleSetModal() {
-  document.getElementById("ruleSetModal").hidden = true;
-  ruleSetModalTarget = null;
-}
-
-function saveRuleSetModal() {
-  if (!ruleSetModalTarget) return;
-  const nameEl = document.getElementById("ruleSetModalName");
-  const plainEl = document.getElementById("ruleSetModalPlain");
-  const value = ruleSetB64Encode(plainEl.value, nameEl ? nameEl.value : "");
-  ruleSetModalTarget.value = value;
-  rememberField(ruleSetModalTarget);
-  closeRuleSetModal();
-}
-
-let fileEditTarget = null;
-let fileEditName = "";
-
-function addRuleSetFileRow(name, size) {
-  const wrap = document.querySelector(".mount-links");
-  if (!wrap) return;
-  const div = document.createElement("div");
-  div.className = "mount-link rule-set-file";
-  div.dataset.file = name;
-  const displayName = name.replace(/\.txt$/, '');
-  div.innerHTML = `<span>${escapeAttr(displayName)}</span><small>${size} bytes</small><div class="file-actions"><button type="button" onclick="editRuleSetFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteRuleSetFile(this)" title="Удалить">&#10005;</button></div>`;
-  wrap.appendChild(div);
-}
-
-function editRuleSetFile(btn) {
-  const row = btn.closest(".rule-set-file");
-  if (!row) return;
-  fileEditName = row.dataset.file;
-  const displayName = fileEditName.replace(/\.txt$/, '');
-  const titleEl = document.getElementById("fileEditTitle");
-  if (titleEl) titleEl.textContent = displayName;
-  const nameEl = document.getElementById("fileEditName");
-  if (nameEl) { nameEl.value = displayName; nameEl.readOnly = true; }
-  fetch('/cgi-bin/read-file?file=' + encodeURIComponent(fileEditName) + '&type=ruleset')
-    .then((r) => { if (!r.ok) throw new Error(r.statusText); return r.text(); })
-    .then((text) => {
-      const plainEl = document.getElementById("fileEditPlain");
-      if (plainEl) plainEl.value = text;
-      document.getElementById("fileEditModal").hidden = false;
-    })
-    .catch((e) => alert('Не удалось прочитать файл: ' + e.message));
-}
-
-function createRuleSetFile() {
-  fileEditName = "";
-  const titleEl = document.getElementById("fileEditTitle");
-  if (titleEl) titleEl.textContent = "Новый файл";
-  const nameEl = document.getElementById("fileEditName");
-  if (nameEl) { nameEl.value = ""; nameEl.readOnly = false; nameEl.focus(); }
-  const plainEl = document.getElementById("fileEditPlain");
-  if (plainEl) plainEl.value = "";
-  document.getElementById("fileEditModal").hidden = false;
-}
-
-function closeFileEditModal() {
-  document.getElementById("fileEditModal").hidden = true;
-  fileEditName = "";
-}
-
-function saveFileEditModal() {
-  const nameEl = document.getElementById("fileEditName");
-  const plainEl = document.getElementById("fileEditPlain");
-  if (!plainEl || !nameEl) return;
-  const name = nameEl.value.trim();
-  if (!name) { alert("Укажите имя файла"); return; }
-  const fileName = name.endsWith(".txt") ? name : name + ".txt";
-  const isNew = !nameEl.readOnly;
-  const b64 = btoa(unescape(encodeURIComponent(plainEl.value)));
-  fetch('/cgi-bin/save-file', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'file=' + encodeURIComponent(fileName) + '&b64=' + encodeURIComponent(b64) + '&type=ruleset'
-  })
-    .then((r) => r.text())
-    .then((text) => {
-      if (text.trim() === "OK") {
-        closeFileEditModal();
-        if (isNew) {
-          const size = new Blob([plainEl.value]).size;
-          addRuleSetFileRow(fileName, size);
-        }
-      } else {
-        alert('Ошибка сохранения: ' + text);
-      }
-    })
-    .catch((e) => alert('Ошибка сети: ' + e));
-}
-
-function deleteRuleSetFile(btn) {
-  const row = btn.closest(".rule-set-file");
-  if (!row) return;
-  const name = row.dataset.file;
-  if (!window.confirm("Удалить файл " + name.replace(/\.txt$/, '') + "?")) return;
-  row.remove();
-  fetch('/cgi-bin/delete-file?file=' + encodeURIComponent(name) + '&type=ruleset')
-    .then((r) => r.text())
-    .then((text) => {
-      if (text.trim() !== "OK") {
-        alert('Ошибка удаления: ' + text);
-      }
-    })
-    .catch((e) => alert('Ошибка сети: ' + e));
-}
-
-let proxyEditName = "";
-
-function addProxyFileRow(name, size) {
-  const wrap = document.getElementById("proxy-mount-links");
-  if (!wrap) return;
-  const div = document.createElement("div");
-  div.className = "mount-link proxy-file";
-  div.dataset.file = name;
-  const displayName = name.replace(/\.(yaml|yml|conf)$/, '');
-  div.innerHTML = `<span>${escapeAttr(displayName)}</span><small>${size} bytes</small><div class="file-actions"><button type="button" onclick="editProxyFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteProxyFile(this)" title="Удалить">&#10005;</button></div>`;
-  wrap.appendChild(div);
-}
-
-function editProxyFile(btn) {
-  const row = btn.closest(".proxy-file");
-  if (!row) return;
-  proxyEditName = row.dataset.file;
-  const displayName = proxyEditName.replace(/\.(yaml|yml|conf)$/, '');
-  const titleEl = document.getElementById("proxyEditTitle");
-  if (titleEl) titleEl.textContent = displayName;
-  const nameEl = document.getElementById("proxyEditName");
-  if (nameEl) { nameEl.value = displayName; nameEl.readOnly = true; }
-  fetch('/cgi-bin/read-file?file=' + encodeURIComponent(proxyEditName) + '&type=proxy')
-    .then((r) => { if (!r.ok) throw new Error(r.statusText); return r.text(); })
-    .then((text) => {
-      const plainEl = document.getElementById("proxyEditPlain");
-      if (plainEl) plainEl.value = text;
-      document.getElementById("proxyEditModal").hidden = false;
-    })
-    .catch((e) => alert('Не удалось прочитать файл: ' + e.message));
-}
-
-function createProxyFile() {
-  proxyEditName = "";
-  const titleEl = document.getElementById("proxyEditTitle");
-  if (titleEl) titleEl.textContent = "Новый файл";
-  const nameEl = document.getElementById("proxyEditName");
-  if (nameEl) { nameEl.value = ""; nameEl.readOnly = false; nameEl.focus(); }
-  const plainEl = document.getElementById("proxyEditPlain");
-  if (plainEl) plainEl.value = "";
-  document.getElementById("proxyEditModal").hidden = false;
-}
-
-function closeProxyFileModal() {
-  document.getElementById("proxyEditModal").hidden = true;
-  proxyEditName = "";
-}
-
-function saveProxyFileModal() {
-  const nameEl = document.getElementById("proxyEditName");
-  const plainEl = document.getElementById("proxyEditPlain");
-  if (!plainEl || !nameEl) return;
-  const name = nameEl.value.trim();
-  if (!name) { alert("Укажите имя файла"); return; }
-  const fileName = name.endsWith(".yaml") ? name : name + ".yaml";
-  const isNew = !nameEl.readOnly;
-  const b64 = btoa(unescape(encodeURIComponent(plainEl.value)));
-  fetch('/cgi-bin/save-file', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'file=' + encodeURIComponent(fileName) + '&b64=' + encodeURIComponent(b64) + '&type=proxy'
-  })
-    .then((r) => r.text())
-    .then((text) => {
-      if (text.trim() === "OK") {
-        closeProxyFileModal();
-        if (isNew) {
-          const size = new Blob([plainEl.value]).size;
-          addProxyFileRow(fileName, size);
-        }
-      } else {
-        alert('Ошибка сохранения: ' + text);
-      }
-    })
-    .catch((e) => alert('Ошибка сети: ' + e));
-}
-
-function deleteProxyFile(btn) {
-  const row = btn.closest(".proxy-file");
-  if (!row) return;
-  const name = row.dataset.file;
-  if (!window.confirm("Удалить файл " + name.replace(/\.(yaml|yml|conf)$/, '') + "?")) return;
-  row.remove();
-  fetch('/cgi-bin/delete-file?file=' + encodeURIComponent(name) + '&type=proxy')
-    .then((r) => r.text())
-    .then((text) => {
-      if (text.trim() !== "OK") {
-        alert('Ошибка удаления: ' + text);
-      }
-    })
-    .catch((e) => alert('Ошибка сети: ' + e));
-}
-
-function enhanceIndexedRows(root) {
-  (root || document).querySelectorAll(".env-row[data-index]").forEach((row) => {
-    ensureIndexedRowControls(row);
-    wireIndexedRow(row);
-  });
-}
-
-function addFakeIpFilterRow(idx, value) {
-  const wrap = document.getElementById("fakeFilters");
-  if (!wrap) return;
-  let wanted = Number(idx);
-  if (!Number.isInteger(wanted) || wanted < 1) wanted = nextFreeIndex(wrap, true);
-  const busy = [...wrap.querySelectorAll("[data-index]")].some((row) => Number(row.dataset.index) === wanted);
-  if (busy) wanted = nextFreeIndex(wrap, true);
-  const key = fakeFilterName(wanted);
-  const div = document.createElement("div");
-  div.className = "env-row env-row-stack fake-filter-row";
-  div.dataset.index = wanted;
-  div.innerHTML = `
-    <label><span>${key}</span><input name="${key}" value="${escapeAttr(value)}" placeholder="DOMAIN,www.youtube.com,real-ip"></label>
-    <button type="button" onclick="removeEnvRow(this)">Удалить</button>
-  `;
-  wrap.appendChild(div);
-  wireFieldEvents(div);
-  ensureIndexedRowControls(div);
-  sortIndexedRows(wrap);
-}
-
-function addPair(containerId, key) {
-  const custom = window.prompt("ENV name", key);
-  if (!custom) return;
-  const wrap = document.getElementById(containerId);
-  const div = document.createElement("div");
-  div.className = "env-row";
-  div.innerHTML = `<label><span>${custom}</span><input name="${custom}" placeholder="значение env"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-  wrap.appendChild(div);
-  wireFieldEvents(div);
-}
-
-function groupEnvPrefix(name) {
-  return String(name || "").trim().replace(/-/g, "_").toUpperCase().replace(/[^A-Z0-9_]/g, "_");
-}
-
-function groupListValue() {
-  const el = document.querySelector('input[name="GROUP"]');
-  return el ? el.value.split(",").map((x) => x.trim()).filter(Boolean) : [];
-}
-
-function setGroupListValue(names) {
-  const el = document.querySelector('input[name="GROUP"]');
-  if (!el) return;
-  el.value = [...new Set(names.filter((name) => name && name !== "DEFAULT" && name !== "GLOBAL" && name !== "DNS"))].join(",");
-  rememberField(el);
-}
-
-function groupHasCustomParams(pane) {
-  const prefix = pane?.dataset?.prefix;
-  if (!prefix) return false;
-  return [...pane.querySelectorAll("input[name], textarea[name], select[name]")].some((el) => {
-    if (!el.name || el.name === "GROUP" || el.classList.contains("group-name-input")) return false;
-    if (el.name.indexOf(prefix + "_") !== 0) return false;
-    const state = el.closest(".field")?.querySelector(":scope > i, .field-meta i")?.textContent.trim();
-    const saved = localStorage.getItem(envKey(el.name));
-    const value = saved !== null ? saved : fieldValue(el);
-    if (state === "set") return true;
-    return value !== "" && value !== (el.dataset.default || "");
-  });
-}
-
-function ruleSetSourceDeleted(pane) {
-  const sourceEnv = pane?.dataset?.sourceEnv;
-  if (!sourceEnv) return false;
-  return localStorage.getItem(originalKey(sourceEnv)) !== null && (localStorage.getItem(envKey(sourceEnv)) || "") === "";
-}
-
-function demoteOrPromoteRuleSetGroups() {
-  const names = groupListValue();
-  let changed = false;
-  document.querySelectorAll('.group-pane[data-source="ruleset"]').forEach((pane) => {
-    const name = pane.dataset.group;
-    const button = findGroupButton(name);
-    const hasCustom = groupHasCustomParams(pane);
-    if (ruleSetSourceDeleted(pane) && !hasCustom) {
-      pane.remove();
-      if (button) button.remove();
-      const next = document.querySelector(".group-list button[data-group]");
-      if (next && !document.querySelector(".group-pane.active")) switchGroupPane(next.dataset.group);
-      changed = true;
-      return;
-    }
-    const listed = names.includes(name);
-    if (hasCustom && !listed) {
-      names.push(name);
-      changed = true;
-    }
-    if (!hasCustom && listed) {
-      const idx = names.indexOf(name);
-      if (idx >= 0) names.splice(idx, 1);
-      changed = true;
-    }
-  });
-  if (changed) setGroupListValue(names);
-}
-
-function switchGroupPane(name) {
-  document.querySelectorAll(".group-pane").forEach((pane) => {
-    const active = pane.dataset.group === name;
-    pane.hidden = !active;
-    pane.classList.toggle("active", active);
-  });
-  document.querySelectorAll(".group-list button[data-group]").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.group === name);
-  });
-}
-
-function findGroupButton(name) {
-  return [...document.querySelectorAll(".group-list button[data-group]")].find((btn) => btn.dataset.group === name);
-}
-
-function groupFieldMarkup(prefix, suffix, label, hint, placeholder, type, value) {
-  const name = prefix + "_" + suffix;
-  return `<label class="field" data-env="${name}"><span><b>${label}</b><em>${name}</em></span><input type="${type || "text"}" name="${name}" value="${escapeAttr(value)}" placeholder="${escapeAttr(placeholder || "")}" data-default=""><small>${hint || ""}</small><i>new</i></label>`;
-}
-
-function groupTypeHint() {
-  return `Тип <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#type" target="_blank" rel="noopener">proxy-groups type</a>: select/url-test/load-balance/fallback/relay.`;
-}
-
-function addGroupPane(name) {
-  const clean = String(name || window.prompt("Group name", "") || "").trim();
-  if (!clean) return;
-  if ([...document.querySelectorAll(".group-pane")].some((pane) => pane.dataset.group === clean)) {
-    switchGroupPane(clean);
-    return;
-  }
-  const prefix = groupEnvPrefix(clean);
-  const list = document.getElementById("groupList");
-  const panes = document.getElementById("groupPanes");
-  if (!list || !panes) return;
-  setGroupListValue([...groupListValue(), clean]);
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.dataset.group = clean;
-  btn.onclick = () => switchGroupPane(clean);
-  btn.innerHTML = `<b>${escapeAttr(clean)}</b><small>${prefix}_*</small>`;
-  list.insertBefore(btn, list.querySelector(".add-group-btn"));
-  const pane = document.createElement("article");
-  pane.className = "group-pane";
-  pane.dataset.group = clean;
-  pane.dataset.prefix = prefix;
-  pane.hidden = true;
-  pane.innerHTML = `
-    <div class="group-pane-head">
-      <button class="group-delete" type="button" onclick="removeGroupPane(this.closest('.group-pane').dataset.group)">Удалить группу</button>
-      <label class="field"><span><b>Group name</b><em>GROUP</em></span><input class="group-name-input" value="${escapeAttr(clean)}" data-original="${escapeAttr(clean)}"><small>Имя группы и prefix env.</small><i>${prefix}</i></label>
-    </div>
-    <div class="grid">
-      <label class="field" data-env="${prefix}_TYPE"><span><b>Type</b><em>${prefix}_TYPE</em></span><select name="${prefix}_TYPE" data-default="select"><option value="select">select</option><option value="url-test">url-test</option><option value="load-balance">load-balance</option><option value="fallback">fallback</option><option value="relay">relay</option></select><small>${groupTypeHint()}</small><i>new</i></label>
-      ${groupFieldMarkup(prefix, "USE", "Use", `Список <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">providers</a> через запятую или none.`, "", "text", "")}
-      ${groupFieldMarkup(prefix, "PROXIES", "Proxies", `Явные <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> через запятую.`, "", "text", "")}
-      ${groupFieldMarkup(prefix, "FILTER", "Filter", `Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#filter" target="_blank" rel="noopener">filter</a> по именам прокси.`, "", "text", "")}
-      ${groupFieldMarkup(prefix, "EXCLUDE", "Exclude", `Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter" target="_blank" rel="noopener">exclude-filter</a>.`, "", "text", "")}
-      ${groupFieldMarkup(prefix, "PRIORITY", "Priority", "Чем меньше, тем выше в rules.", "", "number", "")}
-      ${groupFieldMarkup(prefix, "GEOSITE", "Geosite", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">GEOSITE</a> списком через запятую.`, "youtube,category-ru", "text", "")}
-      ${groupFieldMarkup(prefix, "GEOIP", "Geoip", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">GEOIP</a> списком через запятую.`, "telegram,discord", "text", "")}
-      ${groupFieldMarkup(prefix, "AS", "ASN", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">IP-ASN</a>: AS123,AS456.`, "AS15169", "text", "")}
-      ${groupFieldMarkup(prefix, "DOMAIN", "Domain", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN</a> через запятую.`, "example.com", "text", "")}
-      ${groupFieldMarkup(prefix, "SUFFIX", "Suffix", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN-SUFFIX</a> через запятую.`, "example.com", "text", "")}
-      ${groupFieldMarkup(prefix, "KEYWORD", "Keyword", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN-KEYWORD</a> через запятую.`, "google", "text", "")}
-      ${groupFieldMarkup(prefix, "IPCIDR", "IP CIDR", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">IP-CIDR</a> через запятую.`, "1.1.1.0/24", "text", "")}
-      ${groupFieldMarkup(prefix, "SRCIPCIDR", "Source CIDR", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">SRC-IP-CIDR</a> через запятую.`, "192.168.88.0/24", "text", "")}
-      ${groupFieldMarkup(prefix, "DSCP", "DSCP", `Правило <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DSCP</a> для отдельного входа.`, "", "number", "")}
-      ${groupFieldMarkup(prefix, "DNS", "DNS policy", "DNS resolver для rule-set этой группы.", "https://dns.google/dns-query", "text", "")}
-    </div>`;
-  panes.appendChild(pane);
-  wireFieldEvents(pane);
-  wireGroupRename(pane);
-  switchGroupPane(clean);
-}
-
-function removeGroupPane(name) {
-  if (!name || name === "DEFAULT" || name === "GLOBAL" || name === "DNS") return;
-  const pane = [...document.querySelectorAll(".group-pane")].find((item) => item.dataset.group === name);
-  const btn = findGroupButton(name);
-  if (!pane || !btn) return;
-  pane.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
-    if (localStorage.getItem(originalKey(el.name)) === null) {
-      localStorage.setItem(originalKey(el.name), fieldValue(el));
-    }
-    localStorage.setItem(envKey(el.name), "");
-    trackRemovedEnv(el.name);
-  });
-  setGroupListValue(groupListValue().filter((item) => item !== name));
-  pane.remove();
-  btn.remove();
-  const first = document.querySelector(".group-list button[data-group]");
-  if (first) switchGroupPane(first.dataset.group);
-}
-
-function wireGroupRename(pane) {
-  const input = pane.querySelector(".group-name-input");
-  if (!input || input.dataset.wired === "true" || input.readOnly) return;
-  input.dataset.wired = "true";
-  input.addEventListener("change", () => {
-    const oldName = pane.dataset.group;
-    const newName = input.value.trim();
-    if (!newName || newName === oldName) {
-      input.value = oldName;
-      return;
-    }
-    const oldPrefix = pane.dataset.prefix;
-    const newPrefix = groupEnvPrefix(newName);
-    pane.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
-      if (!el.name || el.name === "GROUP" || el.name.indexOf(oldPrefix + "_") !== 0) return;
-      const oldEnv = el.name;
-      const newEnv = newPrefix + el.name.slice(oldPrefix.length);
-      localStorage.setItem(envKey(oldEnv), "");
-      trackRemovedEnv(oldEnv);
-      if (localStorage.getItem(originalKey(newEnv)) === null) localStorage.setItem(originalKey(newEnv), "");
-      el.name = newEnv;
-      const caption = el.closest("label")?.querySelector("em");
-      if (caption) caption.textContent = newEnv;
-      rememberField(el);
-    });
-    pane.dataset.group = newName;
-    pane.dataset.prefix = newPrefix;
-    input.dataset.original = newName;
-    const state = input.closest(".field")?.querySelector("i");
-    if (state) state.textContent = newPrefix;
-    const btn = findGroupButton(oldName);
-    if (btn) {
-      btn.dataset.group = newName;
-      btn.innerHTML = `<b>${escapeAttr(newName)}</b><small>${newPrefix}_*</small>`;
-      btn.onclick = () => switchGroupPane(newName);
-    }
-    setGroupListValue(groupListValue().map((item) => item === oldName ? newName : item));
-    switchGroupPane(newName);
-  });
-}
-
-function initGroupEditor() {
-  document.querySelectorAll(".group-pane").forEach(wireGroupRename);
-  demoteOrPromoteRuleSetGroups();
-  document.querySelectorAll('.group-pane[data-source="ruleset"] input[name], .group-pane[data-source="ruleset"] textarea[name], .group-pane[data-source="ruleset"] select[name]').forEach((el) => {
-    el.addEventListener("input", demoteOrPromoteRuleSetGroups);
-    el.addEventListener("change", demoteOrPromoteRuleSetGroups);
-  });
-  const first = document.querySelector(".group-list button[data-group]");
-  if (first) switchGroupPane(first.dataset.group);
-}
-
-function addDnsPolicyRow(match, server, params) {
-  const rows = document.getElementById("dnsPolicyRows");
-  if (!rows) return;
-  const div = document.createElement("div");
-  div.className = "dns-policy-grid dns-policy-row";
-  div.innerHTML = `
-    <input class="dns-policy-match" value="${match || ""}" placeholder="+.example.com или rule-set:name">
-    <input class="dns-policy-server" value="${server || ""}" placeholder="https://dns.quad9.net/dns-query">
-    <input class="dns-policy-params" value="${params || ""}" placeholder="disable-ipv6=true&disable-qtype-65=true">
-    <button type="button" onclick="removeDnsPolicyRow(this)">Удалить</button>
-  `;
-  rows.appendChild(div);
-  div.querySelectorAll("input").forEach((input) => input.addEventListener("input", syncDnsPolicy));
-  syncDnsPolicy();
-}
-
-function splitHeaderItem(raw) {
-  const pos = String(raw || "").indexOf("=");
-  if (pos < 0) return {key: raw || "", value: ""};
-  return {key: raw.slice(0, pos), value: raw.slice(pos + 1)};
-}
-
-function addHeadersRow(editor, key, value) {
-  const row = document.createElement("div");
-  row.className = "headers-row";
-  row.innerHTML = `<input class="headers-key" value="${escapeAttr(key)}" placeholder="Header"><input class="headers-value" value="${escapeAttr(value)}" placeholder="value"><button type="button">Удалить</button>`;
-  editor.querySelector(".headers-rows").appendChild(row);
-  row.querySelectorAll("input").forEach((input) => input.addEventListener("input", () => syncHeadersEditor(editor)));
-  row.querySelector("button").addEventListener("click", () => {
-    row.remove();
-    syncHeadersEditor(editor);
-  });
-}
-
-function syncHeadersEditor(editor) {
-  const hidden = editor.querySelector("input.sub-link-headers-value");
-  const items = [];
-  editor.querySelectorAll(".headers-row").forEach((row) => {
-    const key = row.querySelector(".headers-key").value.trim();
-    const value = row.querySelector(".headers-value").value.trim();
-    if (key) items.push(key + "=" + value);
-  });
-  hidden.value = items.join("#");
-  rememberField(hidden);
-}
-
-function initHeadersEditors(root) {
-  (root || document).querySelectorAll(".headers-editor").forEach((editor) => {
-    if (editor.dataset.wired === "true") return;
-    editor.dataset.wired = "true";
-    const hidden = editor.querySelector("input.sub-link-headers-value");
-    const current = hidden.value.trim();
-    if (current) {
-      current.split("#").forEach((item) => {
-        const pair = splitHeaderItem(item);
-        addHeadersRow(editor, pair.key, pair.value);
-      });
-    }
-    editor.querySelector(".headers-add").addEventListener("click", () => addHeadersRow(editor, "", ""));
-    if (!current) addHeadersRow(editor, "", "");
-  });
-}
-
-function splitEndpointItem(raw) {
-  const text = String(raw || "").trim();
-  const pos = text.lastIndexOf(":");
-  if (pos < 0) return {host: text, port: ""};
-  return {host: text.slice(0, pos), port: text.slice(pos + 1)};
-}
-
-function addWgEndpointRow(editor, host, port) {
-  const row = document.createElement("div");
-  row.className = "wg-endpoint-row";
-  row.innerHTML = `<input class="wg-host" value="${escapeAttr(host)}" placeholder="example.com"><input class="wg-port" value="${escapeAttr(port)}" placeholder="51820"><button type="button">Удалить</button>`;
-  editor.querySelector(".wg-endpoint-rows").appendChild(row);
-  row.querySelectorAll("input").forEach((input) => input.addEventListener("input", () => syncWgDst(editor)));
-  row.querySelector("button").addEventListener("click", () => {
-    row.remove();
-    syncWgDst(editor);
-  });
-}
-
-function syncWgDst(scope) {
-  const editors = scope && scope.classList && scope.classList.contains("wg-endpoint-editor") ? [scope] : [...document.querySelectorAll(".wg-endpoint-editor")];
-  editors.forEach((editor) => {
-    const hidden = editor.querySelector('input[name="ZAPRET2_WG_DST"]');
-    if (!hidden) return;
-    const items = [...editor.querySelectorAll(".wg-endpoint-row")].map((row) => {
-      const host = row.querySelector(".wg-host").value.trim();
-      const port = row.querySelector(".wg-port").value.trim();
-      if (!host || !port) return "";
-      return host + ":" + port;
-    }).filter(Boolean);
-    hidden.value = items.join(",");
-    rememberField(hidden);
-  });
-}
-
-function initWgEndpointEditors(root) {
-  (root || document).querySelectorAll(".wg-endpoint-editor").forEach((editor) => {
-    if (editor.dataset.wired === "true") return;
-    editor.dataset.wired = "true";
-    const hidden = editor.querySelector('input[name="ZAPRET2_WG_DST"]');
-    const rows = editor.querySelector(".wg-endpoint-rows");
-    const current = hidden.value.trim();
-    if (current) current.split(",").map(splitEndpointItem).forEach((item) => addWgEndpointRow(editor, item.host, item.port));
-    if (!rows.children.length) addWgEndpointRow(editor, "", "");
-    editor.querySelector(".wg-endpoint-add").addEventListener("click", () => {
-      addWgEndpointRow(editor, "", "");
-      syncWgDst(editor);
-    });
-    syncWgDst(editor);
-  });
-}
-
-function previewEnvMap() {
-  const map = new Map();
-  const raw = document.getElementById("rulesPreviewEnv")?.value || "";
-  raw.split(/\n/).forEach((line) => {
-    const pos = line.indexOf("=");
-    if (pos > 0) map.set(line.slice(0, pos), line.slice(pos + 1));
-  });
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith("mihomo-env:")) map.set(key.slice("mihomo-env:".length), localStorage.getItem(key) || "");
-  }
-  document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]").forEach((el) => map.set(el.name, fieldValue(el)));
-  return map;
-}
-
-function splitList(value) {
-  return String(value || "").split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
-}
-
-function previewRuleSetSources(env) {
-  const sources = [];
-  [...env.keys()].filter((name) => /^RULE_SET[0-9]+_BASE64$/.test(name)).sort((a, b) => Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0])).forEach((key) => {
-    const value = env.get(key) || "";
-    const hash = value.indexOf("#");
-    if (hash < 0) return;
-    const name = value.slice(hash + 1).trim().replace(/[^a-zA-Z0-9_-]/g, "");
-    if (name) sources.push({name, source: key});
-  });
-  (document.getElementById("rulesPreviewMounts")?.value || "").split(/\n/).map((x) => x.trim()).filter(Boolean).forEach((name) => sources.push({name, source: "mount"}));
-  const seen = new Set();
-  return sources.filter((item) => {
-    if (seen.has(item.name)) return false;
-    seen.add(item.name);
-    return true;
-  });
-}
-
-function buildPreviewRules() {
-  const env = previewEnvMap();
-  const rules = [{prio: -1, origin: "generated", detail: "fixed", rule: "RULE-SET,DNS_ruleset,DNS", editable: false}];
-  [...env.keys()].filter((name) => /^RULES[0-9]+$/.test(name)).sort((a, b) => Number(a.slice(5)) - Number(b.slice(5))).forEach((name) => {
-    const prio = Number(name.slice(5));
-    const value = env.get(name) || "";
-    const parts = value.split(";").map((x) => x.trim()).filter(Boolean);
-    if (!parts.length && localStorage.getItem(originalKey(name)) === "" && localStorage.getItem(envKey(name)) === "") {
-      parts.push("");
-    }
-    parts.forEach((rule) => rules.push({prio, origin: name, detail: "editable", rule, editable: true}));
-  });
-  const groupNames = splitList(env.get("GROUP"));
-  let groupIdx = 0;
-  groupNames.forEach((group) => {
-    const prefix = groupEnvPrefix(group);
-    const resources = ["GEOSITE", "GEOIP", "AS", "DOMAIN", "SUFFIX", "IPCIDR", "KEYWORD", "SRCIPCIDR", "DSCP"];
-    const hasResource = resources.some((suffix) => (env.get(prefix + "_" + suffix) || "").trim() !== "");
-    const hasUse = (env.get(prefix + "_USE") || "").trim() !== "";
-    if (!hasResource && !hasUse) return;
-    const prioRaw = (env.get(prefix + "_PRIORITY") || "").trim();
-    const prio = prioRaw !== "" && Number.isFinite(Number(prioRaw)) ? Number(prioRaw) : 1000 + groupIdx;
-    splitList(env.get(prefix + "_GEOSITE")).forEach((item) => rules.push({prio, origin: prefix + "_GEOSITE", detail: group, rule: `RULE-SET,${group}_geosite_${item},${group}`}));
-    splitList(env.get(prefix + "_GEOIP")).forEach((item) => {
-      const rs = `${group}_geoip_${item}`;
-      const rule = item === "discord" ? `AND,((RULE-SET,${rs}),(NETWORK,UDP),(DST-PORT,19294-19344/50000-50100)),${group}` : `RULE-SET,${rs},${group}`;
-      rules.push({prio, origin: prefix + "_GEOIP", detail: group, rule});
-    });
-    splitList(env.get(prefix + "_AS")).forEach((item) => {
-      if (!/^AS/i.test(item)) return;
-      rules.push({prio, origin: prefix + "_AS", detail: group, rule: `RULE-SET,${group}_as_${item},${group}`});
-    });
-    const custom = ["DOMAIN", "SUFFIX", "KEYWORD", "IPCIDR", "SRCIPCIDR"].some((suffix) => splitList(env.get(prefix + "_" + suffix)).length > 0);
-    if (custom) rules.push({prio, origin: prefix + "_CUSTOM", detail: group, rule: `RULE-SET,${group}_custom_rules,${group}`});
-    const dscp = (env.get(prefix + "_DSCP") || "").trim();
-    if (dscp) {
-      rules.push({prio, origin: prefix + "_DSCP", detail: group, rule: `DSCP,${dscp},${group}`});
-      rules.push({prio, origin: prefix + "_DSCP", detail: group, rule: `IN-NAME,redir-in-dscp-${dscp},${group}`});
-    }
-    groupIdx += 1;
-  });
-  previewRuleSetSources(env).forEach((item, idx) => {
-    const prefix = groupEnvPrefix(item.name);
-    const prioRaw = (env.get(prefix + "_PRIORITY") || "").trim();
-    const prio = prioRaw !== "" && Number.isFinite(Number(prioRaw)) ? Number(prioRaw) : 2000 + idx;
-    rules.push({prio, origin: item.source, detail: item.name, rule: `RULE-SET,${item.name}_ruleset,${item.name}`});
-  });
-  rules.push({prio: 900000, origin: "generated", detail: "fixed", rule: "IN-NAME,redir-in,GLOBAL"});
-  rules.push({prio: 900001, origin: "generated", detail: "fixed", rule: "IN-NAME,tun-in,GLOBAL"});
-  rules.push({prio: 900002, origin: "generated", detail: "fixed", rule: "IN-NAME,mixed-in,GLOBAL"});
-  rules.push({prio: 900003, origin: "generated", detail: "fixed", rule: "MATCH,DIRECT"});
-  return rules.sort((a, b) => a.prio - b.prio);
-}
-
-function renderRulesPreview() {
-  const wrap = document.getElementById("finalRulesPreview");
-  if (!wrap) return;
-  wrap.innerHTML = "";
-  buildPreviewRules().forEach((item, index) => {
-    const row = document.createElement("div");
-    row.className = item.editable ? "final-rule-row editable-rule-row" : "final-rule-row readonly-rule-row";
-    row.innerHTML = `
-      <label class="env-index"><input type="number" value="${index + 1}" readonly></label>
-      <span class="rule-origin"><b>${escapeAttr(item.origin)}</b><small>priority: ${escapeAttr(item.prio)}</small><small>${escapeAttr(item.detail || "")}</small></span>
-      <input type="text" value="${escapeAttr(item.rule)}" readonly>
-    `;
-    wrap.appendChild(row);
-  });
-}
-
-function addPreviewRule() {
-  addRow("rules", "RULES", true);
-}
-
-function removeDnsPolicyRow(btn) {
-  const row = btn.closest(".dns-policy-row");
-  if (row) row.remove();
-  syncDnsPolicy();
-}
-
-function syncDnsPolicy() {
-  const hidden = document.getElementById("nameserverPolicyValue");
-  const rows = document.querySelectorAll(".dns-policy-row");
-  if (!hidden) return;
-  const items = [];
-  rows.forEach((row) => {
-    const match = row.querySelector(".dns-policy-match")?.value.trim() || "";
-    const server = row.querySelector(".dns-policy-server")?.value.trim() || "";
-    const params = row.querySelector(".dns-policy-params")?.value.trim() || "";
-    if (!match || !server) return;
-    items.push(match + "#" + server + (params ? "#" + params : ""));
-  });
-  hidden.value = items.join(",");
-  rememberField(hidden);
-}
-
-function trackRemovedEnv(name) {
-  if (!name) return;
-  const form = document.getElementById("envForm");
-  if (!form || [...form.querySelectorAll("input[data-removed-env]")].some((el) => el.dataset.removedEnv === name)) return;
-  const hidden = document.createElement("input");
-  hidden.type = "hidden";
-  hidden.name = name;
-  hidden.value = "";
-  hidden.dataset.removedEnv = name;
-  form.appendChild(hidden);
-}
-
-function removeEnvRow(btn) {
-  const row = btn.closest(".env-row");
-  if (!row) return;
-  row.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
-    if (localStorage.getItem(originalKey(el.name)) === null) {
-      localStorage.setItem(originalKey(el.name), fieldValue(el));
-    }
-    localStorage.setItem(envKey(el.name), "");
-    trackRemovedEnv(el.name);
-  });
-  row.remove();
-  if (document.getElementById("finalRulesPreview")) renderRulesPreview();
-}
-
-function switchYaml(name) {
-  document.querySelectorAll(".yaml-file").forEach((el) => {
-    el.hidden = el.dataset.name !== name;
-    el.classList.toggle("active", el.dataset.name === name);
-  });
-  document.querySelectorAll(".file-list button").forEach((el) => el.classList.toggle("active", el.dataset.name === name));
-  if (name && location.hash.slice(1) !== encodeURIComponent(name)) {
-    history.replaceState(null, "", "#" + encodeURIComponent(name));
-  }
-}
-
-let activeYamlPre = null;
-
-function copyActiveYaml(btn) {
-  const active = document.querySelector(".yaml-file.active pre");
-  if (!active) return;
-  const text = active.textContent || "";
-  const area = document.createElement("textarea");
-  area.value = text;
-  area.style.position = "fixed";
-  area.style.left = "-9999px";
-  document.body.appendChild(area);
-  area.focus();
-  area.select();
-  document.execCommand("copy");
-  document.body.removeChild(area);
-  if (btn) {
-    const oldText = btn.textContent;
-    btn.textContent = "Скопировано";
-    btn.classList.add("copied");
-    setTimeout(() => {
-      btn.textContent = oldText;
-      btn.classList.remove("copied");
-    }, 1800);
-  }
-}
-
-function selectPreText(pre) {
-  const range = document.createRange();
-  range.selectNodeContents(pre);
-  const selection = window.getSelection();
-  selection.removeAllRanges();
-  selection.addRange(range);
-}
-
-document.addEventListener("keydown", (event) => {
-  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "a") return;
-  const targetPre = event.target && event.target.closest ? event.target.closest(".yaml-file.active pre") : null;
-  const pre = targetPre || activeYamlPre;
-  if (!pre || !pre.closest(".yaml-file.active")) return;
-  event.preventDefault();
-  selectPreText(pre);
-});
-
-document.addEventListener("pointerdown", (event) => {
-  const pre = event.target && event.target.closest ? event.target.closest(".yaml-file.active pre") : null;
-  if (pre) activeYamlPre = pre;
-});
-
-document.addEventListener("DOMContentLoaded", () => {
-  applyTheme(localStorage.getItem("mihomo-theme") || "dark");
-  const envListInput = document.getElementById("commandEnvList");
-  if (envListInput) envListInput.value = localStorage.getItem("mihomo-command-env-list") || defaultEnvListName;
-  wireFieldEvents(document.getElementById("envForm"));
-  normalizeFieldMeta(document);
-  enhanceIndexedRows(document);
-  document.querySelectorAll(".rows").forEach(sortIndexedRows);
-  cleanupRemovedIndexedRows();
-  restoreMissingIndexedRows();
-  initDragAndDropForAll();
-  initGroupEditor();
-  initHeadersEditors(document);
-  initWgEndpointEditors(document);
-  renderRulesPreview();
-  document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]").forEach((el) => {
-    el.addEventListener("input", renderRulesPreview);
-    el.addEventListener("change", renderRulesPreview);
-  });
-  window.addEventListener("storage", (event) => {
-    if (event.key && event.key.startsWith("mihomo-env:")) renderRulesPreview();
-  });
-  document.querySelectorAll(".dns-policy-row input").forEach((input) => input.addEventListener("input", syncDnsPolicy));
-  syncDnsPolicy();
-  const requestedYaml = decodeURIComponent(location.hash.slice(1));
-  const requestedButton = requestedYaml ? [...document.querySelectorAll(".file-list button")].find((btn) => btn.dataset.name === requestedYaml) : null;
-  const first = requestedButton || document.querySelector(".file-list button");
-  if (first) switchYaml(first.dataset.name);
-});
-</script>
+EOF
+  printf '<script src="%s"></script>\n' "$(asset_url ui.js)"
+  cat <<'EOF'
 <div class="modal" id="ruleSetModal" hidden>
   <div class="modal-backdrop" onclick="closeRuleSetModal()"></div>
   <div class="modal-content">
@@ -2053,10 +592,34 @@ EOF
   section_end
 
   section_start "Mounted providers" "Файлы, которые entrypoint читает из каталогов."
+  yaml_url="$(page_url yaml)"
   echo '<div class="mounts">'
-  printf '<article><b>AWG configs</b><div class="mount-links">'
-  mounted_file_links "$AWG_DIR"
-  printf '</div></article><article><b>proxies_mount</b><div class="mount-links" id="proxy-mount-links">'
+  printf '<article><b>AWG configs</b><div class="mount-links" id="awg-mount-links">'
+  if [ -d "$AWG_DIR" ]; then
+    for f in "$AWG_DIR"/*; do
+      [ -f "$f" ] || continue
+      base="$(basename "$f")"
+      size="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
+      display="${base%.conf}"
+      anchor="$(yaml_link_name "$base")"
+      printf '<div class="mount-link awg-file" data-file="%s" data-anchor="%s"><a class="mount-link-title" href="%s#%s"><span>%s</span><small>%s bytes</small></a><div class="file-actions"><button type="button" onclick="editAwgFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteAwgFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$anchor" | h)" "$yaml_url" "$(printf '%s' "$anchor" | h)" "$(printf '%s' "$display" | h)" "$size"
+    done
+  else
+    echo '<div class="empty">Каталог AWG не смонтирован.</div>'
+  fi
+  printf '</div>'
+  if [ -d "$AWG_DIR" ]; then
+    cat <<'EOF'
+<div class="mount-actions">
+  <button type="button" class="ghost" onclick="createAwgFile()">Новый файл</button>
+  <label class="ghost upload-label" tabindex="0">
+    <input type="file" id="awgUpload" accept=".conf" hidden onchange="uploadAwgConf()">
+    <span>Загрузить .conf</span>
+  </label>
+</div>
+EOF
+  fi
+  printf '</article><article><b>proxies_mount</b><div class="mount-links" id="proxy-mount-links">'
   if [ -d "$PROXIES_DIR" ]; then
     for f in "$PROXIES_DIR"/*; do
       [ -f "$f" ] || continue
@@ -2065,14 +628,23 @@ EOF
       display="${base%.yaml}"
       display="${display%.yml}"
       display="${display%.conf}"
-      printf '<div class="mount-link proxy-file" data-file="%s"><span>%s</span><small>%s bytes</small><div class="file-actions"><button type="button" onclick="editProxyFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteProxyFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$display" | h)" "$size"
+      anchor="$(yaml_link_name "$base")"
+      printf '<div class="mount-link proxy-file" data-file="%s" data-anchor="%s"><a class="mount-link-title" href="%s#%s"><span>%s</span><small>%s bytes</small></a><div class="file-actions"><button type="button" onclick="editProxyFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteProxyFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$anchor" | h)" "$yaml_url" "$(printf '%s' "$anchor" | h)" "$(printf '%s' "$display" | h)" "$size"
     done
   else
     echo '<div class="empty">Каталог proxies_mount не смонтирован.</div>'
   fi
   printf '</div>'
   if [ -d "$PROXIES_DIR" ]; then
-    echo '<button type="button" class="ghost" style="margin-top:8px; width:100%" onclick="createProxyFile()">Новый файл</button>'
+    cat <<'EOF'
+<div class="mount-actions">
+  <button type="button" class="ghost" onclick="createProxyFile()">Новый файл</button>
+  <label class="ghost upload-label" tabindex="0">
+    <input type="file" id="proxyUpload" accept=".yaml,.yml" hidden onchange="uploadProxyYaml()">
+    <span>Загрузить .yaml</span>
+  </label>
+</div>
+EOF
   fi
   printf '</article></div>'
   section_end
@@ -2083,11 +655,50 @@ EOF
     <header><b id="proxyEditTitle">Файл</b><button type="button" onclick="closeProxyFileModal()">&#10005;</button></header>
     <div class="modal-body">
       <label><span>Имя файла</span><input id="proxyEditName" placeholder="new-proxy"></label>
-      <label><span>Содержимое (YAML)</span><textarea id="proxyEditPlain" rows="12" placeholder="proxies:"></textarea></label>
+      <div class="template-row" id="proxyTemplateRow">
+        <label><span>Шаблон протокола</span>
+          <select id="proxyTemplateSelect">
+            <option value="">— выберите шаблон —</option>
+            <option value="vless-tcp">VLESS + TCP (Reality / Vision)</option>
+            <option value="vless-xhttp">VLESS + XHTTP</option>
+            <option value="vless-ws">VLESS + WebSocket</option>
+            <option value="vmess">VMess + WebSocket</option>
+            <option value="trojan">Trojan</option>
+            <option value="shadowsocks">Shadowsocks</option>
+            <option value="anytls">AnyTLS</option>
+            <option value="wireguard">WireGuard</option>
+            <option value="amneziawg">AmneziaWG</option>
+            <option value="hysteria2">Hysteria2</option>
+            <option value="tuic">TUIC</option>
+            <option value="ssh">SSH</option>
+          </select>
+        </label>
+        <button type="button" class="ghost" onclick="loadProxyTemplate()">Загрузить шаблон</button>
+      </div>
+      <label><span>Содержимое (YAML)</span><textarea id="proxyEditPlain" rows="14" placeholder="proxies:"></textarea></label>
+      <div id="proxyValidateResult" class="validate-result" hidden></div>
     </div>
     <footer class="modal-footer">
       <button type="button" class="ghost" onclick="closeProxyFileModal()">Отмена</button>
+      <button type="button" class="ghost" onclick="validateProxyYaml()">Проверить mihomo&nbsp;-t</button>
       <button type="button" class="primary" onclick="saveProxyFileModal()">Сохранить</button>
+    </footer>
+  </div>
+</div>
+<div class="modal" id="awgEditModal" hidden>
+  <div class="modal-backdrop" onclick="closeAwgFileModal()"></div>
+  <div class="modal-content">
+    <header><b id="awgEditTitle">AWG config</b><button type="button" onclick="closeAwgFileModal()">&#10005;</button></header>
+    <div class="modal-body">
+      <label><span>Имя файла (.conf будет добавлено)</span><input id="awgEditName" placeholder="my-awg"></label>
+      <div class="template-row" id="awgTemplateRow">
+        <button type="button" class="ghost" onclick="loadAwgTemplate()">Загрузить шаблон [Interface]/[Peer]</button>
+      </div>
+      <label><span>Содержимое (.conf)</span><textarea id="awgEditPlain" rows="18" placeholder="[Interface]"></textarea></label>
+    </div>
+    <footer class="modal-footer">
+      <button type="button" class="ghost" onclick="closeAwgFileModal()">Отмена</button>
+      <button type="button" class="primary" onclick="saveAwgFileModal()">Сохранить</button>
     </footer>
   </div>
 </div>
@@ -2153,6 +764,65 @@ EOF
 </div>
 EOF
   section_end
+
+  section_start "Файлы /zapret-fakebin" "Бинарные fake-пакеты для nfqws (--dpi-desync-fake-*). Изменения вступят в силу после перезагрузки контейнера."
+  cat <<'EOF'
+<div class="dpi-toolbar">
+  <input type="search" class="dpi-filter" data-list="fakebin-list" placeholder="Фильтр по имени…" oninput="filterDpiList(this)">
+  <label class="ghost upload-label" tabindex="0"><input type="file" id="fakebinUpload" hidden onchange="uploadFakebin()"><span>Загрузить файл</span></label>
+</div>
+EOF
+  echo '<div class="mount-links dpi-grid" id="fakebin-list">'
+  if [ -d /zapret-fakebin ]; then
+    for f in /zapret-fakebin/*; do
+      [ -f "$f" ] || continue
+      base="$(basename "$f")"
+      size="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
+      printf '<div class="mount-link mount-link-compact fakebin-file" data-file="%s" data-name="%s"><div class="mount-link-title"><span>%s</span><small>%s bytes</small></div><div class="file-actions"><a href="/cgi-bin/read-file?type=fakebin&amp;file=%s" download="%s" title="Скачать">&#8681;</a><button type="button" onclick="deleteFakebin(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$base" | h | tr 'A-Z' 'a-z')" "$(printf '%s' "$base" | h)" "$size" "$(printf '%s' "$base" | h)" "$(printf '%s' "$base" | h)"
+    done
+  else
+    echo '<div class="empty">Каталог /zapret-fakebin не смонтирован.</div>'
+  fi
+  echo '</div>'
+  section_end
+
+  section_start "Файлы /zapret-lists" "Текстовые списки доменов/IP для nfqws и lua-скриптов. Редактируются прямо в браузере."
+  echo '<div class="dpi-toolbar">'
+  echo '  <input type="search" class="dpi-filter" data-list="zlist-list" placeholder="Фильтр по имени…" oninput="filterDpiList(this)">'
+  if [ -d /zapret-lists ]; then
+    echo '  <button type="button" class="ghost" onclick="createZlistFile()">Новый список</button>'
+  fi
+  echo '</div>'
+  echo '<div class="mount-links dpi-grid" id="zlist-list">'
+  if [ -d /zapret-lists ]; then
+    for f in /zapret-lists/*; do
+      [ -f "$f" ] || continue
+      base="$(basename "$f")"
+      size="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
+      printf '<div class="mount-link mount-link-compact zlist-file" data-file="%s" data-name="%s"><div class="mount-link-title"><span>%s</span><small>%s bytes</small></div><div class="file-actions"><button type="button" onclick="editZlistFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteZlistFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$base" | h | tr 'A-Z' 'a-z')" "$(printf '%s' "$base" | h)" "$size"
+    done
+  else
+    echo '<div class="empty">Каталог /zapret-lists не смонтирован.</div>'
+  fi
+  echo '</div>'
+  section_end
+
+  cat <<'EOF'
+<div class="modal" id="zlistEditModal" hidden>
+  <div class="modal-backdrop" onclick="closeZlistFileModal()"></div>
+  <div class="modal-content">
+    <header><b id="zlistEditTitle">Список</b><button type="button" onclick="closeZlistFileModal()">&#10005;</button></header>
+    <div class="modal-body">
+      <label><span>Имя файла</span><input id="zlistEditName" placeholder="my-list.txt"></label>
+      <label><span>Содержимое (по строке на запись)</span><textarea id="zlistEditPlain" rows="18" placeholder="example.com&#10;example.org"></textarea></label>
+    </div>
+    <footer class="modal-footer">
+      <button type="button" class="ghost" onclick="closeZlistFileModal()">Отмена</button>
+      <button type="button" class="primary" onclick="saveZlistFileModal()">Сохранить</button>
+    </footer>
+  </div>
+</div>
+EOF
 }
 
 default_group_block() {

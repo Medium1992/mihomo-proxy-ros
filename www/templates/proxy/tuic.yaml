@@ -1,0 +1,14 @@
+proxies:
+  - name: tuic-example
+    type: tuic
+    server: server.example.com
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000000
+    password: <password>
+    udp: true
+    sni: server.example.com
+    skip-cert-verify: false
+    congestion-controller: bbr
+    udp-relay-mode: native
+    alpn:
+      - h3

@@ -1,121 +1,3 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" href="favicon.png">
-  <link rel="stylesheet" href="style.css">
-  <title>Mihomo Proxy ROS</title>
-</head>
-<body>
-<div class="app">
-  <aside class="side">
-    <a class="brand" href="index.html">
-      <img src="favicon.png" alt="">
-      <strong>MihomoProxyRoS</strong>
-      <small>ENV control panel</small>
-    </a>
-    <nav>
-<a class="active" href="index.html"><span>⌁</span>Обзор</a>
-<a class="" href="core.html"><span>⚙</span>Ядро и DNS</a>
-<a class="" href="providers.html"><span>+</span>Прокси-провайдеры</a>
-<a class="" href="dpi.html"><span>◇</span>DPI</a>
-<a class="" href="groups.html"><span>☷</span>Прокси-группы</a>
-<a class="" href="rules.html"><span>≡</span>Правила маршрутизации</a>
-<a class="" href="rulesets.html"><span>▣</span>Наборы правил</a>
-<a class="" href="yaml.html"><span>{}</span>YAML</a>
-<a class="" href="tools.html"><span>↯</span>Инструменты</a>
-    </nav>
-    <div class="side-note">
-      <b>sh-only</b>
-      <span>Страницы генерируются shell-скриптом из env. Команды собираются локально в браузере.</span>
-    </div>
-  </aside>
-  <main class="main">
-    <header class="top">
-      <div>
-        <p class="eyebrow">контейнер · mihomo-proxy-ros</p>
-        <h1>MihomoProxyRoS</h1>
-      </div>
-      <div class="top-actions">
-        <button class="theme-btn" type="button" onclick="toggleTheme()" aria-label="Toggle theme">
-          <span class="theme-dot"></span>
-          <b id="themeLabel">Темная</b>
-        </button>
-        <a class="ghost" href="yaml.html">Смотреть YAML</a>
-        <button class="ghost" type="button" onclick="resetCurrentPageDraft()">Сбросить страницу</button>
-        <button class="ghost" type="button" onclick="resetUiDraft()">Сбросить черновик</button>
-        <button class="primary" type="button" onclick="generateCommands()">Команды MikroTik</button>
-      </div>
-    </header>
-    <form id="envForm">
-<section class="overview-head">
-  <div>
-    <p class="eyebrow">состояние контейнера</p>
-    <h2>Обзор конфигурации</h2>
-    <p>Текущие env сгруппированы так же, как entrypoint собирает mihomo: ядро, источники прокси, DPI-обходы, группы, правила и YAML-файлы.</p>
-  </div>
-  <div class="config-card">
-    <span>основной файл</span>
-    <b>config.yaml</b>
-    <code>/root/.config/mihomo/config.yaml</code>
-    <a href="yaml.html">Открыть YAML</a>
-  </div>
-</section>
-<section class="stats">
-  <a href="providers.html"><b>0</b><span>LINK</span></a>
-  <a href="providers.html"><b>0</b><span>SUB_LINK</span></a>
-  <a href="providers.html"><b>0</b><span>SOCKS</span></a>
-  <a href="dpi.html"><b>0</b><span>DPI env</span></a>
-  <a href="groups.html"><b>0</b><span>групп</span></a>
-  <a href="yaml.html"><b>0</b><span>YAML</span></a>
-</section>
-<section class="panel">
-  <div class="section-head">
-    <div>
-      <h2>Карта env</h2>
-      <p>Как entrypoint превращает переменные в mihomo-конфиг.</p>
-    </div>
-  </div>
-<div class="map">
-  <article><b>Ядро</b><span>LOG_LEVEL, UI_SECRET, TPROXY, SNIFFER, DNS_MODE, FAKE_IP_*</span></article>
-  <article><b>Прокси-провайдеры</b><span>LINK*, SUB_LINK*, SOCKS*, mounted AWG и proxies_mount</span></article>
-  <article><b>DPI</b><span>BYEDPI_CMD*, ZAPRET_CMD*, ZAPRET2_CMD*, packets и WireGuard dst</span></article>
-  <article><b>Прокси-группы</b><span>GLOBAL_*, DNS_*, GROUP и переменные вида NAME_GEOSITE/USE/TYPE</span></article>
-  <article><b>Правила</b><span>RULES*, RULE_SET*_BASE64 и файлы rule_set_list</span></article>
-  <article><b>YAML</b><span>config.yaml плюс все file providers и payload-файлы в CONFIG_DIR</span></article>
-</div>
-</section>
-    <div class="bottom-submit">
-      <button class="primary" type="button" onclick="generateCommands()">Сгенерировать команды MikroTik</button>
-    </div>
-    </form>
-    <section id="commands" class="command-panel" hidden>
-      <div>
-        <h2>Команды для MikroTik</h2>
-        <p>Генератор сравнивает исходное значение env с тем, что сейчас в форме: новое добавляет, измененное правит, очищенное или удаленное удаляет.</p>
-      </div>
-      <label class="command-list-field">
-        <span>ENV list</span>
-        <input id="commandEnvList" value="MihomoProxyRoS" spellcheck="false">
-      </label>
-      <div class="command-grid">
-        <label>
-          <span>Текущая страница</span>
-          <textarea id="commandsText" readonly spellcheck="false"></textarea>
-        </label>
-        <label>
-          <span>Суммарно по всем измененным env</span>
-          <textarea id="commandsAllText" readonly spellcheck="false"></textarea>
-        </label>
-      </div>
-      <div class="command-actions">
-        <button class="ghost" type="button" onclick="copyCommands()">Скопировать суммарные</button>
-      </div>
-    </section>
-  </main>
-</div>
-<script>
 const containerName = "mihomo-proxy-ros";
 const defaultEnvListName = "MihomoProxyRoS";
 
@@ -246,11 +128,21 @@ function generateCommands() {
   document.getElementById("commands").scrollIntoView({behavior: "smooth", block: "start"});
 }
 
+function copyText(text, fallbackEl) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(() => {
+      if (fallbackEl) { fallbackEl.focus(); fallbackEl.select(); }
+      document.execCommand("copy");
+    });
+  } else {
+    if (fallbackEl) { fallbackEl.focus(); fallbackEl.select(); }
+    document.execCommand("copy");
+  }
+}
+
 function copyCommands() {
   const el = document.getElementById("commandsAllText");
-  el.focus();
-  el.select();
-  document.execCommand("copy");
+  copyText(el ? el.value : "", el);
 }
 
 function applyTheme(theme) {
@@ -575,8 +467,8 @@ function ensureIndexedRowControls(row) {
     grip = document.createElement("div");
     grip.className = "env-grip";
     grip.draggable = true;
-    grip.title = "\u041f\u0435\u0440\u0435\u0442\u0430\u0449\u0438\u0442\u044c";
-    grip.textContent = "\u22ee\u22ee";
+    grip.title = "Перетащить";
+    grip.textContent = "⋮⋮";
     row.insertBefore(grip, row.firstElementChild);
   } else {
     grip.draggable = true;
@@ -874,15 +766,31 @@ function deleteRuleSetFile(btn) {
 
 let proxyEditName = "";
 
+function yamlAnchorForFile(name) {
+  return name.replace(/\.conf$/, '.yaml');
+}
+
 function addProxyFileRow(name, size) {
   const wrap = document.getElementById("proxy-mount-links");
   if (!wrap) return;
+  const empty = wrap.querySelector(".empty");
+  if (empty) empty.remove();
   const div = document.createElement("div");
   div.className = "mount-link proxy-file";
   div.dataset.file = name;
+  const anchor = yamlAnchorForFile(name);
+  div.dataset.anchor = anchor;
   const displayName = name.replace(/\.(yaml|yml|conf)$/, '');
-  div.innerHTML = `<span>${escapeAttr(displayName)}</span><small>${size} bytes</small><div class="file-actions"><button type="button" onclick="editProxyFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteProxyFile(this)" title="Удалить">&#10005;</button></div>`;
+  div.innerHTML = `<a class="mount-link-title" href="yaml.html#${encodeURIComponent(anchor)}"><span>${escapeAttr(displayName)}</span><small>${size} bytes</small></a><div class="file-actions"><button type="button" onclick="editProxyFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteProxyFile(this)" title="Удалить">&#10005;</button></div>`;
   wrap.appendChild(div);
+}
+
+function resetProxyValidateResult() {
+  const box = document.getElementById("proxyValidateResult");
+  if (!box) return;
+  box.hidden = true;
+  box.className = "validate-result";
+  box.textContent = "";
 }
 
 function editProxyFile(btn) {
@@ -894,6 +802,9 @@ function editProxyFile(btn) {
   if (titleEl) titleEl.textContent = displayName;
   const nameEl = document.getElementById("proxyEditName");
   if (nameEl) { nameEl.value = displayName; nameEl.readOnly = true; }
+  const tplRow = document.getElementById("proxyTemplateRow");
+  if (tplRow) tplRow.style.display = "none";
+  resetProxyValidateResult();
   fetch('/cgi-bin/read-file?file=' + encodeURIComponent(proxyEditName) + '&type=proxy')
     .then((r) => { if (!r.ok) throw new Error(r.statusText); return r.text(); })
     .then((text) => {
@@ -912,12 +823,113 @@ function createProxyFile() {
   if (nameEl) { nameEl.value = ""; nameEl.readOnly = false; nameEl.focus(); }
   const plainEl = document.getElementById("proxyEditPlain");
   if (plainEl) plainEl.value = "";
+  const tplRow = document.getElementById("proxyTemplateRow");
+  if (tplRow) tplRow.style.display = "";
+  const tplSel = document.getElementById("proxyTemplateSelect");
+  if (tplSel) tplSel.value = "";
+  resetProxyValidateResult();
   document.getElementById("proxyEditModal").hidden = false;
 }
 
 function closeProxyFileModal() {
   document.getElementById("proxyEditModal").hidden = true;
   proxyEditName = "";
+  resetProxyValidateResult();
+}
+
+function loadProxyTemplate() {
+  const sel = document.getElementById("proxyTemplateSelect");
+  const plainEl = document.getElementById("proxyEditPlain");
+  if (!sel || !plainEl) return;
+  const tpl = sel.value;
+  if (!tpl) { alert("Сначала выберите шаблон в списке"); return; }
+  if (plainEl.value.trim() && !window.confirm("Заменить текущее содержимое выбранным шаблоном?")) return;
+  fetch('templates/proxy/' + encodeURIComponent(tpl) + '.yaml')
+    .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+    .then((text) => { plainEl.value = text; resetProxyValidateResult(); })
+    .catch((e) => alert('Не удалось загрузить шаблон: ' + e.message));
+}
+
+function showProxyValidateResult(ok, message) {
+  const box = document.getElementById("proxyValidateResult");
+  if (!box) return;
+  box.hidden = false;
+  box.className = "validate-result " + (ok ? "validate-ok" : "validate-fail");
+  box.textContent = message;
+}
+
+function decodeB64Utf8(b64) {
+  if (!b64) return "";
+  try {
+    const bin = atob(b64);
+    // Convert binary string to UTF-8
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    if (typeof TextDecoder !== "undefined") {
+      return new TextDecoder("utf-8").decode(bytes);
+    }
+    return decodeURIComponent(escape(bin));
+  } catch (e) {
+    return "[не удалось декодировать base64: " + e.message + "]";
+  }
+}
+
+function validateProxyYaml() {
+  const plainEl = document.getElementById("proxyEditPlain");
+  if (!plainEl) return Promise.resolve(false);
+  const yaml = plainEl.value;
+  if (!yaml.trim()) {
+    showProxyValidateResult(false, "Пустое содержимое");
+    return Promise.resolve(false);
+  }
+  showProxyValidateResult(true, "Проверка через mihomo -t…");
+  const b64 = btoa(unescape(encodeURIComponent(yaml)));
+  return fetch('/cgi-bin/validate-proxy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'b64=' + encodeURIComponent(b64)
+  })
+    .then((r) => r.text())
+    .then((text) => {
+      let data;
+      try { data = JSON.parse(text); }
+      catch (e) {
+        showProxyValidateResult(false, "Сервер вернул не-JSON:\n" + text.slice(0, 4000));
+        return false;
+      }
+      const output = decodeB64Utf8(data.output_b64) || decodeB64Utf8(data.error_b64);
+      if (data && data.ok) {
+        showProxyValidateResult(true, "OK — mihomo -t прошёл успешно.\n" + output);
+        return true;
+      }
+      showProxyValidateResult(false, "Ошибка валидации:\n" + (output || "неизвестно"));
+      return false;
+    })
+    .catch((e) => {
+      showProxyValidateResult(false, "Сеть/CGI: " + e);
+      return false;
+    });
+}
+
+function extractProxyNames(yamlText) {
+  const out = [];
+  const lines = yamlText.split(/\r?\n/);
+  const re = /^\s*-?\s*name:\s*(.+?)\s*$/;
+  for (const line of lines) {
+    const m = re.exec(line);
+    if (m) {
+      let v = m[1];
+      v = v.replace(/^['"]/, "").replace(/['"]$/, "");
+      if (v) out.push(v);
+    }
+  }
+  return out;
+}
+
+function fetchProxyList() {
+  return fetch('/cgi-bin/list-files?type=proxy')
+    .then((r) => r.json())
+    .catch(() => ({ ok: false, files: [] }));
 }
 
 function saveProxyFileModal() {
@@ -926,15 +938,41 @@ function saveProxyFileModal() {
   if (!plainEl || !nameEl) return;
   const name = nameEl.value.trim();
   if (!name) { alert("Укажите имя файла"); return; }
-  const fileName = name.endsWith(".yaml") ? name : name + ".yaml";
+  const fileName = name.endsWith(".yaml") || name.endsWith(".yml") ? name : name + ".yaml";
   const isNew = !nameEl.readOnly;
-  const b64 = btoa(unescape(encodeURIComponent(plainEl.value)));
-  fetch('/cgi-bin/save-file', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'file=' + encodeURIComponent(fileName) + '&b64=' + encodeURIComponent(b64) + '&type=proxy'
-  })
-    .then((r) => r.text())
+  const newNames = extractProxyNames(plainEl.value);
+
+  fetchProxyList()
+    .then((data) => {
+      const existing = (data && data.files) || [];
+      // Filename uniqueness (only for new file)
+      if (isNew && existing.some((f) => f.file === fileName)) {
+        throw new Error("Файл с именем " + fileName + " уже существует");
+      }
+      // Proxy `name:` uniqueness — across other files
+      const collisions = [];
+      const ownFile = isNew ? null : fileName;
+      for (const f of existing) {
+        if (ownFile && f.file === ownFile) continue;
+        if (!f.name) continue;
+        for (const n of f.name.split(",")) {
+          if (n && newNames.includes(n)) collisions.push(n + " (в файле " + f.file + ")");
+        }
+      }
+      if (collisions.length) throw new Error("Конфликт имён proxy:\n" + collisions.join("\n"));
+
+      // Run mihomo -t validation
+      return validateProxyYaml();
+    })
+    .then((valid) => {
+      if (!valid) throw new Error("Валидация не пройдена — сохранение отменено");
+      const b64 = btoa(unescape(encodeURIComponent(plainEl.value)));
+      return fetch('/cgi-bin/save-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'file=' + encodeURIComponent(fileName) + '&b64=' + encodeURIComponent(b64) + '&type=proxy'
+      }).then((r) => r.text());
+    })
     .then((text) => {
       if (text.trim() === "OK") {
         closeProxyFileModal();
@@ -946,7 +984,7 @@ function saveProxyFileModal() {
         alert('Ошибка сохранения: ' + text);
       }
     })
-    .catch((e) => alert('Ошибка сети: ' + e));
+    .catch((e) => alert(e.message || String(e)));
 }
 
 function deleteProxyFile(btn) {
@@ -961,6 +999,402 @@ function deleteProxyFile(btn) {
       if (text.trim() !== "OK") {
         alert('Ошибка удаления: ' + text);
       }
+    })
+    .catch((e) => alert('Ошибка сети: ' + e));
+}
+
+// ===== AWG conf editor =====
+
+let awgEditName = "";
+
+function addAwgFileRow(name, size) {
+  const wrap = document.getElementById("awg-mount-links");
+  if (!wrap) return;
+  const empty = wrap.querySelector(".empty");
+  if (empty) empty.remove();
+  const existing = wrap.querySelector('.awg-file[data-file="' + name.replace(/"/g, '\\"') + '"]');
+  if (existing) existing.remove();
+  const div = document.createElement("div");
+  div.className = "mount-link awg-file";
+  div.dataset.file = name;
+  const anchor = yamlAnchorForFile(name);
+  div.dataset.anchor = anchor;
+  const displayName = name.replace(/\.conf$/, '');
+  div.innerHTML = `<a class="mount-link-title" href="yaml.html#${encodeURIComponent(anchor)}"><span>${escapeAttr(displayName)}</span><small>${size} bytes</small></a><div class="file-actions"><button type="button" onclick="editAwgFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteAwgFile(this)" title="Удалить">&#10005;</button></div>`;
+  wrap.appendChild(div);
+}
+
+function uploadAwgConf() {
+  const input = document.getElementById("awgUpload");
+  if (!input || !input.files || !input.files.length) return;
+  const file = input.files[0];
+  if (!/\.conf$/i.test(file.name)) {
+    alert("Ожидается файл с расширением .conf");
+    input.value = ""; return;
+  }
+  const reader = new FileReader();
+  reader.onload = function () {
+    const data = String(reader.result || "");
+    const idx = data.indexOf(",");
+    const b64 = idx >= 0 ? data.slice(idx + 1) : "";
+    if (!b64) { alert("Не удалось прочитать файл"); return; }
+    fetch('/cgi-bin/list-files?type=awg').then((r) => r.json()).then((listData) => {
+      const existing = (listData && listData.files) || [];
+      if (existing.some((f) => f.file === file.name) && !window.confirm("Файл " + file.name + " существует. Перезаписать?")) {
+        input.value = ""; return;
+      }
+      return fetch('/cgi-bin/save-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'file=' + encodeURIComponent(file.name) + '&b64=' + encodeURIComponent(b64) + '&type=awg'
+      })
+        .then((r) => r.text())
+        .then((text) => {
+          if (text.trim() === "OK") {
+            addAwgFileRow(file.name, file.size);
+            input.value = "";
+          } else {
+            alert('Ошибка загрузки: ' + text);
+          }
+        });
+    }).catch((e) => alert('Ошибка сети: ' + e));
+  };
+  reader.onerror = function () { alert("Ошибка чтения файла"); };
+  reader.readAsDataURL(file);
+}
+
+function uploadProxyYaml() {
+  const input = document.getElementById("proxyUpload");
+  if (!input || !input.files || !input.files.length) return;
+  const file = input.files[0];
+  if (!/\.(yaml|yml)$/i.test(file.name)) {
+    alert("Ожидается файл с расширением .yaml или .yml");
+    input.value = ""; return;
+  }
+  const reader = new FileReader();
+  reader.onload = function () {
+    const data = String(reader.result || "");
+    const idx = data.indexOf(",");
+    const b64 = idx >= 0 ? data.slice(idx + 1) : "";
+    if (!b64) { alert("Не удалось прочитать файл"); return; }
+    fetch('/cgi-bin/list-files?type=proxy').then((r) => r.json()).then((listData) => {
+      const existing = (listData && listData.files) || [];
+      if (existing.some((f) => f.file === file.name) && !window.confirm("Файл " + file.name + " существует. Перезаписать?")) {
+        input.value = ""; return;
+      }
+      return fetch('/cgi-bin/save-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'file=' + encodeURIComponent(file.name) + '&b64=' + encodeURIComponent(b64) + '&type=proxy'
+      })
+        .then((r) => r.text())
+        .then((text) => {
+          if (text.trim() === "OK") {
+            // Replace existing row or add new
+            const wrap = document.getElementById("proxy-mount-links");
+            const existingRow = wrap && wrap.querySelector('.proxy-file[data-file="' + file.name.replace(/"/g, '\\"') + '"]');
+            if (existingRow) existingRow.remove();
+            addProxyFileRow(file.name, file.size);
+            input.value = "";
+          } else {
+            alert('Ошибка загрузки: ' + text);
+          }
+        });
+    }).catch((e) => alert('Ошибка сети: ' + e));
+  };
+  reader.onerror = function () { alert("Ошибка чтения файла"); };
+  reader.readAsDataURL(file);
+}
+
+function editAwgFile(btn) {
+  const row = btn.closest(".awg-file");
+  if (!row) return;
+  awgEditName = row.dataset.file;
+  const displayName = awgEditName.replace(/\.conf$/, '');
+  const titleEl = document.getElementById("awgEditTitle");
+  if (titleEl) titleEl.textContent = displayName;
+  const nameEl = document.getElementById("awgEditName");
+  if (nameEl) { nameEl.value = displayName; nameEl.readOnly = true; }
+  const tplRow = document.getElementById("awgTemplateRow");
+  if (tplRow) tplRow.style.display = "none";
+  fetch('/cgi-bin/read-file?file=' + encodeURIComponent(awgEditName) + '&type=awg')
+    .then((r) => { if (!r.ok) throw new Error(r.statusText); return r.text(); })
+    .then((text) => {
+      const plainEl = document.getElementById("awgEditPlain");
+      if (plainEl) plainEl.value = text;
+      document.getElementById("awgEditModal").hidden = false;
+    })
+    .catch((e) => alert('Не удалось прочитать файл: ' + e.message));
+}
+
+function createAwgFile() {
+  awgEditName = "";
+  const titleEl = document.getElementById("awgEditTitle");
+  if (titleEl) titleEl.textContent = "Новый AWG config";
+  const nameEl = document.getElementById("awgEditName");
+  if (nameEl) { nameEl.value = ""; nameEl.readOnly = false; nameEl.focus(); }
+  const plainEl = document.getElementById("awgEditPlain");
+  if (plainEl) plainEl.value = "";
+  const tplRow = document.getElementById("awgTemplateRow");
+  if (tplRow) tplRow.style.display = "";
+  document.getElementById("awgEditModal").hidden = false;
+}
+
+function closeAwgFileModal() {
+  document.getElementById("awgEditModal").hidden = true;
+  awgEditName = "";
+}
+
+function loadAwgTemplate() {
+  const plainEl = document.getElementById("awgEditPlain");
+  if (!plainEl) return;
+  if (plainEl.value.trim() && !window.confirm("Заменить текущее содержимое шаблоном?")) return;
+  fetch('templates/awg.conf')
+    .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+    .then((text) => { plainEl.value = text; })
+    .catch((e) => alert('Не удалось загрузить шаблон: ' + e.message));
+}
+
+function saveAwgFileModal() {
+  const nameEl = document.getElementById("awgEditName");
+  const plainEl = document.getElementById("awgEditPlain");
+  if (!plainEl || !nameEl) return;
+  const name = nameEl.value.trim();
+  if (!name) { alert("Укажите имя файла"); return; }
+  const fileName = name.endsWith(".conf") ? name : name + ".conf";
+  const isNew = !nameEl.readOnly;
+
+  // Filename uniqueness for new files
+  const checkPromise = isNew
+    ? fetch('/cgi-bin/list-files?type=awg').then((r) => r.json()).then((data) => {
+        const existing = (data && data.files) || [];
+        if (existing.some((f) => f.file === fileName)) {
+          throw new Error("Файл с именем " + fileName + " уже существует");
+        }
+      })
+    : Promise.resolve();
+
+  checkPromise
+    .then(() => {
+      const b64 = btoa(unescape(encodeURIComponent(plainEl.value)));
+      return fetch('/cgi-bin/save-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'file=' + encodeURIComponent(fileName) + '&b64=' + encodeURIComponent(b64) + '&type=awg'
+      }).then((r) => r.text());
+    })
+    .then((text) => {
+      if (text.trim() === "OK") {
+        closeAwgFileModal();
+        if (isNew) {
+          const size = new Blob([plainEl.value]).size;
+          addAwgFileRow(fileName, size);
+        }
+      } else {
+        alert('Ошибка сохранения: ' + text);
+      }
+    })
+    .catch((e) => alert(e.message || String(e)));
+}
+
+function deleteAwgFile(btn) {
+  const row = btn.closest(".awg-file");
+  if (!row) return;
+  const name = row.dataset.file;
+  if (!window.confirm("Удалить файл " + name.replace(/\.conf$/, '') + "?")) return;
+  row.remove();
+  fetch('/cgi-bin/delete-file?file=' + encodeURIComponent(name) + '&type=awg')
+    .then((r) => r.text())
+    .then((text) => {
+      if (text.trim() !== "OK") {
+        alert('Ошибка удаления: ' + text);
+      }
+    })
+    .catch((e) => alert('Ошибка сети: ' + e));
+}
+
+// ===== /zapret-fakebin (binary upload) =====
+
+function filterDpiList(input, listId) {
+  const q = String(input.value || "").trim().toLowerCase();
+  const id = listId || (input && input.dataset && input.dataset.list);
+  const wrap = id ? document.getElementById(id) : null;
+  if (!wrap) return;
+  wrap.querySelectorAll(".mount-link").forEach((row) => {
+    const name = (row.dataset.name || row.dataset.file || row.textContent || "").toLowerCase();
+    if (!q || name.indexOf(q) !== -1) row.classList.remove("hidden");
+    else row.classList.add("hidden");
+  });
+}
+
+function addFakebinRow(name, size) {
+  const wrap = document.getElementById("fakebin-list");
+  if (!wrap) return;
+  const empty = wrap.querySelector(".empty");
+  if (empty) empty.remove();
+  const div = document.createElement("div");
+  div.className = "mount-link mount-link-compact fakebin-file";
+  div.dataset.file = name;
+  div.dataset.name = name.toLowerCase();
+  const esc = escapeAttr(name);
+  div.innerHTML = `<div class="mount-link-title"><span>${esc}</span><small>${size} bytes</small></div><div class="file-actions"><a href="/cgi-bin/read-file?type=fakebin&file=${encodeURIComponent(name)}" download="${esc}" title="Скачать">&#8681;</a><button type="button" onclick="deleteFakebin(this)" title="Удалить">&#10005;</button></div>`;
+  wrap.appendChild(div);
+}
+
+function uploadFakebin() {
+  const input = document.getElementById("fakebinUpload");
+  if (!input || !input.files || !input.files.length) {
+    alert("Выберите файл для загрузки");
+    return;
+  }
+  const file = input.files[0];
+  const reader = new FileReader();
+  reader.onload = function () {
+    // result is data URL: "data:...;base64,<b64>"
+    const data = String(reader.result || "");
+    const idx = data.indexOf(",");
+    const b64 = idx >= 0 ? data.slice(idx + 1) : "";
+    if (!b64) { alert("Не удалось прочитать файл"); return; }
+    fetch('/cgi-bin/save-file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'file=' + encodeURIComponent(file.name) + '&b64=' + encodeURIComponent(b64) + '&type=fakebin'
+    })
+      .then((r) => r.text())
+      .then((text) => {
+        if (text.trim() === "OK") {
+          // Replace existing row or add new
+          const wrap = document.getElementById("fakebin-list");
+          const existing = wrap && wrap.querySelector('.fakebin-file[data-file="' + file.name.replace(/"/g, '\\"') + '"]');
+          if (existing) existing.remove();
+          addFakebinRow(file.name, file.size);
+          input.value = "";
+        } else {
+          alert('Ошибка загрузки: ' + text);
+        }
+      })
+      .catch((e) => alert('Ошибка сети: ' + e));
+  };
+  reader.onerror = function () { alert("Ошибка чтения файла"); };
+  reader.readAsDataURL(file);
+}
+
+function deleteFakebin(btn) {
+  const row = btn.closest(".fakebin-file");
+  if (!row) return;
+  const name = row.dataset.file;
+  if (!window.confirm("Удалить " + name + "?")) return;
+  row.remove();
+  fetch('/cgi-bin/delete-file?file=' + encodeURIComponent(name) + '&type=fakebin')
+    .then((r) => r.text())
+    .then((text) => {
+      if (text.trim() !== "OK") alert('Ошибка удаления: ' + text);
+    })
+    .catch((e) => alert('Ошибка сети: ' + e));
+}
+
+// ===== /zapret-lists (text list editor) =====
+
+let zlistEditName = "";
+
+function addZlistRow(name, size) {
+  const wrap = document.getElementById("zlist-list");
+  if (!wrap) return;
+  const empty = wrap.querySelector(".empty");
+  if (empty) empty.remove();
+  const div = document.createElement("div");
+  div.className = "mount-link mount-link-compact zlist-file";
+  div.dataset.file = name;
+  div.dataset.name = name.toLowerCase();
+  const esc = escapeAttr(name);
+  div.innerHTML = `<div class="mount-link-title"><span>${esc}</span><small>${size} bytes</small></div><div class="file-actions"><button type="button" onclick="editZlistFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteZlistFile(this)" title="Удалить">&#10005;</button></div>`;
+  wrap.appendChild(div);
+}
+
+function editZlistFile(btn) {
+  const row = btn.closest(".zlist-file");
+  if (!row) return;
+  zlistEditName = row.dataset.file;
+  const titleEl = document.getElementById("zlistEditTitle");
+  if (titleEl) titleEl.textContent = zlistEditName;
+  const nameEl = document.getElementById("zlistEditName");
+  if (nameEl) { nameEl.value = zlistEditName; nameEl.readOnly = true; }
+  fetch('/cgi-bin/read-file?file=' + encodeURIComponent(zlistEditName) + '&type=zlist')
+    .then((r) => { if (!r.ok) throw new Error(r.statusText); return r.text(); })
+    .then((text) => {
+      const plainEl = document.getElementById("zlistEditPlain");
+      if (plainEl) plainEl.value = text;
+      document.getElementById("zlistEditModal").hidden = false;
+    })
+    .catch((e) => alert('Не удалось прочитать файл: ' + e.message));
+}
+
+function createZlistFile() {
+  zlistEditName = "";
+  const titleEl = document.getElementById("zlistEditTitle");
+  if (titleEl) titleEl.textContent = "Новый список";
+  const nameEl = document.getElementById("zlistEditName");
+  if (nameEl) { nameEl.value = ""; nameEl.readOnly = false; nameEl.focus(); }
+  const plainEl = document.getElementById("zlistEditPlain");
+  if (plainEl) plainEl.value = "";
+  document.getElementById("zlistEditModal").hidden = false;
+}
+
+function closeZlistFileModal() {
+  document.getElementById("zlistEditModal").hidden = true;
+  zlistEditName = "";
+}
+
+function saveZlistFileModal() {
+  const nameEl = document.getElementById("zlistEditName");
+  const plainEl = document.getElementById("zlistEditPlain");
+  if (!plainEl || !nameEl) return;
+  const name = nameEl.value.trim();
+  if (!name) { alert("Укажите имя файла"); return; }
+  const isNew = !nameEl.readOnly;
+
+  const checkPromise = isNew
+    ? fetch('/cgi-bin/list-files?type=zlist').then((r) => r.json()).then((data) => {
+        const existing = (data && data.files) || [];
+        if (existing.some((f) => f.file === name)) {
+          throw new Error("Файл с именем " + name + " уже существует");
+        }
+      })
+    : Promise.resolve();
+
+  checkPromise
+    .then(() => {
+      const b64 = btoa(unescape(encodeURIComponent(plainEl.value)));
+      return fetch('/cgi-bin/save-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'file=' + encodeURIComponent(name) + '&b64=' + encodeURIComponent(b64) + '&type=zlist'
+      }).then((r) => r.text());
+    })
+    .then((text) => {
+      if (text.trim() === "OK") {
+        closeZlistFileModal();
+        if (isNew) {
+          const size = new Blob([plainEl.value]).size;
+          addZlistRow(name, size);
+        }
+      } else {
+        alert('Ошибка сохранения: ' + text);
+      }
+    })
+    .catch((e) => alert(e.message || String(e)));
+}
+
+function deleteZlistFile(btn) {
+  const row = btn.closest(".zlist-file");
+  if (!row) return;
+  const name = row.dataset.file;
+  if (!window.confirm("Удалить " + name + "?")) return;
+  row.remove();
+  fetch('/cgi-bin/delete-file?file=' + encodeURIComponent(name) + '&type=zlist')
+    .then((r) => r.text())
+    .then((text) => {
+      if (text.trim() !== "OK") alert('Ошибка удаления: ' + text);
     })
     .catch((e) => alert('Ошибка сети: ' + e));
 }
@@ -1507,16 +1941,8 @@ function copyActiveYaml(btn) {
   const active = document.querySelector(".yaml-file.active pre");
   if (!active) return;
   const text = active.textContent || "";
-  const area = document.createElement("textarea");
-  area.value = text;
-  area.style.position = "fixed";
-  area.style.left = "-9999px";
-  document.body.appendChild(area);
-  area.focus();
-  area.select();
-  document.execCommand("copy");
-  document.body.removeChild(area);
-  if (btn) {
+  const finish = () => {
+    if (!btn) return;
     const oldText = btn.textContent;
     btn.textContent = "Скопировано";
     btn.classList.add("copied");
@@ -1524,6 +1950,29 @@ function copyActiveYaml(btn) {
       btn.textContent = oldText;
       btn.classList.remove("copied");
     }, 1800);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(finish).catch(() => {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.style.cssText = "position:fixed;left:-9999px";
+      document.body.appendChild(area);
+      area.focus();
+      area.select();
+      document.execCommand("copy");
+      document.body.removeChild(area);
+      finish();
+    });
+  } else {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.cssText = "position:fixed;left:-9999px";
+    document.body.appendChild(area);
+    area.focus();
+    area.select();
+    document.execCommand("copy");
+    document.body.removeChild(area);
+    finish();
   }
 }
 
@@ -1578,21 +2027,3 @@ document.addEventListener("DOMContentLoaded", () => {
   const first = requestedButton || document.querySelector(".file-list button");
   if (first) switchYaml(first.dataset.name);
 });
-</script>
-<div class="modal" id="ruleSetModal" hidden>
-  <div class="modal-backdrop" onclick="closeRuleSetModal()"></div>
-  <div class="modal-content">
-    <header><b>&#1056;&#1077;&#1076;&#1072;&#1082;&#1090;&#1086;&#1088; rule-set</b><button type="button" onclick="closeRuleSetModal()">&#10005;</button></header>
-    <div class="modal-body">
-      <label><span>&#1048;&#1084;&#1103; rule-set</span><input id="ruleSetModalName" placeholder="custom"></label>
-      <label><span>&#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1072; (plain-text)</span><textarea id="ruleSetModalPlain" rows="10" placeholder="DOMAIN,example.com&#10;DOMAIN-SUFFIX,example.org"></textarea></label>
-      <div class="rule-set-preview"><b>Preview base64</b><code id="ruleSetModalPreview"></code></div>
-    </div>
-    <footer class="modal-footer">
-      <button type="button" class="primary" onclick="saveRuleSetModal()">&#1055;&#1088;&#1080;&#1084;&#1077;&#1085;&#1080;&#1090;&#1100;</button>
-      <button type="button" class="ghost" onclick="closeRuleSetModal()">&#1054;&#1090;&#1084;&#1077;&#1085;&#1072;</button>
-    </footer>
-  </div>
-</div>
-</body>
-</html>

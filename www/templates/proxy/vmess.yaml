@@ -1,0 +1,16 @@
+proxies:
+  - name: vmess-example
+    type: vmess
+    server: server.example.com
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000000
+    alterId: 0
+    cipher: auto
+    udp: true
+    tls: true
+    servername: server.example.com
+    network: ws
+    ws-opts:
+      path: /ws
+      headers:
+        Host: server.example.com

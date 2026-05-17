@@ -1,0 +1,12 @@
+proxies:
+  - name: hysteria2-example
+    type: hysteria2
+    server: server.example.com
+    port: 443
+    password: <password>
+    sni: server.example.com
+    skip-cert-verify: false
+    alpn:
+      - h3
+    up: "100 Mbps"
+    down: "200 Mbps"

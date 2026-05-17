@@ -15,42 +15,26 @@ urldecode() {
   printf '%s\n' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\\x\1/g' | while IFS= read -r line; do printf '%b' "$line"; done
 }
 
-file=$(printf '%s' "$body" | awk -F'&' '{
-  for(i=1;i<=NF;i++) {
-    if ($i ~ /^file=/) {
-      gsub(/^file=/, "", $i)
-      print $i
-      exit
+extract_field() {
+  printf '%s' "$body" | awk -F'&' -v key="$1" '{
+    for(i=1;i<=NF;i++) {
+      n=length(key)+1
+      if (substr($i,1,n) == key"=") { print substr($i,n+1); exit }
     }
-  }
-}')
+  }'
+}
 
-b64=$(printf '%s' "$body" | awk -F'&' '{
-  for(i=1;i<=NF;i++) {
-    if ($i ~ /^b64=/) {
-      gsub(/^b64=/, "", $i)
-      print $i
-      exit
-    }
-  }
-}')
-
-type=$(printf '%s' "$body" | awk -F'&' '{
-  for(i=1;i<=NF;i++) {
-    if ($i ~ /^type=/) {
-      gsub(/^type=/, "", $i)
-      print $i
-      exit
-    }
-  }
-}')
-
-file=$(urldecode "$file")
-b64=$(urldecode "$b64")
+file=$(urldecode "$(extract_field file)")
+b64=$(urldecode "$(extract_field b64)")
+type=$(extract_field type)
 [ -z "$type" ] && type="ruleset"
+
 case "$type" in
   ruleset) TARGET_DIR="$CONFIG_DIR/rule_set_list" ;;
-  proxy) TARGET_DIR="$CONFIG_DIR/proxies_mount" ;;
+  proxy)   TARGET_DIR="$CONFIG_DIR/proxies_mount" ;;
+  awg)     TARGET_DIR="$CONFIG_DIR/awg" ;;
+  fakebin) TARGET_DIR="/zapret-fakebin" ;;
+  zlist)   TARGET_DIR="/zapret-lists" ;;
   *) echo "Error: invalid type"; exit 1 ;;
 esac
 
@@ -60,6 +44,11 @@ if [ "$base" != "$file" ] || [ -z "$base" ]; then
   exit 1
 fi
 
+case "$base" in
+  .*) echo "Error: hidden files not allowed"; exit 1 ;;
+esac
+
+mkdir -p "$TARGET_DIR" 2>/dev/null
 target="$TARGET_DIR/$base"
 
 if [ -n "$b64" ]; then

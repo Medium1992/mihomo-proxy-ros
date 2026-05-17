@@ -3,16 +3,26 @@ echo "Content-type: text/plain"
 echo ""
 
 CONFIG_DIR="${CONFIG_DIR:-/root/.config/mihomo}"
-dir_type=$(printf '%s' "$QUERY_STRING" | tr '&' '\n' | awk -F= '/^type=/{print $2; exit}')
+
+qs_get() {
+  printf '%s' "$QUERY_STRING" | tr '&' '\n' | awk -F= -v k="$1" '$1==k{print $2; exit}'
+}
+urldecode() {
+  printf '%s\n' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\\x\1/g' | while IFS= read -r line; do printf '%b' "$line"; done
+}
+
+dir_type=$(qs_get type)
 [ -z "$dir_type" ] && dir_type="ruleset"
 case "$dir_type" in
   ruleset) TARGET_DIR="$CONFIG_DIR/rule_set_list" ;;
-  proxy) TARGET_DIR="$CONFIG_DIR/proxies_mount" ;;
+  proxy)   TARGET_DIR="$CONFIG_DIR/proxies_mount" ;;
+  awg)     TARGET_DIR="$CONFIG_DIR/awg" ;;
+  fakebin) TARGET_DIR="/zapret-fakebin" ;;
+  zlist)   TARGET_DIR="/zapret-lists" ;;
   *) echo "Error: invalid type"; exit 1 ;;
 esac
 
-file=$(printf '%s' "$QUERY_STRING" | tr '&' '\n' | awk -F= '/^file=/{print $2; exit}')
-file=$(printf '%s\n' "$file" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\\x\1/g' | while IFS= read -r line; do printf '%b' "$line"; done)
+file=$(urldecode "$(qs_get file)")
 base=$(basename "$file")
 if [ "$base" != "$file" ] || [ -z "$base" ]; then
   echo "Error: invalid filename"
