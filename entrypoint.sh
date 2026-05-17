@@ -2075,8 +2075,13 @@ generate_nameserver_policy() {
     for raw in $NAMESERVER_POLICY; do
       item=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
       [ -z "$item" ] && continue
+      case "$item" in
+        *#*) ;;
+        *) log "Skipping invalid NAMESERVER_POLICY item: $item"; continue ;;
+      esac
       domain=${item%%#*}
       dns=${item#*#}
+      [ -z "$domain" ] || [ -z "$dns" ] && continue
       printf "    '%s': '%s'\n" "$domain" "$dns"
     done
     IFS=$OLDIFS
@@ -2234,7 +2239,7 @@ apply_zapret2_wg_nft() {
     echo "Adding mihomo tproxy exclusions for WG..."
 
     local mtable="mihomo"
-    local mchain="pre_filter"
+    local mchain="pre"
 
     # Убедимся что таблица есть
     nft list table inet $mtable >/dev/null 2>&1 || return 0
@@ -3513,6 +3518,8 @@ run() {
     start_byedpi_processes
   fi
 
+  chmod +x /www/cgi-bin/* /www/render_static.sh 2>/dev/null || true
+  /bin/sh /www/render_static.sh >/dev/null 2>&1 || true
   httpd -f -p 80 -h /www >/dev/null 2>&1 &
 
   wait $MIHOMO_PID

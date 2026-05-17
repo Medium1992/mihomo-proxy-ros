@@ -1,0 +1,75 @@
+#!/bin/sh
+echo "Content-Type: text/plain; charset=utf-8"
+echo ""
+
+CONFIG_DIR="${CONFIG_DIR:-/root/.config/mihomo}"
+
+if [ "$REQUEST_METHOD" != "POST" ]; then
+  echo "Error: POST required"
+  exit 1
+fi
+
+body=$(dd bs=1 count="$CONTENT_LENGTH" 2>/dev/null)
+
+urldecode() {
+  printf '%s\n' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\\x\1/g' | while IFS= read -r line; do printf '%b' "$line"; done
+}
+
+file=$(printf '%s' "$body" | awk -F'&' '{
+  for(i=1;i<=NF;i++) {
+    if ($i ~ /^file=/) {
+      gsub(/^file=/, "", $i)
+      print $i
+      exit
+    }
+  }
+}')
+
+b64=$(printf '%s' "$body" | awk -F'&' '{
+  for(i=1;i<=NF;i++) {
+    if ($i ~ /^b64=/) {
+      gsub(/^b64=/, "", $i)
+      print $i
+      exit
+    }
+  }
+}')
+
+type=$(printf '%s' "$body" | awk -F'&' '{
+  for(i=1;i<=NF;i++) {
+    if ($i ~ /^type=/) {
+      gsub(/^type=/, "", $i)
+      print $i
+      exit
+    }
+  }
+}')
+
+file=$(urldecode "$file")
+b64=$(urldecode "$b64")
+[ -z "$type" ] && type="ruleset"
+case "$type" in
+  ruleset) TARGET_DIR="$CONFIG_DIR/rule_set_list" ;;
+  proxy) TARGET_DIR="$CONFIG_DIR/proxies_mount" ;;
+  *) echo "Error: invalid type"; exit 1 ;;
+esac
+
+base=$(basename "$file")
+if [ "$base" != "$file" ] || [ -z "$base" ]; then
+  echo "Error: invalid filename"
+  exit 1
+fi
+
+target="$TARGET_DIR/$base"
+
+if [ -n "$b64" ]; then
+  printf '%s' "$b64" | base64 -d > "$target" 2>/dev/null
+else
+  : > "$target"
+fi
+
+if [ $? -eq 0 ]; then
+  echo "OK"
+else
+  echo "Error: write failed"
+fi

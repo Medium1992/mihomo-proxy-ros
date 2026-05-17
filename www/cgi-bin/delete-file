@@ -1,0 +1,33 @@
+#!/bin/sh
+echo "Content-type: text/plain"
+echo ""
+
+CONFIG_DIR="${CONFIG_DIR:-/root/.config/mihomo}"
+dir_type=$(printf '%s' "$QUERY_STRING" | tr '&' '\n' | awk -F= '/^type=/{print $2; exit}')
+[ -z "$dir_type" ] && dir_type="ruleset"
+case "$dir_type" in
+  ruleset) TARGET_DIR="$CONFIG_DIR/rule_set_list" ;;
+  proxy) TARGET_DIR="$CONFIG_DIR/proxies_mount" ;;
+  *) echo "Error: invalid type"; exit 1 ;;
+esac
+
+file=$(printf '%s' "$QUERY_STRING" | tr '&' '\n' | awk -F= '/^file=/{print $2; exit}')
+file=$(printf '%s\n' "$file" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\\x\1/g' | while IFS= read -r line; do printf '%b' "$line"; done)
+base=$(basename "$file")
+if [ "$base" != "$file" ] || [ -z "$base" ]; then
+  echo "Error: invalid filename"
+  exit 1
+fi
+
+target="$TARGET_DIR/$base"
+if [ ! -f "$target" ]; then
+  echo "Error: not found"
+  exit 1
+fi
+
+rm -f "$target"
+if [ $? -eq 0 ]; then
+  echo "OK"
+else
+  echo "Error: delete failed"
+fi

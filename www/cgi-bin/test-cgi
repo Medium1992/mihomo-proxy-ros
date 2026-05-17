@@ -1,0 +1,10 @@
+#!/bin/sh
+echo "Content-type: text/plain"
+echo ""
+echo "CGI OK"
+echo "METHOD=$REQUEST_METHOD"
+echo "PATH=$SCRIPT_NAME"
+echo "QUERY=$QUERY_STRING"
+echo "CONTENT_LENGTH=$CONTENT_LENGTH"
+echo "RULE_SET_DIR=$RULE_SET_DIR"
+echo "CONFIG_DIR=$CONFIG_DIR"

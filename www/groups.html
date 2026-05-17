@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
@@ -16,84 +16,370 @@
       <small>ENV control panel</small>
     </a>
     <nav>
-<a class="active" href="index.html"><span>⌁</span>Обзор</a>
-<a class="" href="core.html"><span>⚙</span>Ядро и DNS</a>
-<a class="" href="providers.html"><span>+</span>Прокси-провайдеры</a>
-<a class="" href="dpi.html"><span>◇</span>DPI</a>
-<a class="" href="groups.html"><span>☷</span>Прокси-группы</a>
-<a class="" href="rules.html"><span>≡</span>Правила маршрутизации</a>
-<a class="" href="rulesets.html"><span>▣</span>Наборы правил</a>
+<a class="" href="index.html"><span>вЊЃ</span>РћР±Р·РѕСЂ</a>
+<a class="" href="core.html"><span>вљ™</span>РЇРґСЂРѕ Рё DNS</a>
+<a class="" href="providers.html"><span>+</span>РџСЂРѕРєСЃРё-РїСЂРѕРІР°Р№РґРµСЂС‹</a>
+<a class="" href="dpi.html"><span>в—‡</span>DPI</a>
+<a class="active" href="groups.html"><span>в·</span>РџСЂРѕРєСЃРё-РіСЂСѓРїРїС‹</a>
+<a class="" href="rules.html"><span>в‰Ў</span>РџСЂР°РІРёР»Р° РјР°СЂС€СЂСѓС‚РёР·Р°С†РёРё</a>
+<a class="" href="rulesets.html"><span>в–Ј</span>РќР°Р±РѕСЂС‹ РїСЂР°РІРёР»</a>
 <a class="" href="yaml.html"><span>{}</span>YAML</a>
-<a class="" href="tools.html"><span>↯</span>Инструменты</a>
+<a class="" href="tools.html"><span>в†Ї</span>РРЅСЃС‚СЂСѓРјРµРЅС‚С‹</a>
     </nav>
     <div class="side-note">
       <b>sh-only</b>
-      <span>Страницы генерируются shell-скриптом из env. Команды собираются локально в браузере.</span>
+      <span>РЎС‚СЂР°РЅРёС†С‹ РіРµРЅРµСЂРёСЂСѓСЋС‚СЃСЏ shell-СЃРєСЂРёРїС‚РѕРј РёР· env. РљРѕРјР°РЅРґС‹ СЃРѕР±РёСЂР°СЋС‚СЃСЏ Р»РѕРєР°Р»СЊРЅРѕ РІ Р±СЂР°СѓР·РµСЂРµ.</span>
     </div>
   </aside>
   <main class="main">
     <header class="top">
       <div>
-        <p class="eyebrow">контейнер · mihomo-proxy-ros</p>
+        <p class="eyebrow">РєРѕРЅС‚РµР№РЅРµСЂ В· mihomo-proxy-ros</p>
         <h1>MihomoProxyRoS</h1>
       </div>
       <div class="top-actions">
         <button class="theme-btn" type="button" onclick="toggleTheme()" aria-label="Toggle theme">
           <span class="theme-dot"></span>
-          <b id="themeLabel">Темная</b>
+          <b id="themeLabel">РўРµРјРЅР°СЏ</b>
         </button>
-        <a class="ghost" href="yaml.html">Смотреть YAML</a>
-        <button class="ghost" type="button" onclick="resetCurrentPageDraft()">Сбросить страницу</button>
-        <button class="ghost" type="button" onclick="resetUiDraft()">Сбросить черновик</button>
-        <button class="primary" type="button" onclick="generateCommands()">Команды MikroTik</button>
+        <a class="ghost" href="yaml.html">РЎРјРѕС‚СЂРµС‚СЊ YAML</a>
+        <button class="ghost" type="button" onclick="resetCurrentPageDraft()">РЎР±СЂРѕСЃРёС‚СЊ СЃС‚СЂР°РЅРёС†Сѓ</button>
+        <button class="ghost" type="button" onclick="resetUiDraft()">РЎР±СЂРѕСЃРёС‚СЊ С‡РµСЂРЅРѕРІРёРє</button>
+        <button class="primary" type="button" onclick="generateCommands()">РљРѕРјР°РЅРґС‹ MikroTik</button>
       </div>
     </header>
     <form id="envForm">
-<section class="overview-head">
-  <div>
-    <p class="eyebrow">состояние контейнера</p>
-    <h2>Обзор конфигурации</h2>
-    <p>Текущие env сгруппированы так же, как entrypoint собирает mihomo: ядро, источники прокси, DPI-обходы, группы, правила и YAML-файлы.</p>
-  </div>
-  <div class="config-card">
-    <span>основной файл</span>
-    <b>config.yaml</b>
-    <code>/root/.config/mihomo/config.yaml</code>
-    <a href="yaml.html">Открыть YAML</a>
-  </div>
-</section>
-<section class="stats">
-  <a href="providers.html"><b>0</b><span>LINK</span></a>
-  <a href="providers.html"><b>0</b><span>SUB_LINK</span></a>
-  <a href="providers.html"><b>0</b><span>SOCKS</span></a>
-  <a href="dpi.html"><b>0</b><span>DPI env</span></a>
-  <a href="groups.html"><b>0</b><span>групп</span></a>
-  <a href="yaml.html"><b>0</b><span>YAML</span></a>
-</section>
 <section class="panel">
   <div class="section-head">
     <div>
-      <h2>Карта env</h2>
-      <p>Как entrypoint превращает переменные в mihomo-конфиг.</p>
+      <h2>РџСЂРѕРєСЃРё-РіСЂСѓРїРїС‹</h2>
+      <p>Р’С‹Р±РµСЂРёС‚Рµ РіСЂСѓРїРїСѓ СЃР»РµРІР°, С‡С‚РѕР±С‹ СЂРµРґР°РєС‚РёСЂРѕРІР°С‚СЊ С‚РѕР»СЊРєРѕ РµРµ РїР°СЂР°РјРµС‚СЂС‹.</p>
     </div>
   </div>
-<div class="map">
-  <article><b>Ядро</b><span>LOG_LEVEL, UI_SECRET, TPROXY, SNIFFER, DNS_MODE, FAKE_IP_*</span></article>
-  <article><b>Прокси-провайдеры</b><span>LINK*, SUB_LINK*, SOCKS*, mounted AWG и proxies_mount</span></article>
-  <article><b>DPI</b><span>BYEDPI_CMD*, ZAPRET_CMD*, ZAPRET2_CMD*, packets и WireGuard dst</span></article>
-  <article><b>Прокси-группы</b><span>GLOBAL_*, DNS_*, GROUP и переменные вида NAME_GEOSITE/USE/TYPE</span></article>
-  <article><b>Правила</b><span>RULES*, RULE_SET*_BASE64 и файлы rule_set_list</span></article>
-  <article><b>YAML</b><span>config.yaml плюс все file providers и payload-файлы в CONFIG_DIR</span></article>
-</div>
+<div class="groups-browser"><aside id="groupList" class="group-list">
+<button type="button" data-group="DEFAULT" onclick="switchGroupPane(this.dataset.group)"><b>DEFAULT</b><small>GROUP_*</small></button>
+<button type="button" data-group="GLOBAL" onclick="switchGroupPane(this.dataset.group)"><b>GLOBAL</b><small>GLOBAL_*</small></button>
+<button type="button" data-group="DNS" onclick="switchGroupPane(this.dataset.group)"><b>DNS</b><small>DNS_*</small></button>
+<button class="add-group-btn" type="button" onclick="addGroupPane()">Р”РѕР±Р°РІРёС‚СЊ РіСЂСѓРїРїСѓ</button>
+</aside><div id="groupPanes" class="group-panes">
+<article class="group-pane" data-group="DEFAULT" data-prefix="GROUP" hidden>
+  <div class="group-pane-head">
+    <div class="notice">
+      <b>DEFAULT</b>
+      <span>Р­С‚Рё Р·РЅР°С‡РµРЅРёСЏ РёСЃРїРѕР»СЊР·СѓСЋС‚СЃСЏ РґР»СЏ GLOBAL Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёС… РіСЂСѓРїРї, РµСЃР»Рё Сѓ РЅРёС… РЅРµС‚ СЃРѕР±СЃС‚РІРµРЅРЅРѕРіРѕ env. ENV <code>GROUP</code> СЃРєСЂС‹С‚ Рё СЃРѕР±РёСЂР°РµС‚СЃСЏ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё РёР· СЃРїРёСЃРєР° РіСЂСѓРїРї СЃР»РµРІР°, РєСЂРѕРјРµ DEFAULT, GLOBAL Рё DNS.</span>
+    </div>
+  </div>
+  <div class="grid">
+<input type="hidden" name="GROUP" value="" data-default="">
+<label class="field" data-env="GROUP_TYPE">
+  <span><b>GROUP_TYPE</b><em>GROUP_TYPE</em></span>
+  <select name="GROUP_TYPE" data-default="select">
+<option value="select" selected>select</option>
+<option value="url-test">url-test</option>
+<option value="load-balance">load-balance</option>
+<option value="fallback">fallback</option>
+<option value="relay">relay</option>
+  </select>
+  <small>РўРёРї <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#type" target="_blank" rel="noopener">proxy-groups type</a> РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GROUP_USE">
+  <span><b>GROUP_USE</b><em>GROUP_USE</em></span>
+  <input type="text" name="GROUP_USE" value="" placeholder="" data-default="">
+  <small>providers РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ, РїР°СЂР°РјРµС‚СЂ <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">use</a>, РёР»Рё none.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GROUP_PROXIES">
+  <span><b>GROUP_PROXIES</b><em>GROUP_PROXIES</em></span>
+  <input type="text" name="GROUP_PROXIES" value="" placeholder="" data-default="">
+  <small>РЇРІРЅС‹Рµ <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GROUP_FILTER">
+  <span><b>GROUP_FILTER</b><em>GROUP_FILTER</em></span>
+  <input type="text" name="GROUP_FILTER" value="" placeholder="" data-default="">
+  <small>Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#filter" target="_blank" rel="noopener">filter</a> РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GROUP_EXCLUDE">
+  <span><b>GROUP_EXCLUDE</b><em>GROUP_EXCLUDE</em></span>
+  <input type="text" name="GROUP_EXCLUDE" value="" placeholder="" data-default="">
+  <small>Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter" target="_blank" rel="noopener">exclude-filter</a> РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GROUP_URL">
+  <span><b>GROUP_URL</b><em>GROUP_URL</em></span>
+  <input type="text" name="GROUP_URL" value="https://www.gstatic.com/generate_204" placeholder="https://www.gstatic.com/generate_204" data-default="https://www.gstatic.com/generate_204">
+  <small>URL <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#url" target="_blank" rel="noopener">health-check</a>, РµСЃР»Рё HEALTHCHECK_PROVIDER=false.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GROUP_URL_STATUS">
+  <span><b>GROUP_URL_STATUS</b><em>GROUP_URL_STATUS</em></span>
+  <input type="number" name="GROUP_URL_STATUS" value="204" placeholder="204" data-default="204">
+  <small>РћР¶РёРґР°РµРјС‹Р№ <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status" target="_blank" rel="noopener">expected-status</a>.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GROUP_INTERVAL">
+  <span><b>GROUP_INTERVAL</b><em>GROUP_INTERVAL</em></span>
+  <input type="number" name="GROUP_INTERVAL" value="60" placeholder="60" data-default="60">
+  <small>РРЅС‚РµСЂРІР°Р» <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#interval" target="_blank" rel="noopener">health-check</a>.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GROUP_TOLERANCE">
+  <span><b>GROUP_TOLERANCE</b><em>GROUP_TOLERANCE</em></span>
+  <input type="number" name="GROUP_TOLERANCE" value="20" placeholder="20" data-default="20">
+  <small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#tolerance" target="_blank" rel="noopener">Tolerance</a> РґР»СЏ url-test.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GROUP_STRATEGY">
+  <span><b>GROUP_STRATEGY</b><em>GROUP_STRATEGY</em></span>
+  <select name="GROUP_STRATEGY" data-default="consistent-hashing">
+<option value="round-robin">round-robin</option>
+<option value="consistent-hashing" selected>consistent-hashing</option>
+<option value="sticky-sessions">sticky-sessions</option>
+  </select>
+  <small>РЎС‚СЂР°С‚РµРіРёСЏ <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#strategy" target="_blank" rel="noopener">load-balance</a>: round-robin, consistent-hashing РёР»Рё sticky-sessions.</small>
+  <i>default</i>
+</label>
+</div></article>
+<article class="group-pane" data-group="GLOBAL" data-prefix="GLOBAL" data-source="group" hidden>
+  <div class="group-pane-head">
+
+    <label class="field">
+      <span><b>Group name</b><em>GROUP</em></span>
+      <input class="group-name-input" value="GLOBAL" data-original="GLOBAL" readonly>
+      <small>РРјСЏ РіСЂСѓРїРїС‹ Рё prefix env. GLOBAL Рё DNS С„РёРєСЃРёСЂРѕРІР°РЅС‹ entrypoint.</small>
+      <i>GLOBAL</i>
+    </label>
+  </div>
+  <div class="grid">
+<label class="field" data-env="GLOBAL_TYPE">
+  <span><b>Type</b><em>GLOBAL_TYPE</em></span>
+  <select name="GLOBAL_TYPE" data-default="select">
+<option value="select" selected>select</option>
+<option value="url-test">url-test</option>
+<option value="load-balance">load-balance</option>
+<option value="fallback">fallback</option>
+<option value="relay">relay</option>
+  </select>
+  <small>РўРёРї <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#type" target="_blank" rel="noopener">proxy-groups type</a>.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_USE">
+  <span><b>Use</b><em>GLOBAL_USE</em></span>
+  <input type="text" name="GLOBAL_USE" value="" placeholder="" data-default="">
+  <small>РЎРїРёСЃРѕРє <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">providers</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ РёР»Рё none.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_PROXIES">
+  <span><b>Proxies</b><em>GLOBAL_PROXIES</em></span>
+  <input type="text" name="GLOBAL_PROXIES" value="" placeholder="" data-default="">
+  <small>РЇРІРЅС‹Рµ <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_FILTER">
+  <span><b>Filter</b><em>GLOBAL_FILTER</em></span>
+  <input type="text" name="GLOBAL_FILTER" value="" placeholder="" data-default="">
+  <small>Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#filter" target="_blank" rel="noopener">filter</a> РїРѕ РёРјРµРЅР°Рј РїСЂРѕРєСЃРё.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_EXCLUDE">
+  <span><b>Exclude</b><em>GLOBAL_EXCLUDE</em></span>
+  <input type="text" name="GLOBAL_EXCLUDE" value="" placeholder="" data-default="">
+  <small>Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter" target="_blank" rel="noopener">exclude-filter</a>.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_PRIORITY">
+  <span><b>Priority</b><em>GLOBAL_PRIORITY</em></span>
+  <input type="number" name="GLOBAL_PRIORITY" value="" placeholder="" data-default="">
+  <small>Р§РµРј РјРµРЅСЊС€Рµ, С‚РµРј РІС‹С€Рµ РІ rules.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_GEOSITE">
+  <span><b>Geosite</b><em>GLOBAL_GEOSITE</em></span>
+  <input type="text" name="GLOBAL_GEOSITE" value="" placeholder="youtube,category-ru" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">GEOSITE</a> СЃРїРёСЃРєРѕРј С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_GEOIP">
+  <span><b>Geoip</b><em>GLOBAL_GEOIP</em></span>
+  <input type="text" name="GLOBAL_GEOIP" value="" placeholder="telegram,discord" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">GEOIP</a> СЃРїРёСЃРєРѕРј С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_AS">
+  <span><b>ASN</b><em>GLOBAL_AS</em></span>
+  <input type="text" name="GLOBAL_AS" value="" placeholder="AS15169" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">IP-ASN</a>: AS123,AS456.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_DOMAIN">
+  <span><b>Domain</b><em>GLOBAL_DOMAIN</em></span>
+  <input type="text" name="GLOBAL_DOMAIN" value="" placeholder="example.com" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_SUFFIX">
+  <span><b>Suffix</b><em>GLOBAL_SUFFIX</em></span>
+  <input type="text" name="GLOBAL_SUFFIX" value="" placeholder="example.com" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN-SUFFIX</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_KEYWORD">
+  <span><b>Keyword</b><em>GLOBAL_KEYWORD</em></span>
+  <input type="text" name="GLOBAL_KEYWORD" value="" placeholder="google" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN-KEYWORD</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_IPCIDR">
+  <span><b>IP CIDR</b><em>GLOBAL_IPCIDR</em></span>
+  <input type="text" name="GLOBAL_IPCIDR" value="" placeholder="1.1.1.0/24" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">IP-CIDR</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_SRCIPCIDR">
+  <span><b>Source CIDR</b><em>GLOBAL_SRCIPCIDR</em></span>
+  <input type="text" name="GLOBAL_SRCIPCIDR" value="" placeholder="192.168.88.0/24" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">SRC-IP-CIDR</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_DSCP">
+  <span><b>DSCP</b><em>GLOBAL_DSCP</em></span>
+  <input type="number" name="GLOBAL_DSCP" value="" placeholder="" data-default="">
+  <small>РџСЂР°РІРёР»Рѕ <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DSCP</a> РґР»СЏ РѕС‚РґРµР»СЊРЅРѕРіРѕ РІС…РѕРґР°.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="GLOBAL_DNS">
+  <span><b>DNS policy</b><em>GLOBAL_DNS</em></span>
+  <input type="text" name="GLOBAL_DNS" value="" placeholder="https://dns.google/dns-query" data-default="">
+  <small>DNS resolver РґР»СЏ rule-set СЌС‚РѕР№ РіСЂСѓРїРїС‹.</small>
+  <i>default</i>
+</label>
+</div></article>
+<article class="group-pane" data-group="DNS" data-prefix="DNS" data-source="group" hidden>
+  <div class="group-pane-head">
+
+    <label class="field">
+      <span><b>Group name</b><em>GROUP</em></span>
+      <input class="group-name-input" value="DNS" data-original="DNS" readonly>
+      <small>РРјСЏ РіСЂСѓРїРїС‹ Рё prefix env. GLOBAL Рё DNS С„РёРєСЃРёСЂРѕРІР°РЅС‹ entrypoint.</small>
+      <i>DNS</i>
+    </label>
+  </div>
+  <div class="grid">
+<label class="field" data-env="DNS_TYPE">
+  <span><b>Type</b><em>DNS_TYPE</em></span>
+  <select name="DNS_TYPE" data-default="select">
+<option value="select" selected>select</option>
+<option value="url-test">url-test</option>
+<option value="load-balance">load-balance</option>
+<option value="fallback">fallback</option>
+<option value="relay">relay</option>
+  </select>
+  <small>РўРёРї <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#type" target="_blank" rel="noopener">proxy-groups type</a>.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_USE">
+  <span><b>Use</b><em>DNS_USE</em></span>
+  <input type="text" name="DNS_USE" value="" placeholder="" data-default="">
+  <small>РЎРїРёСЃРѕРє <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">providers</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ РёР»Рё none.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_PROXIES">
+  <span><b>Proxies</b><em>DNS_PROXIES</em></span>
+  <input type="text" name="DNS_PROXIES" value="" placeholder="" data-default="">
+  <small>РЇРІРЅС‹Рµ <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_FILTER">
+  <span><b>Filter</b><em>DNS_FILTER</em></span>
+  <input type="text" name="DNS_FILTER" value="" placeholder="" data-default="">
+  <small>Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#filter" target="_blank" rel="noopener">filter</a> РїРѕ РёРјРµРЅР°Рј РїСЂРѕРєСЃРё.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_EXCLUDE">
+  <span><b>Exclude</b><em>DNS_EXCLUDE</em></span>
+  <input type="text" name="DNS_EXCLUDE" value="" placeholder="" data-default="">
+  <small>Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter" target="_blank" rel="noopener">exclude-filter</a>.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_PRIORITY">
+  <span><b>Priority</b><em>DNS_PRIORITY</em></span>
+  <input type="number" name="DNS_PRIORITY" value="" placeholder="" data-default="">
+  <small>Р§РµРј РјРµРЅСЊС€Рµ, С‚РµРј РІС‹С€Рµ РІ rules.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_GEOSITE">
+  <span><b>Geosite</b><em>DNS_GEOSITE</em></span>
+  <input type="text" name="DNS_GEOSITE" value="" placeholder="youtube,category-ru" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">GEOSITE</a> СЃРїРёСЃРєРѕРј С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_GEOIP">
+  <span><b>Geoip</b><em>DNS_GEOIP</em></span>
+  <input type="text" name="DNS_GEOIP" value="" placeholder="telegram,discord" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">GEOIP</a> СЃРїРёСЃРєРѕРј С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_AS">
+  <span><b>ASN</b><em>DNS_AS</em></span>
+  <input type="text" name="DNS_AS" value="" placeholder="AS15169" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">IP-ASN</a>: AS123,AS456.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_DOMAIN">
+  <span><b>Domain</b><em>DNS_DOMAIN</em></span>
+  <input type="text" name="DNS_DOMAIN" value="" placeholder="example.com" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_SUFFIX">
+  <span><b>Suffix</b><em>DNS_SUFFIX</em></span>
+  <input type="text" name="DNS_SUFFIX" value="" placeholder="example.com" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN-SUFFIX</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_KEYWORD">
+  <span><b>Keyword</b><em>DNS_KEYWORD</em></span>
+  <input type="text" name="DNS_KEYWORD" value="" placeholder="google" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN-KEYWORD</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_IPCIDR">
+  <span><b>IP CIDR</b><em>DNS_IPCIDR</em></span>
+  <input type="text" name="DNS_IPCIDR" value="" placeholder="1.1.1.0/24" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">IP-CIDR</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_SRCIPCIDR">
+  <span><b>Source CIDR</b><em>DNS_SRCIPCIDR</em></span>
+  <input type="text" name="DNS_SRCIPCIDR" value="" placeholder="192.168.88.0/24" data-default="">
+  <small>РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">SRC-IP-CIDR</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_DSCP">
+  <span><b>DSCP</b><em>DNS_DSCP</em></span>
+  <input type="number" name="DNS_DSCP" value="" placeholder="" data-default="">
+  <small>РџСЂР°РІРёР»Рѕ <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DSCP</a> РґР»СЏ РѕС‚РґРµР»СЊРЅРѕРіРѕ РІС…РѕРґР°.</small>
+  <i>default</i>
+</label>
+<label class="field" data-env="DNS_DNS">
+  <span><b>DNS policy</b><em>DNS_DNS</em></span>
+  <input type="text" name="DNS_DNS" value="" placeholder="https://dns.google/dns-query" data-default="">
+  <small>DNS resolver РґР»СЏ rule-set СЌС‚РѕР№ РіСЂСѓРїРїС‹.</small>
+  <i>default</i>
+</label>
+</div></article>
+</div></div>
 </section>
     <div class="bottom-submit">
-      <button class="primary" type="button" onclick="generateCommands()">Сгенерировать команды MikroTik</button>
+      <button class="primary" type="button" onclick="generateCommands()">РЎРіРµРЅРµСЂРёСЂРѕРІР°С‚СЊ РєРѕРјР°РЅРґС‹ MikroTik</button>
     </div>
     </form>
     <section id="commands" class="command-panel" hidden>
       <div>
-        <h2>Команды для MikroTik</h2>
-        <p>Генератор сравнивает исходное значение env с тем, что сейчас в форме: новое добавляет, измененное правит, очищенное или удаленное удаляет.</p>
+        <h2>РљРѕРјР°РЅРґС‹ РґР»СЏ MikroTik</h2>
+        <p>Р“РµРЅРµСЂР°С‚РѕСЂ СЃСЂР°РІРЅРёРІР°РµС‚ РёСЃС…РѕРґРЅРѕРµ Р·РЅР°С‡РµРЅРёРµ env СЃ С‚РµРј, С‡С‚Рѕ СЃРµР№С‡Р°СЃ РІ С„РѕСЂРјРµ: РЅРѕРІРѕРµ РґРѕР±Р°РІР»СЏРµС‚, РёР·РјРµРЅРµРЅРЅРѕРµ РїСЂР°РІРёС‚, РѕС‡РёС‰РµРЅРЅРѕРµ РёР»Рё СѓРґР°Р»РµРЅРЅРѕРµ СѓРґР°Р»СЏРµС‚.</p>
       </div>
       <label class="command-list-field">
         <span>ENV list</span>
@@ -101,16 +387,16 @@
       </label>
       <div class="command-grid">
         <label>
-          <span>Текущая страница</span>
+          <span>РўРµРєСѓС‰Р°СЏ СЃС‚СЂР°РЅРёС†Р°</span>
           <textarea id="commandsText" readonly spellcheck="false"></textarea>
         </label>
         <label>
-          <span>Суммарно по всем измененным env</span>
+          <span>РЎСѓРјРјР°СЂРЅРѕ РїРѕ РІСЃРµРј РёР·РјРµРЅРµРЅРЅС‹Рј env</span>
           <textarea id="commandsAllText" readonly spellcheck="false"></textarea>
         </label>
       </div>
       <div class="command-actions">
-        <button class="ghost" type="button" onclick="copyCommands()">Скопировать суммарные</button>
+        <button class="ghost" type="button" onclick="copyCommands()">РЎРєРѕРїРёСЂРѕРІР°С‚СЊ СЃСѓРјРјР°СЂРЅС‹Рµ</button>
       </div>
     </section>
   </main>
@@ -227,7 +513,7 @@ function collectAllCommands() {
 function formatCommands(title, commands) {
   let text = "# " + title + "\n";
   text += "# container=\"" + containerName + "\" env-list=\"" + getEnvListName() + "\"\n\n";
-  text += commands.length ? commands.join("\n") : "# Нет изменений.";
+  text += commands.length ? commands.join("\n") : "# РќРµС‚ РёР·РјРµРЅРµРЅРёР№.";
   text += "\n\n/container/stop [find where name=\"" + containerName + "\"]\n";
   text += ":delay 5s\n";
   text += "/container/start [find where name=\"" + containerName + "\"]\n";
@@ -240,8 +526,8 @@ function generateCommands() {
   localStorage.setItem("mihomo-command-env-list", getEnvListName());
   const pageCommands = collectPageCommands();
   const allCommands = collectAllCommands();
-  document.getElementById("commandsText").value = formatCommands("Команды для текущей страницы", pageCommands);
-  document.getElementById("commandsAllText").value = formatCommands("Суммарные команды для всех измененных env", allCommands);
+  document.getElementById("commandsText").value = formatCommands("РљРѕРјР°РЅРґС‹ РґР»СЏ С‚РµРєСѓС‰РµР№ СЃС‚СЂР°РЅРёС†С‹", pageCommands);
+  document.getElementById("commandsAllText").value = formatCommands("РЎСѓРјРјР°СЂРЅС‹Рµ РєРѕРјР°РЅРґС‹ РґР»СЏ РІСЃРµС… РёР·РјРµРЅРµРЅРЅС‹С… env", allCommands);
   document.getElementById("commands").hidden = false;
   document.getElementById("commands").scrollIntoView({behavior: "smooth", block: "start"});
 }
@@ -257,7 +543,7 @@ function applyTheme(theme) {
   document.body.dataset.theme = theme;
   localStorage.setItem("mihomo-theme", theme);
   const label = document.getElementById("themeLabel");
-  if (label) label.textContent = theme === "dark" ? "Светлая" : "Темная";
+  if (label) label.textContent = theme === "dark" ? "РЎРІРµС‚Р»Р°СЏ" : "РўРµРјРЅР°СЏ";
 }
 
 function toggleTheme() {
@@ -307,13 +593,13 @@ function addRow(containerId, prefix, startAtOne) {
   if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") {
     const packets = prefix === "ZAPRET_CMD" ? "ZAPRET_PACKETS" : "ZAPRET2_PACKETS";
     const packetsKey = packets + idx;
-    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="--dpi-desync=..."></label><label><span>${packetsKey}</span><input name="${packetsKey}" placeholder="12"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="--dpi-desync=..."></label><label><span>${packetsKey}</span><input name="${packetsKey}" placeholder="12"></label><button type="button" onclick="removeEnvRow(this)">РЈРґР°Р»РёС‚СЊ</button>`;
   } else if (prefix === "RULE_SET") {
-    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Редактировать">&#10002;</button><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Р РµРґР°РєС‚РёСЂРѕРІР°С‚СЊ">&#10002;</button><button type="button" onclick="removeEnvRow(this)">РЈРґР°Р»РёС‚СЊ</button>`;
   } else if (prefix === "RULES") {
-    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="DOMAIN,example.com,GLOBAL"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="DOMAIN,example.com,GLOBAL"></label><button type="button" onclick="removeEnvRow(this)">РЈРґР°Р»РёС‚СЊ</button>`;
   } else {
-    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="значение env"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="Р·РЅР°С‡РµРЅРёРµ env"></label><button type="button" onclick="removeEnvRow(this)">РЈРґР°Р»РёС‚СЊ</button>`;
   }
   wrap.appendChild(div);
   wireFieldEvents(div);
@@ -508,17 +794,17 @@ function restoreMissingIndexedRows() {
       div.dataset.startAtOne = cfg.startAtOne ? "true" : "false";
       if (cfg.prefix === "RULE_SET") {
         const keyName = "RULE_SET" + idx + "_BASE64";
-        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Редактировать">&#10002;</button><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Р РµРґР°РєС‚РёСЂРѕРІР°С‚СЊ">&#10002;</button><button type="button" onclick="removeEnvRow(this)">РЈРґР°Р»РёС‚СЊ</button>`;
       } else if (cfg.prefix === "RULES") {
         const keyName = "RULES" + idx;
-        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="DOMAIN,example.com,GLOBAL"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="DOMAIN,example.com,GLOBAL"></label><button type="button" onclick="removeEnvRow(this)">РЈРґР°Р»РёС‚СЊ</button>`;
       } else if (cfg.prefix === "FAKE_IP_FILTER") {
         const keyName = "FAKE_IP_FILTER" + idx;
-        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="DOMAIN,www.youtube.com,real-ip"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="DOMAIN,www.youtube.com,real-ip"></label><button type="button" onclick="removeEnvRow(this)">РЈРґР°Р»РёС‚СЊ</button>`;
       } else {
         const zeroPlain = !cfg.startAtOne;
         const keyName = idx === 0 && zeroPlain ? cfg.prefix : cfg.prefix + idx;
-        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="значение env"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="Р·РЅР°С‡РµРЅРёРµ env"></label><button type="button" onclick="removeEnvRow(this)">РЈРґР°Р»РёС‚СЊ</button>`;
       }
       wrap.appendChild(div);
       wireFieldEvents(div);
@@ -609,7 +895,7 @@ function wireIndexedRow(row) {
     const overMax = cfg && Number.isInteger(cfg.max) && nextIndex > cfg.max;
     if (!Number.isInteger(nextIndex) || nextIndex < minIndex || overMax || !shiftIndexedRow(row, nextIndex)) {
       input.value = row.dataset.index;
-      input.setCustomValidity("Номер вне допустимого диапазона");
+      input.setCustomValidity("РќРѕРјРµСЂ РІРЅРµ РґРѕРїСѓСЃС‚РёРјРѕРіРѕ РґРёР°РїР°Р·РѕРЅР°");
       input.reportValidity();
       setTimeout(() => input.setCustomValidity(""), 1200);
     }
@@ -788,7 +1074,7 @@ function addRuleSetFileRow(name, size) {
   div.className = "mount-link rule-set-file";
   div.dataset.file = name;
   const displayName = name.replace(/\.txt$/, '');
-  div.innerHTML = `<span>${escapeAttr(displayName)}</span><small>${size} bytes</small><div class="file-actions"><button type="button" onclick="editRuleSetFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteRuleSetFile(this)" title="Удалить">&#10005;</button></div>`;
+  div.innerHTML = `<span>${escapeAttr(displayName)}</span><small>${size} bytes</small><div class="file-actions"><button type="button" onclick="editRuleSetFile(this)" title="Р РµРґР°РєС‚РёСЂРѕРІР°С‚СЊ">&#10002;</button><button type="button" onclick="deleteRuleSetFile(this)" title="РЈРґР°Р»РёС‚СЊ">&#10005;</button></div>`;
   wrap.appendChild(div);
 }
 
@@ -808,13 +1094,13 @@ function editRuleSetFile(btn) {
       if (plainEl) plainEl.value = text;
       document.getElementById("fileEditModal").hidden = false;
     })
-    .catch((e) => alert('Не удалось прочитать файл: ' + e.message));
+    .catch((e) => alert('РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕС‡РёС‚Р°С‚СЊ С„Р°Р№Р»: ' + e.message));
 }
 
 function createRuleSetFile() {
   fileEditName = "";
   const titleEl = document.getElementById("fileEditTitle");
-  if (titleEl) titleEl.textContent = "Новый файл";
+  if (titleEl) titleEl.textContent = "РќРѕРІС‹Р№ С„Р°Р№Р»";
   const nameEl = document.getElementById("fileEditName");
   if (nameEl) { nameEl.value = ""; nameEl.readOnly = false; nameEl.focus(); }
   const plainEl = document.getElementById("fileEditPlain");
@@ -832,7 +1118,7 @@ function saveFileEditModal() {
   const plainEl = document.getElementById("fileEditPlain");
   if (!plainEl || !nameEl) return;
   const name = nameEl.value.trim();
-  if (!name) { alert("Укажите имя файла"); return; }
+  if (!name) { alert("РЈРєР°Р¶РёС‚Рµ РёРјСЏ С„Р°Р№Р»Р°"); return; }
   const fileName = name.endsWith(".txt") ? name : name + ".txt";
   const isNew = !nameEl.readOnly;
   const b64 = btoa(unescape(encodeURIComponent(plainEl.value)));
@@ -850,26 +1136,26 @@ function saveFileEditModal() {
           addRuleSetFileRow(fileName, size);
         }
       } else {
-        alert('Ошибка сохранения: ' + text);
+        alert('РћС€РёР±РєР° СЃРѕС…СЂР°РЅРµРЅРёСЏ: ' + text);
       }
     })
-    .catch((e) => alert('Ошибка сети: ' + e));
+    .catch((e) => alert('РћС€РёР±РєР° СЃРµС‚Рё: ' + e));
 }
 
 function deleteRuleSetFile(btn) {
   const row = btn.closest(".rule-set-file");
   if (!row) return;
   const name = row.dataset.file;
-  if (!window.confirm("Удалить файл " + name.replace(/\.txt$/, '') + "?")) return;
+  if (!window.confirm("РЈРґР°Р»РёС‚СЊ С„Р°Р№Р» " + name.replace(/\.txt$/, '') + "?")) return;
   row.remove();
   fetch('/cgi-bin/delete-file?file=' + encodeURIComponent(name) + '&type=ruleset')
     .then((r) => r.text())
     .then((text) => {
       if (text.trim() !== "OK") {
-        alert('Ошибка удаления: ' + text);
+        alert('РћС€РёР±РєР° СѓРґР°Р»РµРЅРёСЏ: ' + text);
       }
     })
-    .catch((e) => alert('Ошибка сети: ' + e));
+    .catch((e) => alert('РћС€РёР±РєР° СЃРµС‚Рё: ' + e));
 }
 
 let proxyEditName = "";
@@ -881,7 +1167,7 @@ function addProxyFileRow(name, size) {
   div.className = "mount-link proxy-file";
   div.dataset.file = name;
   const displayName = name.replace(/\.(yaml|yml|conf)$/, '');
-  div.innerHTML = `<span>${escapeAttr(displayName)}</span><small>${size} bytes</small><div class="file-actions"><button type="button" onclick="editProxyFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteProxyFile(this)" title="Удалить">&#10005;</button></div>`;
+  div.innerHTML = `<span>${escapeAttr(displayName)}</span><small>${size} bytes</small><div class="file-actions"><button type="button" onclick="editProxyFile(this)" title="Р РµРґР°РєС‚РёСЂРѕРІР°С‚СЊ">&#10002;</button><button type="button" onclick="deleteProxyFile(this)" title="РЈРґР°Р»РёС‚СЊ">&#10005;</button></div>`;
   wrap.appendChild(div);
 }
 
@@ -901,13 +1187,13 @@ function editProxyFile(btn) {
       if (plainEl) plainEl.value = text;
       document.getElementById("proxyEditModal").hidden = false;
     })
-    .catch((e) => alert('Не удалось прочитать файл: ' + e.message));
+    .catch((e) => alert('РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕС‡РёС‚Р°С‚СЊ С„Р°Р№Р»: ' + e.message));
 }
 
 function createProxyFile() {
   proxyEditName = "";
   const titleEl = document.getElementById("proxyEditTitle");
-  if (titleEl) titleEl.textContent = "Новый файл";
+  if (titleEl) titleEl.textContent = "РќРѕРІС‹Р№ С„Р°Р№Р»";
   const nameEl = document.getElementById("proxyEditName");
   if (nameEl) { nameEl.value = ""; nameEl.readOnly = false; nameEl.focus(); }
   const plainEl = document.getElementById("proxyEditPlain");
@@ -925,7 +1211,7 @@ function saveProxyFileModal() {
   const plainEl = document.getElementById("proxyEditPlain");
   if (!plainEl || !nameEl) return;
   const name = nameEl.value.trim();
-  if (!name) { alert("Укажите имя файла"); return; }
+  if (!name) { alert("РЈРєР°Р¶РёС‚Рµ РёРјСЏ С„Р°Р№Р»Р°"); return; }
   const fileName = name.endsWith(".yaml") ? name : name + ".yaml";
   const isNew = !nameEl.readOnly;
   const b64 = btoa(unescape(encodeURIComponent(plainEl.value)));
@@ -943,26 +1229,26 @@ function saveProxyFileModal() {
           addProxyFileRow(fileName, size);
         }
       } else {
-        alert('Ошибка сохранения: ' + text);
+        alert('РћС€РёР±РєР° СЃРѕС…СЂР°РЅРµРЅРёСЏ: ' + text);
       }
     })
-    .catch((e) => alert('Ошибка сети: ' + e));
+    .catch((e) => alert('РћС€РёР±РєР° СЃРµС‚Рё: ' + e));
 }
 
 function deleteProxyFile(btn) {
   const row = btn.closest(".proxy-file");
   if (!row) return;
   const name = row.dataset.file;
-  if (!window.confirm("Удалить файл " + name.replace(/\.(yaml|yml|conf)$/, '') + "?")) return;
+  if (!window.confirm("РЈРґР°Р»РёС‚СЊ С„Р°Р№Р» " + name.replace(/\.(yaml|yml|conf)$/, '') + "?")) return;
   row.remove();
   fetch('/cgi-bin/delete-file?file=' + encodeURIComponent(name) + '&type=proxy')
     .then((r) => r.text())
     .then((text) => {
       if (text.trim() !== "OK") {
-        alert('Ошибка удаления: ' + text);
+        alert('РћС€РёР±РєР° СѓРґР°Р»РµРЅРёСЏ: ' + text);
       }
     })
-    .catch((e) => alert('Ошибка сети: ' + e));
+    .catch((e) => alert('РћС€РёР±РєР° СЃРµС‚Рё: ' + e));
 }
 
 function enhanceIndexedRows(root) {
@@ -985,7 +1271,7 @@ function addFakeIpFilterRow(idx, value) {
   div.dataset.index = wanted;
   div.innerHTML = `
     <label><span>${key}</span><input name="${key}" value="${escapeAttr(value)}" placeholder="DOMAIN,www.youtube.com,real-ip"></label>
-    <button type="button" onclick="removeEnvRow(this)">Удалить</button>
+    <button type="button" onclick="removeEnvRow(this)">РЈРґР°Р»РёС‚СЊ</button>
   `;
   wrap.appendChild(div);
   wireFieldEvents(div);
@@ -999,7 +1285,7 @@ function addPair(containerId, key) {
   const wrap = document.getElementById(containerId);
   const div = document.createElement("div");
   div.className = "env-row";
-  div.innerHTML = `<label><span>${custom}</span><input name="${custom}" placeholder="значение env"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+  div.innerHTML = `<label><span>${custom}</span><input name="${custom}" placeholder="Р·РЅР°С‡РµРЅРёРµ env"></label><button type="button" onclick="removeEnvRow(this)">РЈРґР°Р»РёС‚СЊ</button>`;
   wrap.appendChild(div);
   wireFieldEvents(div);
 }
@@ -1090,7 +1376,7 @@ function groupFieldMarkup(prefix, suffix, label, hint, placeholder, type, value)
 }
 
 function groupTypeHint() {
-  return `Тип <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#type" target="_blank" rel="noopener">proxy-groups type</a>: select/url-test/load-balance/fallback/relay.`;
+  return `РўРёРї <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#type" target="_blank" rel="noopener">proxy-groups type</a>: select/url-test/load-balance/fallback/relay.`;
 }
 
 function addGroupPane(name) {
@@ -1118,26 +1404,26 @@ function addGroupPane(name) {
   pane.hidden = true;
   pane.innerHTML = `
     <div class="group-pane-head">
-      <button class="group-delete" type="button" onclick="removeGroupPane(this.closest('.group-pane').dataset.group)">Удалить группу</button>
-      <label class="field"><span><b>Group name</b><em>GROUP</em></span><input class="group-name-input" value="${escapeAttr(clean)}" data-original="${escapeAttr(clean)}"><small>Имя группы и prefix env.</small><i>${prefix}</i></label>
+      <button class="group-delete" type="button" onclick="removeGroupPane(this.closest('.group-pane').dataset.group)">РЈРґР°Р»РёС‚СЊ РіСЂСѓРїРїСѓ</button>
+      <label class="field"><span><b>Group name</b><em>GROUP</em></span><input class="group-name-input" value="${escapeAttr(clean)}" data-original="${escapeAttr(clean)}"><small>РРјСЏ РіСЂСѓРїРїС‹ Рё prefix env.</small><i>${prefix}</i></label>
     </div>
     <div class="grid">
       <label class="field" data-env="${prefix}_TYPE"><span><b>Type</b><em>${prefix}_TYPE</em></span><select name="${prefix}_TYPE" data-default="select"><option value="select">select</option><option value="url-test">url-test</option><option value="load-balance">load-balance</option><option value="fallback">fallback</option><option value="relay">relay</option></select><small>${groupTypeHint()}</small><i>new</i></label>
-      ${groupFieldMarkup(prefix, "USE", "Use", `Список <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">providers</a> через запятую или none.`, "", "text", "")}
-      ${groupFieldMarkup(prefix, "PROXIES", "Proxies", `Явные <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> через запятую.`, "", "text", "")}
-      ${groupFieldMarkup(prefix, "FILTER", "Filter", `Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#filter" target="_blank" rel="noopener">filter</a> по именам прокси.`, "", "text", "")}
+      ${groupFieldMarkup(prefix, "USE", "Use", `РЎРїРёСЃРѕРє <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">providers</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ РёР»Рё none.`, "", "text", "")}
+      ${groupFieldMarkup(prefix, "PROXIES", "Proxies", `РЇРІРЅС‹Рµ <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.`, "", "text", "")}
+      ${groupFieldMarkup(prefix, "FILTER", "Filter", `Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#filter" target="_blank" rel="noopener">filter</a> РїРѕ РёРјРµРЅР°Рј РїСЂРѕРєСЃРё.`, "", "text", "")}
       ${groupFieldMarkup(prefix, "EXCLUDE", "Exclude", `Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter" target="_blank" rel="noopener">exclude-filter</a>.`, "", "text", "")}
-      ${groupFieldMarkup(prefix, "PRIORITY", "Priority", "Чем меньше, тем выше в rules.", "", "number", "")}
-      ${groupFieldMarkup(prefix, "GEOSITE", "Geosite", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">GEOSITE</a> списком через запятую.`, "youtube,category-ru", "text", "")}
-      ${groupFieldMarkup(prefix, "GEOIP", "Geoip", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">GEOIP</a> списком через запятую.`, "telegram,discord", "text", "")}
-      ${groupFieldMarkup(prefix, "AS", "ASN", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">IP-ASN</a>: AS123,AS456.`, "AS15169", "text", "")}
-      ${groupFieldMarkup(prefix, "DOMAIN", "Domain", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN</a> через запятую.`, "example.com", "text", "")}
-      ${groupFieldMarkup(prefix, "SUFFIX", "Suffix", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN-SUFFIX</a> через запятую.`, "example.com", "text", "")}
-      ${groupFieldMarkup(prefix, "KEYWORD", "Keyword", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN-KEYWORD</a> через запятую.`, "google", "text", "")}
-      ${groupFieldMarkup(prefix, "IPCIDR", "IP CIDR", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">IP-CIDR</a> через запятую.`, "1.1.1.0/24", "text", "")}
-      ${groupFieldMarkup(prefix, "SRCIPCIDR", "Source CIDR", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">SRC-IP-CIDR</a> через запятую.`, "192.168.88.0/24", "text", "")}
-      ${groupFieldMarkup(prefix, "DSCP", "DSCP", `Правило <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DSCP</a> для отдельного входа.`, "", "number", "")}
-      ${groupFieldMarkup(prefix, "DNS", "DNS policy", "DNS resolver для rule-set этой группы.", "https://dns.google/dns-query", "text", "")}
+      ${groupFieldMarkup(prefix, "PRIORITY", "Priority", "Р§РµРј РјРµРЅСЊС€Рµ, С‚РµРј РІС‹С€Рµ РІ rules.", "", "number", "")}
+      ${groupFieldMarkup(prefix, "GEOSITE", "Geosite", `РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">GEOSITE</a> СЃРїРёСЃРєРѕРј С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.`, "youtube,category-ru", "text", "")}
+      ${groupFieldMarkup(prefix, "GEOIP", "Geoip", `РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">GEOIP</a> СЃРїРёСЃРєРѕРј С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.`, "telegram,discord", "text", "")}
+      ${groupFieldMarkup(prefix, "AS", "ASN", `РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">IP-ASN</a>: AS123,AS456.`, "AS15169", "text", "")}
+      ${groupFieldMarkup(prefix, "DOMAIN", "Domain", `РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.`, "example.com", "text", "")}
+      ${groupFieldMarkup(prefix, "SUFFIX", "Suffix", `РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN-SUFFIX</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.`, "example.com", "text", "")}
+      ${groupFieldMarkup(prefix, "KEYWORD", "Keyword", `РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN-KEYWORD</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.`, "google", "text", "")}
+      ${groupFieldMarkup(prefix, "IPCIDR", "IP CIDR", `РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">IP-CIDR</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.`, "1.1.1.0/24", "text", "")}
+      ${groupFieldMarkup(prefix, "SRCIPCIDR", "Source CIDR", `РџСЂР°РІРёР»Р° <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">SRC-IP-CIDR</a> С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.`, "192.168.88.0/24", "text", "")}
+      ${groupFieldMarkup(prefix, "DSCP", "DSCP", `РџСЂР°РІРёР»Рѕ <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DSCP</a> РґР»СЏ РѕС‚РґРµР»СЊРЅРѕРіРѕ РІС…РѕРґР°.`, "", "number", "")}
+      ${groupFieldMarkup(prefix, "DNS", "DNS policy", "DNS resolver РґР»СЏ rule-set СЌС‚РѕР№ РіСЂСѓРїРїС‹.", "https://dns.google/dns-query", "text", "")}
     </div>`;
   panes.appendChild(pane);
   wireFieldEvents(pane);
@@ -1222,10 +1508,10 @@ function addDnsPolicyRow(match, server, params) {
   const div = document.createElement("div");
   div.className = "dns-policy-grid dns-policy-row";
   div.innerHTML = `
-    <input class="dns-policy-match" value="${match || ""}" placeholder="+.example.com или rule-set:name">
+    <input class="dns-policy-match" value="${match || ""}" placeholder="+.example.com РёР»Рё rule-set:name">
     <input class="dns-policy-server" value="${server || ""}" placeholder="https://dns.quad9.net/dns-query">
     <input class="dns-policy-params" value="${params || ""}" placeholder="disable-ipv6=true&disable-qtype-65=true">
-    <button type="button" onclick="removeDnsPolicyRow(this)">Удалить</button>
+    <button type="button" onclick="removeDnsPolicyRow(this)">РЈРґР°Р»РёС‚СЊ</button>
   `;
   rows.appendChild(div);
   div.querySelectorAll("input").forEach((input) => input.addEventListener("input", syncDnsPolicy));
@@ -1241,7 +1527,7 @@ function splitHeaderItem(raw) {
 function addHeadersRow(editor, key, value) {
   const row = document.createElement("div");
   row.className = "headers-row";
-  row.innerHTML = `<input class="headers-key" value="${escapeAttr(key)}" placeholder="Header"><input class="headers-value" value="${escapeAttr(value)}" placeholder="value"><button type="button">Удалить</button>`;
+  row.innerHTML = `<input class="headers-key" value="${escapeAttr(key)}" placeholder="Header"><input class="headers-value" value="${escapeAttr(value)}" placeholder="value"><button type="button">РЈРґР°Р»РёС‚СЊ</button>`;
   editor.querySelector(".headers-rows").appendChild(row);
   row.querySelectorAll("input").forEach((input) => input.addEventListener("input", () => syncHeadersEditor(editor)));
   row.querySelector("button").addEventListener("click", () => {
@@ -1289,7 +1575,7 @@ function splitEndpointItem(raw) {
 function addWgEndpointRow(editor, host, port) {
   const row = document.createElement("div");
   row.className = "wg-endpoint-row";
-  row.innerHTML = `<input class="wg-host" value="${escapeAttr(host)}" placeholder="example.com"><input class="wg-port" value="${escapeAttr(port)}" placeholder="51820"><button type="button">Удалить</button>`;
+  row.innerHTML = `<input class="wg-host" value="${escapeAttr(host)}" placeholder="example.com"><input class="wg-port" value="${escapeAttr(port)}" placeholder="51820"><button type="button">РЈРґР°Р»РёС‚СЊ</button>`;
   editor.querySelector(".wg-endpoint-rows").appendChild(row);
   row.querySelectorAll("input").forEach((input) => input.addEventListener("input", () => syncWgDst(editor)));
   row.querySelector("button").addEventListener("click", () => {
@@ -1518,7 +1804,7 @@ function copyActiveYaml(btn) {
   document.body.removeChild(area);
   if (btn) {
     const oldText = btn.textContent;
-    btn.textContent = "Скопировано";
+    btn.textContent = "РЎРєРѕРїРёСЂРѕРІР°РЅРѕ";
     btn.classList.add("copied");
     setTimeout(() => {
       btn.textContent = oldText;
