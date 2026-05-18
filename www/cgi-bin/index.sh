@@ -328,8 +328,10 @@ header() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>(function(){try{var t=localStorage.getItem("mihomo-theme")||"dark";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","dark");}})();</script>
   <link rel="icon" href="$(asset_url favicon.png)">
   <link rel="stylesheet" href="$(asset_url style.css)">
+  <script src="$(asset_url ui.js)" defer></script>
   <title>Mihomo Proxy ROS</title>
 </head>
 <body>
@@ -410,9 +412,6 @@ footer() {
     </section>
   </main>
 </div>
-EOF
-  printf '<script src="%s"></script>\n' "$(asset_url ui.js)"
-  cat <<'EOF'
 <div class="modal" id="ruleSetModal" hidden>
   <div class="modal-backdrop" onclick="closeRuleSetModal()"></div>
   <div class="modal-content">

@@ -146,14 +146,16 @@ function copyCommands() {
 }
 
 function applyTheme(theme) {
-  document.body.dataset.theme = theme;
+  document.documentElement.dataset.theme = theme;
+  if (document.body) document.body.dataset.theme = theme;
   localStorage.setItem("mihomo-theme", theme);
   const label = document.getElementById("themeLabel");
   if (label) label.textContent = theme === "dark" ? "Светлая" : "Темная";
 }
 
 function toggleTheme() {
-  applyTheme(document.body.dataset.theme === "dark" ? "light" : "dark");
+  const cur = document.documentElement.dataset.theme || document.body.dataset.theme;
+  applyTheme(cur === "dark" ? "light" : "dark");
 }
 
 function resetUiDraft() {

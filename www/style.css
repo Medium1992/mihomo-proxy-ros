@@ -17,6 +17,7 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 }
 
+html[data-theme="dark"],
 body[data-theme="dark"] {
   color-scheme: dark;
   --bg: #111615;
