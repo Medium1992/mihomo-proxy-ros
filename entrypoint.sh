@@ -3518,9 +3518,21 @@ run() {
     start_byedpi_processes
   fi
 
-  chmod +x /www/cgi-bin/* /www/render_static.sh 2>/dev/null || true
-  /bin/sh /www/render_static.sh >/dev/null 2>&1 || true
-  httpd -f -p 80 -h /www >/dev/null 2>&1 &
+  # Web UI runs from RAM. /www is the source (mounted, may not allow chmod
+  # or be on flash). /dev/shm/web is the runtime docroot:
+  #   - cgi-bin: copied so chmod +x works (tmpfs supports unix mode bits)
+  #   - HTML:    rendered straight to RAM (no flash wear)
+  #   - assets:  symlinks back to /www (picked up live without container restart)
+  WEBROOT=/dev/shm/web
+  mkdir -p "$WEBROOT"
+  rm -rf "$WEBROOT/cgi-bin"
+  cp -r /www/cgi-bin "$WEBROOT/cgi-bin"
+  chmod +x "$WEBROOT/cgi-bin/"* 2>/dev/null || true
+  for item in assets templates favicon.png style.css ui.js; do
+    [ -e "/www/$item" ] && ln -sfn "/www/$item" "$WEBROOT/$item"
+  done
+  WWW_DIR="$WEBROOT" /bin/sh /www/render_static.sh >/dev/null 2>&1 || true
+  httpd -f -p 80 -h "$WEBROOT" >/dev/null 2>&1 &
 
   wait $MIHOMO_PID
 }
