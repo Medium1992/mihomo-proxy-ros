@@ -473,61 +473,62 @@ jobs:
 
           declare -A protected_digests
           declare -A child_digests
-          declare -A manifest_ids
+          # Cache manifest lookups by digest — one crane call per unique manifest,
+          # not per tag. Saves N×duplicate work when a manifest carries multiple tags.
+          declare -A manifest_seen
 
           echo "=== Tagged manifests ==="
-          for row in $(echo "$packages_json" | jq -r '.[] | select(.metadata.container.tags | length > 0) | @base64'); do
-            _jq() { echo "$row" | base64 --decode | jq -r "$1"; }
-            id=$(_jq '.id')
-            digest=$(_jq '.name')
-            tags=$(_jq '.metadata.container.tags | join(", ")')
-            created=$(_jq '.created_at')
-            mediaType=$(_jq '.metadata.container.manifest.mediaType // "unknown"')
-            manifest_ids[$id]=1
+          while IFS=$'\t' read -r id digest tags created mediaType; do
+            [[ -z "$id" ]] && continue
             protected_digests[$digest]=1
-            echo "  Inspecting manifest for tags: [$tags]"
-            for tag in $(_jq '.metadata.container.tags[]' | sort -u); do
-              manifest_json=$(timeout 10s crane manifest ghcr.io/${PACKAGE_OWNER}/${PACKAGE_NAME}:${tag} 2>/dev/null || echo "{}")
-              sub_digests=$(echo "$manifest_json" | jq -r '.manifests[].digest // empty')
+            echo "  Inspecting manifest $digest (tags: [$tags])"
+            if [[ -z "${manifest_seen[$digest]}" ]]; then
+              manifest_seen[$digest]=1
+              manifest_json=$(timeout 10s crane manifest "ghcr.io/${PACKAGE_OWNER}/${PACKAGE_NAME}@${digest}" 2>/dev/null || echo "{}")
+              # `(.manifests // [])[]` handles both multi-arch index and single-arch
+              # manifest (which has no .manifests field) without jq crashing.
+              sub_digests=$(echo "$manifest_json" | jq -r '(.manifests // [])[].digest // empty')
               for sd in $sub_digests; do
-                if [[ -n "$sd" ]]; then
-                  child_digests[$sd]=1
-                  protected_digests[$sd]=1
-                  echo "    -> Protected child digest: $sd"
-                fi
+                [[ -n "$sd" ]] || continue
+                child_digests[$sd]=1
+                protected_digests[$sd]=1
+                echo "    -> Protected child digest: $sd"
               done
-            done
+            else
+              echo "    -> (manifest already inspected for an earlier tag, reusing cache)"
+            fi
             echo "- ID: $id | Digest: $digest | Tags: [$tags] | Created: $created | Type: manifest ($mediaType)"
-          done
+          done < <(echo "$packages_json" | jq -r '
+            .[] | select((.metadata.container.tags // []) | length > 0) |
+            [ .id,
+              .name,
+              ((.metadata.container.tags // []) | join(", ")),
+              .created_at,
+              (.metadata.container.manifest.mediaType // "unknown")
+            ] | @tsv')
 
           echo ""
           echo "Protected child digests count: ${#child_digests[@]}"
           echo ""
 
+          # Reuse data already in packages_json — no extra gh api per id.
           echo "=== Untagged images ==="
-          untagged_ids=()
-          for id in $(echo "$packages_json" | jq -r '.[] | select(.metadata.container.tags | length == 0) | .id'); do
-            untagged_ids+=("$id")
-          done
           safe_untagged_ids=()
-
-          for id in "${untagged_ids[@]}"; do
-            data=$(timeout 10s gh api -H "Accept: application/vnd.github+json" \
-              /users/${PACKAGE_OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions/$id || echo "{}")
-            digest=$(echo "$data" | jq -r '.name // "unknown"')
-            created=$(echo "$data" | jq -r '.created_at // "unknown"')
-            mediaType=$(echo "$data" | jq -r '.metadata.container.manifest.mediaType // "unknown"')
-            if [[ "$digest" == "unknown" ]]; then
-              echo "Error: Failed to fetch data for ID $id (possibly already deleted)"
-              continue
-            fi
-            if [[ -n "${child_digests[$digest]}" || -n "${protected_digests[$digest]}" ]]; then
+          while IFS=$'\t' read -r id digest created mediaType; do
+            [[ -z "$id" ]] && continue
+            if [[ -n "${protected_digests[$digest]}" ]]; then
               echo "- ID: $id | Digest: $digest | Created: $created | Type: $mediaType -> skipped (child or referenced)"
             else
               echo "- ID: $id | Digest: $digest | Created: $created | Type: $mediaType -> delete candidate"
               safe_untagged_ids+=("$id")
             fi
-          done
+          done < <(echo "$packages_json" | jq -r '
+            .[] | select((.metadata.container.tags // []) | length == 0) |
+            [ .id,
+              (.name // "unknown"),
+              (.created_at // "unknown"),
+              (.metadata.container.manifest.mediaType // "unknown")
+            ] | @tsv')
 
           echo ""
           echo "Safe untagged IDs (before validation): ${safe_untagged_ids[*]}"
