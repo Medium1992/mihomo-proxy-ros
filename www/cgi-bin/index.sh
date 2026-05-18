@@ -1,6 +1,7 @@
 #!/bin/sh
 
 CONFIG_DIR="${CONFIG_DIR:-/root/.config/mihomo}"
+RUNTIME_DIR="${RUNTIME_DIR:-/dev/shm/mihomo}"
 AWG_DIR="$CONFIG_DIR/awg"
 PROXIES_DIR="$CONFIG_DIR/proxies_mount"
 RULE_SET_DIR="$CONFIG_DIR/rule_set_list"
@@ -150,7 +151,7 @@ config_rule_lines() {
 }
 
 active_yaml_files() {
-  config="$CONFIG_DIR/config.yaml"
+  config="$RUNTIME_DIR/config.yaml"
   [ -f "$config" ] && printf '%s\n' "$config"
 
   if [ -f "$config" ]; then
@@ -164,12 +165,12 @@ active_yaml_files() {
       [ -n "$path" ] || continue
       case "$path" in
         /*) file="$path" ;;
-        *) file="$CONFIG_DIR/$path" ;;
+        *) file="$RUNTIME_DIR/$path" ;;
       esac
       [ -f "$file" ] && printf '%s\n' "$file"
     done
 
-    for payload in "$CONFIG_DIR"/*_ruleset_payload.txt; do
+    for payload in "$RUNTIME_DIR"/*_ruleset_payload.txt; do
       [ -f "$payload" ] || continue
       base="$(basename "$payload" _ruleset_payload.txt)"
       if grep -q "${base}_ruleset" "$config" 2>/dev/null; then

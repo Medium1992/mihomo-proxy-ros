@@ -53,7 +53,13 @@ AWG_DIR="$CONFIG_DIR/awg"
 PROXIES_DIR="$CONFIG_DIR/proxies_mount"
 AMNEZIA_PREMIUM_DIR="$CONFIG_DIR/amnezia_premium"
 RULE_SET_DIR="$CONFIG_DIR/rule_set_list"
-CONFIG_YAML="$CONFIG_DIR/config.yaml"
+# Runtime artifacts (regenerated on every container start) live in RAM
+# to avoid wearing out the underlying flash storage. Mounted user files
+# (AWG_DIR, PROXIES_DIR, RULE_SET_DIR) and mihomo's own downloads
+# (geosite, geoip, external-ui) stay in CONFIG_DIR on flash.
+RUNTIME_DIR="/dev/shm/mihomo"
+HS5T_DIR="/dev/shm/hs5t"
+CONFIG_YAML="$RUNTIME_DIR/config.yaml"
 UI_URL_CHECK="$CONFIG_DIR/.ui_url"
 FAKE_IP_RANGE="${FAKE_IP_RANGE:-198.18.0.0/15}"
 FAKE_IP_TTL="${FAKE_IP_TTL:-1}"
@@ -86,7 +92,7 @@ AMNEZIA_PREMIUM_GATEWAY="http://gw.amnezia.org:80/"
 AMNEZIA_PREMIUM_APP_VERSION="4.8.15.4"
 AMNEZIA_PREMIUM_APP_LANGUAGE="ru"
 AMNEZIA_PREMIUM_OS_VERSION="linux"
-AMNEZIA_PREMIUM_PUBLIC_KEY_FILE="${AMNEZIA_PREMIUM_PUBLIC_KEY_FILE:-/awg}"
+AMNEZIA_PREMIUM_PUBLIC_KEY_FILE="${AMNEZIA_PREMIUM_PUBLIC_KEY_FILE:-/usr/local/bin/awg}"
 AMNEZIA_PREMIUM_HTTP_TIMEOUT=8
 AMNEZIA_PREMIUM_DNS_TIMEOUT=4
 AMNEZIA_PREMIUM_DOH_SERVERS="1.1.1.1|cloudflare-dns.com|/dns-query?name=%s&type=A 1.0.0.1|cloudflare-dns.com|/dns-query?name=%s&type=A 8.8.8.8|dns.google|/resolve?name=%s&type=A 8.8.4.4|dns.google|/resolve?name=%s&type=A"
@@ -180,7 +186,7 @@ generate_byedpi_proxies() {
     idx=$(get_cmd_index "$var" BYEDPI)
     mark=$((base_mark + idx))
     name=$(get_instance_name "BYEDPI" "$idx")
-    yaml="$CONFIG_DIR/${name}.yaml"
+    yaml="$RUNTIME_DIR/${name}.yaml"
 
     cat > "$yaml" <<EOF
 proxies:
@@ -194,7 +200,7 @@ EOF
     cat >> "$CONFIG_YAML" <<EOF
   $name:
     type: file
-    path: ${name}.yaml
+    path: $RUNTIME_DIR/${name}.yaml
 EOF
 
     [ "${HEALTHCHECK_PROVIDER}" = "true" ] && cat >> "$CONFIG_YAML" <<EOF
@@ -245,7 +251,7 @@ generate_hs5t() {
   mark=$((500 + idx))
   port=$((2500 + idx))
 
-  cat > "/hs5t_$idx.yml" <<EOF
+  cat > "$HS5T_DIR/hs5t_$idx.yml" <<EOF
 misc:
   log-level: 'error'
 tunnel:
@@ -253,20 +259,20 @@ tunnel:
   mtu: 1500
   ipv4: 100.64.$idx.1
   multi-queue: true
-  post-up-script: '/hs5t_$idx.sh'
+  post-up-script: '$HS5T_DIR/hs5t_$idx.sh'
 socks5:
   address: '127.0.0.1'
   port: $port
   udp: 'udp'
 EOF
 
-  cat > "/hs5t_$idx.sh" <<EOF
+  cat > "$HS5T_DIR/hs5t_$idx.sh" <<EOF
 #!/bin/sh
 ip rule show | grep -q "fwmark $mark.*ipproto udp" || \
   ip rule add fwmark $mark ipproto udp table $mark pref 150
 ip route replace default via 100.64.$idx.1 dev hs5t_$idx table $mark
 EOF
-  chmod +x "/hs5t_$idx.sh"
+  chmod +x "$HS5T_DIR/hs5t_$idx.sh"
 }
 
 start_byedpi_processes() {
@@ -281,10 +287,10 @@ start_byedpi_processes() {
 
     echo "Starting BYEDPI[$idx] tcp:$tcp_port udp:$udp_port"
 
-    ./byedpi --port $tcp_port --transparent $cmd >/dev/null 2>&1 &
-    ./byedpi --port $udp_port $cmd >/dev/null 2>&1 &
+    byedpi --port $tcp_port --transparent $cmd >/dev/null 2>&1 &
+    byedpi --port $udp_port $cmd >/dev/null 2>&1 &
     generate_hs5t "$idx"
-    ./hs5t "./hs5t_$idx.yml" >/dev/null 2>&1 &
+    hs5t "$HS5T_DIR/hs5t_$idx.yml" >/dev/null 2>&1 &
   done
 }
 
@@ -305,7 +311,7 @@ generate_zapret_proxies() {
       name="${base}"
     fi
     mark=$((base_mark + idx))
-    yaml="$CONFIG_DIR/${name}.yaml"
+    yaml="$RUNTIME_DIR/${name}.yaml"
 
     cat > "$yaml" <<EOF
 proxies:
@@ -319,7 +325,7 @@ EOF
     cat >> "$CONFIG_YAML" <<EOF
   $name:
     type: file
-    path: ${name}.yaml
+    path: $RUNTIME_DIR/${name}.yaml
 EOF
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
       cat >> "$CONFIG_YAML" <<EOF
@@ -434,7 +440,7 @@ start_zapret_processes() {
     cmd=$(printenv "$var")
 
     echo "Starting $var on queue $queue"
-    ./$bin --qnum $queue --user=root $LUA_INIT_ARGS $cmd &
+    "$bin" --qnum $queue --user=root $LUA_INIT_ARGS $cmd &
   done
 }
 
@@ -2002,7 +2008,7 @@ generate_awg_providers() {
     for conf in "$AWG_DIR"/*.conf; do
       [ ! -f "$conf" ] && continue
       local awg_name=$(basename "$conf" .conf)
-      local awg_yaml="${CONFIG_DIR}/${awg_name}.yaml"
+      local awg_yaml="${RUNTIME_DIR}/${awg_name}.yaml"
 
       {
         echo "proxies:"
@@ -2012,7 +2018,7 @@ generate_awg_providers() {
       cat >> "$CONFIG_YAML" <<EOF
   ${awg_name}:
     type: file
-    path: ${awg_name}.yaml
+    path: $RUNTIME_DIR/${awg_name}.yaml
 EOF
 emit_provider_override "$awg_name" >> "$CONFIG_YAML"
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
@@ -2034,12 +2040,11 @@ generate_mounted_providers() {
       [ ! -f "$yaml_file" ] && continue
       local provider_name=$(basename "$yaml_file" .yaml)
       [ "$provider_name" = "$(basename "$yaml_file")" ] && provider_name=$(basename "$yaml_file" .yml)
-      local target_yaml="${CONFIG_DIR}/${provider_name}.yaml"
-      cp "$yaml_file" "$target_yaml"
+      # Reference the mounted file directly — no copy to flash needed.
       cat >> "$CONFIG_YAML" <<EOF
   ${provider_name}:
     type: file
-    path: ${provider_name}.yaml
+    path: $yaml_file
 EOF
 emit_provider_override "$provider_name" >> "$CONFIG_YAML"
       if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
@@ -2278,7 +2283,7 @@ start_zapret2_wg() {
     LUA_INIT_ARGS="$LUA_INIT_ARGS --lua-init=@$f"
   done
 
-  ./nfqws2 \
+  nfqws2 \
     --qnum $queue \
     --user=root \
     $LUA_INIT_ARGS \
@@ -2367,7 +2372,7 @@ EOF
     for varname in $(env | grep -E '^LINK[0-9]*=' | cut -d'=' -f1 | sort -V); do
       url=$(printenv "$varname")
       provider_name="$varname"
-      yaml_file="$CONFIG_DIR/${provider_name}.yaml"
+      yaml_file="$RUNTIME_DIR/${provider_name}.yaml"
       case "$url" in
         vpn://*)
           if ! generate_vpn_provider "$url" "$provider_name" "$yaml_file"; then
@@ -2381,7 +2386,7 @@ EOF
       cat >> "$CONFIG_YAML" <<EOF
   $provider_name:
     type: file
-    path: ${provider_name}.yaml
+    path: $RUNTIME_DIR/${provider_name}.yaml
 EOF
 emit_provider_override "$provider_name" >> "$CONFIG_YAML"
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
@@ -2399,7 +2404,7 @@ EOF
   providers="${providers}${mounted_provs}"
 
   # SUB_LINK
-  sub_link_envs="$CONFIG_DIR/.sub_link_envs"
+  sub_link_envs="$RUNTIME_DIR/.sub_link_envs"
   env | grep -E '^SUB_LINK[0-9]+=' | sort -V > "$sub_link_envs" || true
   while IFS= read -r var; do
     name=$(echo "$var" | cut -d '=' -f1)
@@ -2491,7 +2496,7 @@ EOF
       esac
     done
     IFS=$OLDIFS
-    yaml_file="$CONFIG_DIR/${name}.yaml"
+    yaml_file="$RUNTIME_DIR/${name}.yaml"
     {
       echo "proxies:"
       echo "  - name: \"$name\""
@@ -2509,7 +2514,7 @@ EOF
     cat >> "$CONFIG_YAML" <<EOF
   $name:
     type: file
-    path: ${name}.yaml
+    path: $RUNTIME_DIR/${name}.yaml
 EOF
 emit_provider_override "$name" >> "$CONFIG_YAML"
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
@@ -2561,9 +2566,9 @@ for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2
     ip rule add fwmark $i table $i pref 150
   fi
 
-  echo "Generating $CONFIG_DIR/$iface.yaml with interface: $iface"
-  
-  cat > "$CONFIG_DIR/$iface.yaml" <<EOF
+  echo "Generating $RUNTIME_DIR/$iface.yaml with interface: $iface"
+
+  cat > "$RUNTIME_DIR/$iface.yaml" <<EOF
 proxies:
   - name: "$iface"
     type: direct
@@ -2572,7 +2577,7 @@ proxies:
     interface-name: "$iface"
 EOF
   if [ $i -gt 200 ]; then
-  cat >> "$CONFIG_DIR/$iface.yaml" <<EOF    
+  cat >> "$RUNTIME_DIR/$iface.yaml" <<EOF
     routing-mark: $i
 EOF
   fi
@@ -2580,7 +2585,7 @@ EOF
   cat >> "$CONFIG_YAML" <<EOF
   $iface:
     type: file
-    path: $iface.yaml
+    path: $RUNTIME_DIR/$iface.yaml
 EOF
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
       cat >> "$CONFIG_YAML" <<EOF
@@ -2670,13 +2675,13 @@ custom_rules_payloads=""
         continue
       fi
 
-      ruleset_file="$CONFIG_DIR/${name}_ruleset_payload.txt"
+      ruleset_file="$RUNTIME_DIR/${name}_ruleset_payload.txt"
       payload=$(printf '%s' "$base64_part" | tr -d '\r\n ' | base64 -d 2>/dev/null || true)
 
       if [ -z "$payload" ]; then
         log "Skipping $var — BASE64 decode failed"
         continue
-      fi      
+      fi
       printf '%s\n' "$payload" > "$ruleset_file"
 
       custom_rules_payloads="$custom_rules_payloads
@@ -2704,9 +2709,8 @@ custom_rules_payloads=""
           continue
         fi
 
-        ruleset_file="$CONFIG_DIR/${name}_ruleset_payload.txt"
-
-        cp "$f" "$ruleset_file"
+        # Reference the mounted file directly — no copy needed.
+        ruleset_file="$f"
 
         custom_rules_payloads="$custom_rules_payloads
     ${custom_rules_idx}|${name}|${ruleset_file}"
@@ -3474,6 +3478,11 @@ wait_for_meta() {
 
 run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$PROXIES_DIR" "$RULE_SET_DIR"
+  # Wipe runtime dirs on every start — everything here is regenerated below.
+  rm -rf "$RUNTIME_DIR" "$HS5T_DIR"
+  mkdir -p "$RUNTIME_DIR" "$HS5T_DIR"
+  # Clean up stale hs5t artefacts from previous installs (when they lived in /).
+  rm -f /hs5t_*.yml /hs5t_*.sh
 
   UNSPEC_PREF=$(ip rule show | awk '/lookup unspec/ {print $1}' | tr -d :)
   MASQUERADE_PREF=$(ip rule show | awk '/lookup masquerade/ {print $1}' | tr -d :)
@@ -3495,9 +3504,14 @@ run() {
 
   config_file_mihomo
 
-  echo "Starting Mihomo $(./mihomo -v)"
+  echo "Starting Mihomo $(mihomo -v)"
 
-  ./mihomo &
+  # -d keeps mihomo's own data (UI, geo databases, cache) on flash;
+  # -f points to the entrypoint-generated config that lives in RAM.
+  # SAFE_PATHS whitelists RUNTIME_DIR so mihomo accepts proxy-providers
+  # whose `path:` points to /dev/shm/mihomo/*.yaml (outside its home dir).
+  # Colon-separated on Linux per mihomo docs.
+  SAFE_PATHS="$RUNTIME_DIR" mihomo -d "$CONFIG_DIR" -f "$CONFIG_YAML" &
   MIHOMO_PID=$!
 
   wait_for_meta

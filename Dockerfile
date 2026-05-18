@@ -58,7 +58,7 @@ RUN curl -L https://github.com/IndeecFOX/zapret4rocket/archive/refs/heads/master
     unzip zapret4rocket.zip -d /zapret4rocket && \
     rm zapret4rocket.zip
 
-RUN mkdir -p /final
+RUN mkdir -p /final /final/usr/local/bin
 
 RUN if [ "$TARGETARCH" = "amd64" ]; then \
       SRC="$(ls mihomo-linux-amd64-${AMD64VERSION} mihomo-linux-amd64-${AMD64VERSION}-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1)"; \
@@ -69,23 +69,23 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then \
     else \
       SRC="$(ls mihomo-linux-armv5 mihomo-linux-armv5-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1)"; \
     fi && \
-    [ -n "$SRC" ] && mv "$SRC" /final/mihomo
+    [ -n "$SRC" ] && mv "$SRC" /final/usr/local/bin/mihomo
 
-RUN if [ "$TARGETARCH" = "amd64" ]; then mv hev-socks5-tunnel-linux-x86_64 /final/hs5t; \
-    elif [ "$TARGETARCH" = "arm64" ]; then mv hev-socks5-tunnel-linux-arm64 /final/hs5t; \
-    elif [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v7" ]; then mv hev-socks5-tunnel-linux-arm32v7 /final/hs5t; \
-    else mv hev-socks5-tunnel-linux-arm32 /final/hs5t; fi
-    
-RUN if [ "$TARGETARCH" = "amd64" ]; then mv ciadpi-x86_64 /final/byedpi; \
-    elif [ "$TARGETARCH" = "arm64" ]; then mv ciadpi-aarch64 /final/byedpi; \
-    elif [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v7" ]; then mv ciadpi-armv7l /final/byedpi; \
-    else mv ciadpi-armv6 /final/byedpi; fi
+RUN if [ "$TARGETARCH" = "amd64" ]; then mv hev-socks5-tunnel-linux-x86_64 /final/usr/local/bin/hs5t; \
+    elif [ "$TARGETARCH" = "arm64" ]; then mv hev-socks5-tunnel-linux-arm64 /final/usr/local/bin/hs5t; \
+    elif [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v7" ]; then mv hev-socks5-tunnel-linux-arm32v7 /final/usr/local/bin/hs5t; \
+    else mv hev-socks5-tunnel-linux-arm32 /final/usr/local/bin/hs5t; fi
 
-RUN if [ "$TARGETARCH" = "amd64" ]; then mv zapret/binaries/linux-x86_64/nfqws /final/nfqws; \
-    elif [ "$TARGETARCH" = "arm64" ]; then mv zapret/binaries/linux-arm64/nfqws /final/nfqws; fi
+RUN if [ "$TARGETARCH" = "amd64" ]; then mv ciadpi-x86_64 /final/usr/local/bin/byedpi; \
+    elif [ "$TARGETARCH" = "arm64" ]; then mv ciadpi-aarch64 /final/usr/local/bin/byedpi; \
+    elif [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v7" ]; then mv ciadpi-armv7l /final/usr/local/bin/byedpi; \
+    else mv ciadpi-armv6 /final/usr/local/bin/byedpi; fi
 
-RUN if [ "$TARGETARCH" = "amd64" ]; then mv zapret2/binaries/linux-x86_64/nfqws2 /final/nfqws2; \
-    elif [ "$TARGETARCH" = "arm64" ]; then mv zapret2/binaries/linux-arm64/nfqws2 /final/nfqws2; fi
+RUN if [ "$TARGETARCH" = "amd64" ]; then mv zapret/binaries/linux-x86_64/nfqws /final/usr/local/bin/nfqws; \
+    elif [ "$TARGETARCH" = "arm64" ]; then mv zapret/binaries/linux-arm64/nfqws /final/usr/local/bin/nfqws; fi
+
+RUN if [ "$TARGETARCH" = "amd64" ]; then mv zapret2/binaries/linux-x86_64/nfqws2 /final/usr/local/bin/nfqws2; \
+    elif [ "$TARGETARCH" = "arm64" ]; then mv zapret2/binaries/linux-arm64/nfqws2 /final/usr/local/bin/nfqws2; fi
 
 RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
     mkdir -p /final/lua /final/zapret-fakebin /final/zapret-lists; \
@@ -113,7 +113,7 @@ fi
 COPY entrypoint.sh entrypoint_armv5.sh /final/
 COPY www/ /final/www/
 RUN --mount=type=secret,id=awg,target=/tmp/awg \
-    install -m 0444 /tmp/awg /final/awg
+    install -m 0444 /tmp/awg /final/usr/local/bin/awg
 
 RUN if [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v5" ]; then \
         mv /final/entrypoint_armv5.sh /final/entrypoint.sh; \
@@ -121,9 +121,9 @@ RUN if [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v5" ]; then \
         rm -f /final/entrypoint_armv5.sh; \
     fi && \
     if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
-    chmod +x /final/entrypoint.sh /final/www/cgi-bin/index.sh /final/www/cgi-bin/show_config.sh /final/mihomo /final/byedpi /final/hs5t /final/nfqws /final/nfqws2; \
+    chmod +x /final/entrypoint.sh /final/www/cgi-bin/index.sh /final/www/cgi-bin/show_config.sh /final/usr/local/bin/mihomo /final/usr/local/bin/byedpi /final/usr/local/bin/hs5t /final/usr/local/bin/nfqws /final/usr/local/bin/nfqws2; \
     else \
-    chmod +x /final/entrypoint.sh /final/www/cgi-bin/index.sh /final/www/cgi-bin/show_config.sh /final/mihomo /final/byedpi /final/hs5t; \
+    chmod +x /final/entrypoint.sh /final/www/cgi-bin/index.sh /final/www/cgi-bin/show_config.sh /final/usr/local/bin/mihomo /final/usr/local/bin/byedpi /final/usr/local/bin/hs5t; \
     fi
 
 FROM --platform=linux/amd64 alpine:latest AS linux-amd64

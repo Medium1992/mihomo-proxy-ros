@@ -2,7 +2,7 @@
 echo "Content-Type: application/json; charset=utf-8"
 echo ""
 
-MIHOMO_BIN="${MIHOMO_BIN:-/mihomo}"
+MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
 
 if [ "$REQUEST_METHOD" != "POST" ]; then
   printf '{"ok":false,"error_b64":"%s"}\n' "$(printf 'POST required' | base64 -w0 2>/dev/null || printf 'POST required' | base64)"

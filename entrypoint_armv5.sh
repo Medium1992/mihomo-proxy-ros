@@ -31,8 +31,15 @@ UI_SECRET="${UI_SECRET:-}"
 CONFIG_DIR="/root/.config/mihomo"
 AWG_DIR="$CONFIG_DIR/awg"
 PROXIES_DIR="$CONFIG_DIR/proxies_mount"
+AMNEZIA_PREMIUM_DIR="$CONFIG_DIR/amnezia_premium"
 RULE_SET_DIR="$CONFIG_DIR/rule_set_list"
-CONFIG_YAML="$CONFIG_DIR/config.yaml"
+# Runtime artifacts (regenerated on every container start) live in RAM
+# to avoid wearing out the underlying flash storage. Mounted user files
+# (AWG_DIR, PROXIES_DIR, RULE_SET_DIR) and mihomo's own downloads
+# (geosite, geoip, external-ui) stay in CONFIG_DIR on flash.
+RUNTIME_DIR="/dev/shm/mihomo"
+HS5T_DIR="/dev/shm/hs5t"
+CONFIG_YAML="$RUNTIME_DIR/config.yaml"
 UI_URL_CHECK="$CONFIG_DIR/.ui_url"
 FAKE_IP_RANGE="${FAKE_IP_RANGE:-198.18.0.0/15}"
 FAKE_IP_TTL="${FAKE_IP_TTL:-1}"
@@ -58,6 +65,19 @@ GROUP_URL_STATUS="${GROUP_URL_STATUS:-204}"
 GROUP_INTERVAL="${GROUP_INTERVAL:-60}"
 GROUP_TOLERANCE="${GROUP_TOLERANCE:-20}"
 GROUP_STRATEGY="${GROUP_STRATEGY:-consistent-hashing}"
+
+# Amnezia Premium vpn:// support.
+# Per-provider country override example: LINK1_AMNEZIA_COUNTRY=nl
+AMNEZIA_PREMIUM_GATEWAY="http://gw.amnezia.org:80/"
+AMNEZIA_PREMIUM_APP_VERSION="4.8.15.4"
+AMNEZIA_PREMIUM_APP_LANGUAGE="ru"
+AMNEZIA_PREMIUM_OS_VERSION="linux"
+AMNEZIA_PREMIUM_PUBLIC_KEY_FILE="${AMNEZIA_PREMIUM_PUBLIC_KEY_FILE:-/usr/local/bin/awg}"
+AMNEZIA_PREMIUM_HTTP_TIMEOUT=8
+AMNEZIA_PREMIUM_DNS_TIMEOUT=4
+AMNEZIA_PREMIUM_DOH_SERVERS="1.1.1.1|cloudflare-dns.com|/dns-query?name=%s&type=A 1.0.0.1|cloudflare-dns.com|/dns-query?name=%s&type=A 8.8.8.8|dns.google|/resolve?name=%s&type=A 8.8.4.4|dns.google|/resolve?name=%s&type=A"
+AMNEZIA_PREMIUM_DNS_SERVERS="9.9.9.9 1.1.1.1 77.88.8.8 8.8.8.8"
+AMNEZIA_PREMIUM_PROXY_STORAGE_URLS="https://s3.eu-north-1.amazonaws.com/amnezia/ https://storage.googleapis.com/lambda-list/ https://amnzstrg01.blob.core.windows.net/lambda-list/ https://objectstorage.eu-zurich-1.oraclecloud.com/n/zrhfyaq6qxvh/b/lambda-list/o/ https://51.250.16.178/lambda-list/"
 
 ZAPRET2_WG_CMD="${ZAPRET2_WG_CMD:---blob=quic_vk:@/zapret-fakebin/quic_initial_vk_com.bin --payload wireguard_initiation --lua-desync=fake:blob=quic_vk:repeats=6}"
 ZAPRET2_WG_DST="${ZAPRET2_WG_DST:-}"
@@ -90,6 +110,7 @@ export GROUP_URL_STATUS
 export GROUP_INTERVAL
 export GROUP_TOLERANCE
 export GROUP_STRATEGY
+export AMNEZIA_PREMIUM_PUBLIC_KEY_FILE
 
 collect_cmds() {
   prefix="$1"
@@ -145,7 +166,7 @@ generate_byedpi_proxies() {
     idx=$(get_cmd_index "$var" BYEDPI)
     mark=$((base_mark + idx))
     name=$(get_instance_name "BYEDPI" "$idx")
-    yaml="$CONFIG_DIR/${name}.yaml"
+    yaml="$RUNTIME_DIR/${name}.yaml"
 
     cat > "$yaml" <<EOF
 proxies:
@@ -159,7 +180,7 @@ EOF
     cat >> "$CONFIG_YAML" <<EOF
   $name:
     type: file
-    path: ${name}.yaml
+    path: $RUNTIME_DIR/${name}.yaml
 EOF
 
     [ "${HEALTHCHECK_PROVIDER}" = "true" ] && cat >> "$CONFIG_YAML" <<EOF
@@ -210,7 +231,7 @@ generate_hs5t() {
   mark=$((500 + idx))
   port=$((2500 + idx))
 
-  cat > "/hs5t_$idx.yml" <<EOF
+  cat > "$HS5T_DIR/hs5t_$idx.yml" <<EOF
 misc:
   log-level: 'error'
 tunnel:
@@ -218,20 +239,20 @@ tunnel:
   mtu: 1500
   ipv4: 100.64.$idx.1
   multi-queue: true
-  post-up-script: '/hs5t_$idx.sh'
+  post-up-script: '$HS5T_DIR/hs5t_$idx.sh'
 socks5:
   address: '127.0.0.1'
   port: $port
   udp: 'udp'
 EOF
 
-  cat > "/hs5t_$idx.sh" <<EOF
+  cat > "$HS5T_DIR/hs5t_$idx.sh" <<EOF
 #!/usr/bin/sh
 ip rule show | grep -q "fwmark $mark.*ipproto udp" || \
   ip rule add fwmark $mark ipproto udp table $mark pref 150
 ip route replace default via 100.64.$idx.1 dev hs5t_$idx table $mark
 EOF
-  chmod +x "/hs5t_$idx.sh"
+  chmod +x "$HS5T_DIR/hs5t_$idx.sh"
 }
 
 start_byedpi_processes() {
@@ -246,10 +267,10 @@ start_byedpi_processes() {
 
     echo "Starting BYEDPI[$idx] tcp:$tcp_port udp:$udp_port"
 
-    ./byedpi --port $tcp_port --transparent $cmd >/dev/null 2>&1 &
-    ./byedpi --port $udp_port $cmd >/dev/null 2>&1 &
+    byedpi --port $tcp_port --transparent $cmd >/dev/null 2>&1 &
+    byedpi --port $udp_port $cmd >/dev/null 2>&1 &
     generate_hs5t "$idx"
-    ./hs5t "./hs5t_$idx.yml" >/dev/null 2>&1 &
+    hs5t "$HS5T_DIR/hs5t_$idx.yml" >/dev/null 2>&1 &
   done
 }
 
@@ -270,7 +291,7 @@ generate_zapret_proxies() {
       name="${base}"
     fi
     mark=$((base_mark + idx))
-    yaml="$CONFIG_DIR/${name}.yaml"
+    yaml="$RUNTIME_DIR/${name}.yaml"
 
     cat > "$yaml" <<EOF
 proxies:
@@ -284,7 +305,7 @@ EOF
     cat >> "$CONFIG_YAML" <<EOF
   $name:
     type: file
-    path: ${name}.yaml
+    path: $RUNTIME_DIR/${name}.yaml
 EOF
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
       cat >> "$CONFIG_YAML" <<EOF
@@ -399,7 +420,7 @@ start_zapret_processes() {
     cmd=$(printenv "$var")
 
     echo "Starting $var on queue $queue"
-    ./$bin --qnum $queue --user=root $LUA_INIT_ARGS $cmd &
+    "$bin" --qnum $queue --user=root $LUA_INIT_ARGS $cmd &
   done
 }
 
@@ -559,11 +580,11 @@ read_cfg() {
     [ -n "$h2" ]     && echo "      h2: $h2"
     [ -n "$h3" ]     && echo "      h3: $h3"
     [ -n "$h4" ]     && echo "      h4: $h4"
-    [ -n "$i1" ]     && echo "      i1: $i1"
-    [ -n "$i2" ]     && echo "      i2: $i2"
-    [ -n "$i3" ]     && echo "      i3: $i3"
-    [ -n "$i4" ]     && echo "      i4: $i4"
-    [ -n "$i5" ]     && echo "      i5: $i5"
+    [ -n "$i1" ]     && printf '      i1: %s\n' "$(printf '%s' "$i1" | yaml_quote)"
+    [ -n "$i2" ]     && printf '      i2: %s\n' "$(printf '%s' "$i2" | yaml_quote)"
+    [ -n "$i3" ]     && printf '      i3: %s\n' "$(printf '%s' "$i3" | yaml_quote)"
+    [ -n "$i4" ]     && printf '      i4: %s\n' "$(printf '%s' "$i4" | yaml_quote)"
+    [ -n "$i5" ]     && printf '      i5: %s\n' "$(printf '%s' "$i5" | yaml_quote)"
     [ -n "$j1" ]     && echo "      j1: $j1"
     [ -n "$j2" ]     && echo "      j2: $j2"
     [ -n "$j3" ]     && echo "      j3: $j3"
@@ -886,9 +907,11 @@ decoded_vpn_json_is_complete() {
 
   [ -s "$json_file" ] || return 1
   actual_len=$(wc -c < "$json_file" | tr -d ' ')
-  [ "$actual_len" = "$expected_len" ] || return 1
-  grep -q '"containers"' "$json_file" 2>/dev/null || return 1
-  grep -q '"defaultContainer"' "$json_file" 2>/dev/null || return 1
+  if [ "$actual_len" != "$expected_len" ]; then
+    if ! grep -q '"service_type"[[:space:]]*:[[:space:]]*"amnezia-premium"' "$json_file" 2>/dev/null; then
+      return 1
+    fi
+  fi
   awk '
     {
       for (i = 1; i <= length($0); i++) {
@@ -901,7 +924,15 @@ decoded_vpn_json_is_complete() {
     END {
       exit(last == "}" ? 0 : 1)
     }
-  ' "$json_file"
+  ' "$json_file" || return 1
+
+  if grep -q '"containers"' "$json_file" 2>/dev/null && grep -q '"defaultContainer"' "$json_file" 2>/dev/null; then
+    return 0
+  fi
+
+  grep -q '"service_type"[[:space:]]*:[[:space:]]*"amnezia-premium"' "$json_file" 2>/dev/null || return 1
+  grep -q '"auth_data"' "$json_file" 2>/dev/null || return 1
+  grep -q '"api_key"' "$json_file" 2>/dev/null || return 1
 }
 
 try_vpn_json_result() {
@@ -1160,6 +1191,714 @@ emit_vpn_xray_vless_proxy() {
   echo ""
 }
 
+vpn_json_is_amnezia_premium() {
+  local json_file="$1"
+
+  grep -q '"service_type"[[:space:]]*:[[:space:]]*"amnezia-premium"' "$json_file" 2>/dev/null || return 1
+  grep -q '"auth_data"' "$json_file" 2>/dev/null || return 1
+  grep -q '"api_key"' "$json_file" 2>/dev/null || return 1
+}
+
+amnezia_bool_true() {
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+amnezia_provider_env() {
+  local provider_name="$1"
+  local suffix="$2"
+  local fallback="${3:-}"
+  local value
+
+  value=$(printenv "${provider_name}_${suffix}" 2>/dev/null || true)
+  [ -n "$value" ] || value="$fallback"
+  printf '%s' "$value"
+}
+
+amnezia_uuid_file() {
+  local file="$1"
+
+  if [ ! -s "$file" ]; then
+    mkdir -p "$(dirname "$file")"
+    if [ -r /proc/sys/kernel/random/uuid ]; then
+      cat /proc/sys/kernel/random/uuid > "$file"
+    else
+      od -An -N16 -tx1 /dev/urandom | tr -d ' \n' | \
+        sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12})$/\1-\2-\3-\4-\5/' > "$file"
+    fi
+  fi
+
+  cat "$file"
+}
+
+amnezia_random_uuid() {
+  if [ -r /proc/sys/kernel/random/uuid ]; then
+    cat /proc/sys/kernel/random/uuid
+  else
+    od -An -N16 -tx1 /dev/urandom | tr -d ' \n' | \
+      sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12})$/\1-\2-\3-\4-\5/'
+  fi
+}
+
+amnezia_premium_gateway_public_key() {
+  if [ -n "$AMNEZIA_PREMIUM_PUBLIC_KEY_FILE" ] && [ -s "$AMNEZIA_PREMIUM_PUBLIC_KEY_FILE" ]; then
+    cat "$AMNEZIA_PREMIUM_PUBLIC_KEY_FILE"
+    return
+  fi
+
+  return 1
+}
+
+amnezia_base64_file() {
+  base64 "$1" | tr -d '\r\n'
+}
+
+amnezia_hex_file() {
+  od -An -tx1 -v "$1" | tr -d ' \r\n'
+}
+
+amnezia_generate_wg_keys() {
+  local state_dir="$1"
+  local pem_file="$state_dir/x25519.pem"
+  local priv_der="$state_dir/private.der"
+  local pub_der="$state_dir/public.der"
+
+  if [ -s "$state_dir/privatekey" ] && [ -s "$state_dir/publickey" ]; then
+    return 0
+  fi
+
+  command -v openssl >/dev/null 2>&1 || return 1
+  mkdir -p "$state_dir"
+  openssl genpkey -algorithm X25519 -out "$pem_file" >/dev/null 2>&1 || { rm -f "$pem_file" "$priv_der" "$pub_der"; return 1; }
+  openssl pkey -in "$pem_file" -outform DER -out "$priv_der" >/dev/null 2>&1 || { rm -f "$pem_file" "$priv_der" "$pub_der"; return 1; }
+  openssl pkey -in "$pem_file" -pubout -outform DER -out "$pub_der" >/dev/null 2>&1 || { rm -f "$pem_file" "$priv_der" "$pub_der"; return 1; }
+  tail -c 32 "$priv_der" | base64 | tr -d '\r\n' > "$state_dir/privatekey"
+  tail -c 32 "$pub_der" | base64 | tr -d '\r\n' > "$state_dir/publickey"
+  rm -f "$pem_file" "$priv_der" "$pub_der"
+}
+
+amnezia_premium_cleanup_tmp() {
+  local state_dir="$1"
+
+  rm -f "$state_dir/.aes.key" "$state_dir/.aes.iv" "$state_dir/.aes.salt" \
+    "$state_dir/.payload.json" "$state_dir/.key.json" "$state_dir/.gateway.pem" \
+    "$state_dir/.key_payload.bin" "$state_dir/.api_payload.bin" "$state_dir/.request.json" \
+    "$state_dir/.response.bin" "$state_dir/.response.json" "$state_dir/.native.conf" \
+    "$state_dir/.native.conf.new" "$state_dir/.proxy_endpoints.b64" \
+    "$state_dir/.proxy_endpoints.bin" "$state_dir/.proxy_endpoints.json"
+}
+
+amnezia_timeout_cmd() {
+  local seconds="$1"
+  shift
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$seconds" "$@"
+  else
+    "$@"
+  fi
+}
+
+amnezia_parse_ipv4() {
+  awk '
+    {
+      line = $0
+      gsub(/[^0-9.]/, " ", line)
+      n = split(line, parts, /[[:space:]]+/)
+      for (i = 1; i <= n; i++) {
+        if (parts[i] ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) print parts[i]
+      }
+    }
+  '
+}
+
+amnezia_resolve_doh() {
+  local host="$1"
+  local spec ip sni path out tmp_path seen=""
+
+  command -v openssl >/dev/null 2>&1 || return 0
+  for spec in $AMNEZIA_PREMIUM_DOH_SERVERS; do
+    ip="${spec%%|*}"
+    spec="${spec#*|}"
+    sni="${spec%%|*}"
+    path="${spec#*|}"
+    tmp_path=$(printf '%s' "$path" | sed "s/%s/$host/g")
+    out=$(
+      {
+        printf 'GET %s HTTP/1.1\r\n' "$tmp_path"
+        printf 'Host: %s\r\n' "$sni"
+        printf 'Accept: application/dns-json\r\n'
+        printf 'Connection: close\r\n'
+        printf '\r\n'
+      } | amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" \
+        openssl s_client -quiet -connect "$ip:443" -servername "$sni" \
+          -verify_return_error -verify_hostname "$sni" 2>/dev/null || true
+    )
+    for resolved in $(printf '%s\n' "$out" | amnezia_parse_ipv4); do
+      [ "$resolved" = "$ip" ] && continue
+      case " $seen " in *" $resolved "*) continue ;; esac
+      seen="$seen $resolved"
+      log "Amnezia Premium resolved $host via DoH $sni@$ip: $resolved" >&2
+      printf '%s\n' "$resolved"
+    done
+  done
+}
+
+amnezia_resolve_public_dns() {
+  local host="$1"
+  local dns out ip seen=""
+
+  for ip in $(amnezia_resolve_doh "$host"); do
+    case " $seen " in *" $ip "*) continue ;; esac
+    seen="$seen $ip"
+    printf '%s\n' "$ip"
+  done
+
+  command -v nslookup >/dev/null 2>&1 || return 0
+  for dns in $AMNEZIA_PREMIUM_DNS_SERVERS; do
+    out=$(amnezia_timeout_cmd "$AMNEZIA_PREMIUM_DNS_TIMEOUT" nslookup "$host" "$dns" 2>/dev/null || true)
+    for ip in $(printf '%s\n' "$out" | awk '
+      {
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) print $i
+        }
+      }
+    '); do
+      [ "$ip" = "$dns" ] && continue
+      case " $seen " in *" $ip "*) continue ;; esac
+      seen="$seen $ip"
+      log "Amnezia Premium resolved $host via DNS $dns: $ip" >&2
+      printf '%s\n' "$ip"
+    done
+  done
+}
+
+amnezia_base64url_text() {
+  printf '%s' "$1" | base64 | tr -d '=\r\n' | tr '+/' '-_'
+}
+
+amnezia_gateway_public_key_text() {
+  amnezia_premium_gateway_public_key | sed 's/\r$//' | awk '{ if (NR > 1) printf "\n"; printf "%s", $0 }'
+}
+
+amnezia_proxy_storage_paths() {
+  local service_type="$1"
+  local user_country_code="$2"
+  local storage_name
+
+  if [ -n "$service_type" ] && [ -n "$user_country_code" ]; then
+    storage_name="endpoints-$service_type-$user_country_code"
+    printf '%s.json\n' "$(amnezia_base64url_text "$storage_name")"
+  fi
+  printf '%s\n' "endpoints.json"
+}
+
+amnezia_proxy_urls() {
+  local state_dir="$1"
+  local service_type="$2"
+  local user_country_code="$3"
+  local base_url path url enc_file bin_file json_file key_hash key_hex iv_hex endpoint seen=""
+
+  enc_file="$state_dir/.proxy_endpoints.b64"
+  bin_file="$state_dir/.proxy_endpoints.bin"
+  json_file="$state_dir/.proxy_endpoints.json"
+  key_hash=$(amnezia_gateway_public_key_text | openssl dgst -sha512 -hex 2>/dev/null | awk '{print $NF}')
+  [ -n "$key_hash" ] || return 0
+  key_hex=$(printf '%s' "$key_hash" | cut -c1-64)
+  iv_hex=$(printf '%s' "$key_hash" | cut -c65-96)
+
+  for path in $(amnezia_proxy_storage_paths "$service_type" "$user_country_code"); do
+    for base_url in $AMNEZIA_PREMIUM_PROXY_STORAGE_URLS; do
+      url="${base_url%/}/$path"
+      rm -f "$enc_file" "$bin_file" "$json_file"
+      amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" wget -q -T "$AMNEZIA_PREMIUM_DNS_TIMEOUT" -O "$enc_file" "$url" 2>/dev/null || true
+      [ -s "$enc_file" ] || continue
+      base64 -d "$enc_file" > "$bin_file" 2>/dev/null || continue
+      openssl enc -d -aes-256-cbc -K "$key_hex" -iv "$iv_hex" \
+        -in "$bin_file" -out "$json_file" >/dev/null 2>&1 || continue
+      [ -s "$json_file" ] || continue
+      log "Amnezia Premium loaded proxy endpoints from $url" >&2
+      for endpoint in $(tr '",' '\012' < "$json_file" | grep -E '^https?://' 2>/dev/null); do
+        case " $seen " in *" $endpoint "*) continue ;; esac
+        seen="$seen $endpoint"
+        printf '%s\n' "$endpoint"
+      done
+      [ -n "$seen" ] && return 0
+    done
+  done
+}
+
+amnezia_http_post() {
+  local url="$1"
+  local body_file="$2"
+  local out_file="$3"
+  local request_id="$4"
+  local state_dir="${5:-}"
+  local service_type="${6:-}"
+  local user_country_code="${7:-}"
+  local tmp_http="${out_file}.http"
+  local proto rest host port path body_len status ip resolved_url resolved_any proxy_url proxy_endpoint
+  local active_proxy_file active_proxy_url
+
+  rm -f "$out_file" "$tmp_http"
+  case "$url" in
+    http://*) proto="http"; rest="${url#http://}" ;;
+    https://*) proto="https"; rest="${url#https://}" ;;
+    *) return 1 ;;
+  esac
+  host="${rest%%/*}"
+  path="/${rest#*/}"
+  [ "$path" = "/$rest" ] && path="/"
+  case "$host" in
+    *:*) port="${host##*:}"; host="${host%%:*}" ;;
+    *) [ "$proto" = "https" ] && port=443 || port=80 ;;
+  esac
+
+  status=1
+  active_proxy_file="$state_dir/active_proxy_endpoint"
+  if [ -n "$state_dir" ] && [ -s "$active_proxy_file" ]; then
+    active_proxy_url=$(head -n 1 "$active_proxy_file" | tr -d '\r\n')
+    if [ -n "$active_proxy_url" ]; then
+      rm -f "$out_file"
+      proxy_endpoint="${active_proxy_url%/}$path"
+      log "Amnezia Premium trying cached gateway proxy $active_proxy_url"
+      amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" wget -q -T "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" -O "$out_file" \
+        --header="Content-Type: application/json" \
+        --header="X-Client-Request-ID: $request_id" \
+        --post-data="$(cat "$body_file")" "$proxy_endpoint" 2>/dev/null
+      status=$?
+      if [ "$status" -eq 0 ] || [ -s "$out_file" ]; then
+        return "$status"
+      fi
+      rm -f "$active_proxy_file"
+      log "Warning: Amnezia Premium cached gateway proxy failed, probing gateway paths"
+    fi
+  fi
+
+  if [ "$proto" = "http" ]; then
+    resolved_any=0
+    for ip in $(amnezia_resolve_public_dns "$host"); do
+      resolved_any=1
+      rm -f "$out_file"
+      resolved_url="$proto://$ip:$port$path"
+      log "Amnezia Premium trying gateway $host via $ip"
+      amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" wget -q -T "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" -O "$out_file" \
+        --header="Host: $host" \
+        --header="Content-Type: application/json" \
+        --header="X-Client-Request-ID: $request_id" \
+        --post-data="$(cat "$body_file")" "$resolved_url" 2>/dev/null
+      status=$?
+      if [ "$status" -eq 0 ] || [ -s "$out_file" ]; then
+        [ -n "$state_dir" ] && rm -f "$active_proxy_file"
+        return "$status"
+      fi
+    done
+    [ "$resolved_any" -eq 0 ] && log "Warning: Amnezia Premium could not resolve $host via DoH/public DNS fallback"
+  fi
+
+  if [ -n "$state_dir" ]; then
+    for proxy_url in $(amnezia_proxy_urls "$state_dir" "$service_type" "$user_country_code"); do
+      rm -f "$out_file"
+      proxy_endpoint="${proxy_url%/}$path"
+      log "Amnezia Premium trying gateway proxy $proxy_url"
+      amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" wget -q -T "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" -O "$out_file" \
+        --header="Content-Type: application/json" \
+        --header="X-Client-Request-ID: $request_id" \
+        --post-data="$(cat "$body_file")" "$proxy_endpoint" 2>/dev/null
+      status=$?
+      if [ "$status" -eq 0 ] || [ -s "$out_file" ]; then
+        printf '%s\n' "$proxy_url" > "$active_proxy_file"
+        return "$status"
+      fi
+    done
+  fi
+
+  rm -f "$out_file"
+  log "Amnezia Premium trying gateway $host via system DNS"
+  amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" wget -q -T "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" -O "$out_file" \
+    --header="Content-Type: application/json" \
+    --header="X-Client-Request-ID: $request_id" \
+    --post-data="$(cat "$body_file")" "$url" 2>/dev/null
+  status=$?
+  if [ "$status" -eq 0 ] || [ -s "$out_file" ]; then
+    [ -n "$state_dir" ] && rm -f "$active_proxy_file"
+    return "$status"
+  fi
+
+  body_len=$(wc -c < "$body_file" | tr -d ' ')
+
+  if [ "$proto" = "https" ]; then
+    {
+      printf 'POST %s HTTP/1.1\r\n' "$path"
+      printf 'Host: %s\r\n' "$host"
+      printf 'Content-Type: application/json\r\n'
+      printf 'X-Client-Request-ID: %s\r\n' "$request_id"
+      printf 'Content-Length: %s\r\n' "$body_len"
+      printf 'Connection: close\r\n'
+      printf '\r\n'
+      cat "$body_file"
+    } |
+    amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" openssl s_client -quiet -connect "$host:$port" -servername "$host" 2>/dev/null
+  fi > "$tmp_http" 2>/dev/null || true
+
+  if [ ! -s "$tmp_http" ] && [ "$proto" = "http" ]; then
+    # BusyBox nc is not guaranteed, but use it if present because openssl
+    # cannot speak plain HTTP without a TLS peer.
+    if command -v nc >/dev/null 2>&1; then
+      {
+        printf 'POST %s HTTP/1.1\r\n' "$path"
+        printf 'Host: %s\r\n' "$host"
+        printf 'Content-Type: application/json\r\n'
+        printf 'X-Client-Request-ID: %s\r\n' "$request_id"
+        printf 'Content-Length: %s\r\n' "$body_len"
+        printf 'Connection: close\r\n'
+        printf '\r\n'
+        cat "$body_file"
+      } | amnezia_timeout_cmd "$AMNEZIA_PREMIUM_HTTP_TIMEOUT" nc "$host" "$port" > "$tmp_http" 2>/dev/null || true
+    fi
+  fi
+
+  if [ -s "$tmp_http" ]; then
+    awk '{ line=$0; sub(/\r$/, "", line); if (body) print $0; if (line == "") body=1 }' "$tmp_http" > "$out_file"
+  fi
+  return "$status"
+}
+
+amnezia_premium_revoke_native_config() {
+  local provider_name="$1"
+  local state_dir="$2"
+  local api_key="$3"
+  local service_protocol="$4"
+  local user_country_code="$5"
+  local server_country_code="$6"
+  local uuid key_bin iv_bin salt_bin key_hex iv_hex key_b64 iv_b64 salt_b64
+  local payload_json key_json pub_pem key_payload_bin api_payload_bin
+  local key_payload api_payload req_json response_bin response_json gateway endpoint
+  local request_id http_status response_size
+
+  [ -n "$server_country_code" ] || return 0
+  command -v openssl >/dev/null 2>&1 || return 1
+  command -v wget >/dev/null 2>&1 || return 1
+
+  uuid=$(amnezia_uuid_file "$state_dir/installation_uuid")
+  key_bin="$state_dir/.aes.key"
+  iv_bin="$state_dir/.aes.iv"
+  salt_bin="$state_dir/.aes.salt"
+  payload_json="$state_dir/.payload.json"
+  key_json="$state_dir/.key.json"
+  pub_pem="$state_dir/.gateway.pem"
+  key_payload_bin="$state_dir/.key_payload.bin"
+  api_payload_bin="$state_dir/.api_payload.bin"
+  req_json="$state_dir/.request.json"
+  response_bin="$state_dir/.response.bin"
+  response_json="$state_dir/.response.json"
+  amnezia_premium_cleanup_tmp "$state_dir"
+
+  openssl rand 32 > "$key_bin" || { amnezia_premium_cleanup_tmp "$state_dir"; return 1; }
+  openssl rand 32 > "$iv_bin" || { amnezia_premium_cleanup_tmp "$state_dir"; return 1; }
+  openssl rand 8 > "$salt_bin" || { amnezia_premium_cleanup_tmp "$state_dir"; return 1; }
+  key_hex=$(amnezia_hex_file "$key_bin")
+  iv_hex=$(od -An -tx1 -N 16 -v "$iv_bin" | tr -d ' \r\n')
+  key_b64=$(amnezia_base64_file "$key_bin")
+  iv_b64=$(amnezia_base64_file "$iv_bin")
+  salt_b64=$(amnezia_base64_file "$salt_bin")
+
+  cat > "$payload_json" <<EOF
+{"os_version":"$AMNEZIA_PREMIUM_OS_VERSION","app_version":"$AMNEZIA_PREMIUM_APP_VERSION","app_language":"$AMNEZIA_PREMIUM_APP_LANGUAGE","installation_uuid":"$uuid","user_country_code":"$user_country_code","server_country_code":"$server_country_code","service_type":"amnezia-premium","service_protocol":"$service_protocol","auth_data":{"api_key":"$api_key"}}
+EOF
+  cat > "$key_json" <<EOF
+{"aes_key":"$key_b64","aes_iv":"$iv_b64","aes_salt":"$salt_b64"}
+EOF
+  amnezia_premium_gateway_public_key > "$pub_pem" || {
+    log "ERROR: $provider_name Amnezia Premium gateway public key is missing: $AMNEZIA_PREMIUM_PUBLIC_KEY_FILE"
+    amnezia_premium_cleanup_tmp "$state_dir"
+    return 1
+  }
+
+  openssl pkeyutl -encrypt -pubin -inkey "$pub_pem" -pkeyopt rsa_padding_mode:pkcs1 \
+    -in "$key_json" -out "$key_payload_bin" >/dev/null 2>&1 || { amnezia_premium_cleanup_tmp "$state_dir"; return 1; }
+  openssl enc -aes-256-cbc -K "$key_hex" -iv "$iv_hex" -nosalt \
+    -in "$payload_json" -out "$api_payload_bin" >/dev/null 2>&1 || { amnezia_premium_cleanup_tmp "$state_dir"; return 1; }
+
+  key_payload=$(amnezia_base64_file "$key_payload_bin")
+  api_payload=$(amnezia_base64_file "$api_payload_bin")
+  printf '{"key_payload":"%s","api_payload":"%s"}' "$key_payload" "$api_payload" > "$req_json"
+
+  gateway="${AMNEZIA_PREMIUM_GATEWAY%/}"
+  endpoint="$gateway/v1/revoke_native_config"
+  log "Revoking old Amnezia Premium native config for $provider_name: country=$server_country_code"
+  request_id="$uuid"
+  amnezia_http_post "$endpoint" "$req_json" "$response_bin" "$request_id" "$state_dir" "amnezia-premium" "$user_country_code"
+  http_status=$?
+  response_size=0
+  [ -e "$response_bin" ] && response_size=$(wc -c < "$response_bin" 2>/dev/null | tr -d ' ')
+  if [ "$http_status" -ne 0 ]; then
+    log "Warning: $provider_name Amnezia Premium revoke request failed: wget_status=$http_status response_bytes=${response_size:-0}"
+    if [ ! -s "$response_bin" ]; then
+      amnezia_premium_cleanup_tmp "$state_dir"
+      return 1
+    fi
+  fi
+
+  openssl enc -d -aes-256-cbc -K "$key_hex" -iv "$iv_hex" -nosalt \
+    -in "$response_bin" -out "$response_json" >/dev/null 2>&1 || true
+  if [ -s "$response_json" ] && grep -q '"http_status"' "$response_json" 2>/dev/null; then
+    if grep -q '"http_status"[[:space:]]*:[[:space:]]*200' "$response_json" 2>/dev/null; then
+      log "Revoked old Amnezia Premium native config for $provider_name: country=$server_country_code"
+    fi
+    if ! grep -q '"http_status"[[:space:]]*:[[:space:]]*\(200\|404\)' "$response_json" 2>/dev/null; then
+      log "Warning: $provider_name Amnezia Premium revoke returned: $(tr -d '\r\n' < "$response_json" | cut -c1-220)"
+    fi
+  fi
+
+  amnezia_premium_cleanup_tmp "$state_dir"
+}
+
+amnezia_premium_post_native_config() {
+  local provider_name="$1"
+  local state_dir="$2"
+  local api_key="$3"
+  local service_protocol="$4"
+  local user_country_code="$5"
+  local server_country_code="$6"
+  local out_conf="$7"
+  local endpoint gateway uuid private_key public_key key_hash key_hash_file old_country old_key_hash key_work_dir
+  local cache_valid refresh_existing
+  local key_bin iv_bin salt_bin key_hex iv_hex key_b64 iv_b64 salt_b64
+  local payload_json key_json pub_pem key_payload_bin api_payload_bin
+  local key_payload api_payload req_json response_bin response_json config_tmp out_tmp
+  local request_id http_status response_size
+
+  command -v openssl >/dev/null 2>&1 || { log "ERROR: $provider_name Amnezia Premium requires openssl"; return 1; }
+  command -v wget >/dev/null 2>&1 || { log "ERROR: $provider_name Amnezia Premium requires wget"; return 1; }
+
+  mkdir -p "$state_dir"
+  amnezia_premium_cleanup_tmp "$state_dir"
+  rm -rf "$state_dir/.next_keys"
+  key_work_dir=""
+  uuid=$(amnezia_uuid_file "$state_dir/installation_uuid")
+  amnezia_generate_wg_keys "$state_dir" || { log "ERROR: $provider_name failed to generate X25519 keys"; return 1; }
+  private_key=$(cat "$state_dir/privatekey")
+  public_key=$(cat "$state_dir/publickey")
+
+  key_hash=$(printf '%s|%s|%s|%s|%s|%s|rotating-key-v1' "$api_key" "$service_protocol" "$user_country_code" "$server_country_code" "$uuid" "$public_key" | openssl dgst -sha256 2>/dev/null | awk '{print $NF}')
+  key_hash_file="$state_dir/api_key.sha256"
+  old_key_hash=$(cat "$key_hash_file" 2>/dev/null || true)
+  cache_valid=false
+  if [ -s "$out_conf" ] && [ -n "$old_key_hash" ] && [ "$old_key_hash" = "$key_hash" ]; then
+    cache_valid=true
+  fi
+  if amnezia_bool_true "$cache_valid"; then
+    log "Using cached Amnezia Premium native config for $provider_name"
+    return 0
+  fi
+
+  old_country=$(cat "$state_dir/server_country_code" 2>/dev/null || true)
+  refresh_existing=false
+  if [ -s "$out_conf" ]; then
+    if [ "$old_country" != "$server_country_code" ] || [ "$old_key_hash" != "$key_hash" ]; then
+      refresh_existing=true
+    fi
+  fi
+
+  if amnezia_bool_true "$refresh_existing"; then
+    key_work_dir="$state_dir/.next_keys"
+    rm -rf "$key_work_dir"
+    mkdir -p "$key_work_dir"
+    amnezia_generate_wg_keys "$key_work_dir" || { rm -rf "$key_work_dir"; log "ERROR: $provider_name failed to rotate X25519 keys"; return 1; }
+    private_key=$(cat "$key_work_dir/privatekey")
+    public_key=$(cat "$key_work_dir/publickey")
+    key_hash=$(printf '%s|%s|%s|%s|%s|%s|rotating-key-v1' "$api_key" "$service_protocol" "$user_country_code" "$server_country_code" "$uuid" "$public_key" | openssl dgst -sha256 2>/dev/null | awk '{print $NF}')
+    log "Prepared new Amnezia Premium keypair for $provider_name"
+  fi
+
+  key_bin="$state_dir/.aes.key"
+  iv_bin="$state_dir/.aes.iv"
+  salt_bin="$state_dir/.aes.salt"
+  payload_json="$state_dir/.payload.json"
+  key_json="$state_dir/.key.json"
+  pub_pem="$state_dir/.gateway.pem"
+  key_payload_bin="$state_dir/.key_payload.bin"
+  api_payload_bin="$state_dir/.api_payload.bin"
+  req_json="$state_dir/.request.json"
+  response_bin="$state_dir/.response.bin"
+  response_json="$state_dir/.response.json"
+  config_tmp="$state_dir/.native.conf"
+  out_tmp="$state_dir/.native.conf.new"
+  amnezia_premium_cleanup_tmp "$state_dir"
+  rm -f "$out_tmp"
+
+  openssl rand 32 > "$key_bin" || { [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"; amnezia_premium_cleanup_tmp "$state_dir"; return 1; }
+  openssl rand 32 > "$iv_bin" || { [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"; amnezia_premium_cleanup_tmp "$state_dir"; return 1; }
+  openssl rand 8 > "$salt_bin" || { [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"; amnezia_premium_cleanup_tmp "$state_dir"; return 1; }
+  key_hex=$(amnezia_hex_file "$key_bin")
+  iv_hex=$(od -An -tx1 -N 16 -v "$iv_bin" | tr -d ' \r\n')
+  key_b64=$(amnezia_base64_file "$key_bin")
+  iv_b64=$(amnezia_base64_file "$iv_bin")
+  salt_b64=$(amnezia_base64_file "$salt_bin")
+
+  cat > "$payload_json" <<EOF
+{"os_version":"$AMNEZIA_PREMIUM_OS_VERSION","app_version":"$AMNEZIA_PREMIUM_APP_VERSION","app_language":"$AMNEZIA_PREMIUM_APP_LANGUAGE","installation_uuid":"$uuid","user_country_code":"$user_country_code","server_country_code":"$server_country_code","service_type":"amnezia-premium","service_protocol":"$service_protocol","auth_data":{"api_key":"$api_key"},"public_key":"$public_key"}
+EOF
+  cat > "$key_json" <<EOF
+{"aes_key":"$key_b64","aes_iv":"$iv_b64","aes_salt":"$salt_b64"}
+EOF
+  amnezia_premium_gateway_public_key > "$pub_pem" || {
+    log "ERROR: $provider_name Amnezia Premium gateway public key is missing: $AMNEZIA_PREMIUM_PUBLIC_KEY_FILE"
+    [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"
+    amnezia_premium_cleanup_tmp "$state_dir"
+    return 1
+  }
+
+  openssl pkeyutl -encrypt -pubin -inkey "$pub_pem" -pkeyopt rsa_padding_mode:pkcs1 \
+    -in "$key_json" -out "$key_payload_bin" >/dev/null 2>&1 || { [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"; amnezia_premium_cleanup_tmp "$state_dir"; return 1; }
+  openssl enc -aes-256-cbc -K "$key_hex" -iv "$iv_hex" -nosalt \
+    -in "$payload_json" -out "$api_payload_bin" >/dev/null 2>&1 || { [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"; amnezia_premium_cleanup_tmp "$state_dir"; return 1; }
+
+  key_payload=$(amnezia_base64_file "$key_payload_bin")
+  api_payload=$(amnezia_base64_file "$api_payload_bin")
+  printf '{"key_payload":"%s","api_payload":"%s"}' "$key_payload" "$api_payload" > "$req_json"
+
+  gateway="${AMNEZIA_PREMIUM_GATEWAY%/}"
+  endpoint="$gateway/v1/native_config"
+  log "Requesting Amnezia Premium native config for $provider_name: country=${server_country_code:-auto}"
+  request_id="$uuid"
+  amnezia_http_post "$endpoint" "$req_json" "$response_bin" "$request_id" "$state_dir" "amnezia-premium" "$user_country_code"
+  http_status=$?
+  response_size=0
+  [ -e "$response_bin" ] && response_size=$(wc -c < "$response_bin" 2>/dev/null | tr -d ' ')
+  if [ "$http_status" -ne 0 ]; then
+    log "ERROR: $provider_name Amnezia Premium gateway request failed: wget_status=$http_status response_bytes=${response_size:-0}"
+    if [ ! -s "$response_bin" ]; then
+      if [ -s "$out_conf" ]; then
+        log "Warning: $provider_name keeping cached Amnezia Premium native config after gateway request failure"
+        rm -f "$out_tmp"
+        [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"
+        amnezia_premium_cleanup_tmp "$state_dir"
+        return 0
+      fi
+      [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"
+      amnezia_premium_cleanup_tmp "$state_dir"
+      return 1
+    fi
+  fi
+
+  openssl enc -d -aes-256-cbc -K "$key_hex" -iv "$iv_hex" -nosalt \
+    -in "$response_bin" -out "$response_json" >/dev/null 2>&1 || {
+    log "ERROR: $provider_name Amnezia Premium response decrypt failed: response_bytes=${response_size:-0} preview=$(tr -cd '[:print:]\r\n\t' < "$response_bin" | tr -d '\r\n' | cut -c1-220)"
+    if [ -s "$out_conf" ]; then
+      log "Warning: $provider_name keeping cached Amnezia Premium native config after decrypt failure"
+      rm -f "$out_tmp"
+      [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"
+      amnezia_premium_cleanup_tmp "$state_dir"
+      return 0
+    fi
+    [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"
+    amnezia_premium_cleanup_tmp "$state_dir"
+    return 1
+  }
+
+  if grep -q '"http_status"' "$response_json" 2>/dev/null && \
+    ! grep -q '"http_status"[[:space:]]*:[[:space:]]*\(200\|201\)' "$response_json" 2>/dev/null; then
+    log "ERROR: $provider_name Amnezia Premium gateway error: $(tr -d '\r\n' < "$response_json" | cut -c1-220)"
+    if [ -s "$out_conf" ]; then
+      log "Warning: $provider_name keeping cached Amnezia Premium native config after gateway error"
+      rm -f "$out_tmp"
+      [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"
+      amnezia_premium_cleanup_tmp "$state_dir"
+      return 0
+    fi
+    [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"
+    amnezia_premium_cleanup_tmp "$state_dir"
+    return 1
+  fi
+
+  json_get "$response_json" "config" > "$config_tmp"
+  if [ ! -s "$config_tmp" ]; then
+    log "ERROR: $provider_name Amnezia Premium response has no native config"
+    if [ -s "$out_conf" ]; then
+      log "Warning: $provider_name keeping cached Amnezia Premium native config after empty response"
+      rm -f "$out_tmp"
+      [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"
+      amnezia_premium_cleanup_tmp "$state_dir"
+      return 0
+    fi
+    rm -f "$out_tmp"
+    [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"
+    amnezia_premium_cleanup_tmp "$state_dir"
+    return 1
+  fi
+
+  sed "s|\$WIREGUARD_CLIENT_PRIVATE_KEY|$private_key|g" "$config_tmp" > "$out_tmp"
+  if [ ! -s "$out_tmp" ]; then
+    log "ERROR: $provider_name Amnezia Premium rendered native config is empty"
+    if [ -s "$out_conf" ]; then
+      log "Warning: $provider_name keeping cached Amnezia Premium native config after render failure"
+      rm -f "$out_tmp"
+      [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"
+      amnezia_premium_cleanup_tmp "$state_dir"
+      return 0
+    fi
+    rm -f "$out_tmp"
+    [ -n "$key_work_dir" ] && rm -rf "$key_work_dir"
+    amnezia_premium_cleanup_tmp "$state_dir"
+    return 1
+  fi
+  mv "$out_tmp" "$out_conf"
+  if amnezia_bool_true "$refresh_existing" && [ -n "$key_work_dir" ] && [ -s "$key_work_dir/privatekey" ] && [ -s "$key_work_dir/publickey" ]; then
+    mv "$key_work_dir/privatekey" "$state_dir/privatekey"
+    mv "$key_work_dir/publickey" "$state_dir/publickey"
+    rm -rf "$key_work_dir"
+    log "Rotated Amnezia Premium keypair for $provider_name"
+  fi
+  printf '%s' "$key_hash" > "$key_hash_file"
+  printf '%s' "$server_country_code" > "$state_dir/server_country_code"
+
+  if amnezia_bool_true "$refresh_existing"; then
+    if [ -n "$old_country" ] && [ "$old_country" != "$server_country_code" ]; then
+      amnezia_premium_revoke_native_config "$provider_name" "$state_dir" "$api_key" "$service_protocol" "$user_country_code" "$old_country" || true
+    fi
+  fi
+
+  amnezia_premium_cleanup_tmp "$state_dir"
+  log "Saved Amnezia Premium native config for $provider_name"
+}
+
+generate_amnezia_premium_provider() {
+  local json_file="$1"
+  local provider_name="$2"
+  local yaml_file="$3"
+  local api_key service_protocol user_country_code server_country_code state_dir conf_file
+
+  vpn_json_is_amnezia_premium "$json_file" || return 1
+
+  api_key=$(json_get "$json_file" "api_key")
+  service_protocol=$(json_get "$json_file" "service_protocol")
+  user_country_code=$(json_get "$json_file" "user_country_code")
+  [ -n "$service_protocol" ] || service_protocol="awg"
+  [ -n "$user_country_code" ] || user_country_code="ru"
+  server_country_code=$(amnezia_provider_env "$provider_name" "AMNEZIA_COUNTRY" "")
+
+  [ -n "$api_key" ] || return 1
+  [ "$service_protocol" = "awg" ] || {
+    log "ERROR: $provider_name Amnezia Premium protocol '$service_protocol' is not supported yet"
+    return 1
+  }
+
+  state_dir="$AMNEZIA_PREMIUM_DIR/$provider_name"
+  conf_file="$state_dir/native.conf"
+  amnezia_premium_post_native_config "$provider_name" "$state_dir" "$api_key" "$service_protocol" \
+    "$user_country_code" "$server_country_code" "$conf_file" || return 1
+
+  {
+    echo "proxies:"
+    parse_awg_config "$conf_file" "$provider_name"
+  } > "$yaml_file"
+  log "Converted $provider_name Amnezia Premium native config"
+}
+
 generate_vpn_provider() {
   local url="$1"
   local provider_name="$2"
@@ -1174,6 +1913,15 @@ generate_vpn_provider() {
 
   if ! decode_vpn_url_to_json "$url" "$json_file" "$tmp_prefix" "$provider_name"; then
     log "ERROR: $provider_name vpn:// decode failed"
+    return 1
+  fi
+
+  if vpn_json_is_amnezia_premium "$json_file"; then
+    if generate_amnezia_premium_provider "$json_file" "$provider_name" "$yaml_file"; then
+      rm -f "${tmp_prefix}."*
+      return 0
+    fi
+    rm -f "${tmp_prefix}."*
     return 1
   fi
 
@@ -1240,7 +1988,7 @@ generate_awg_providers() {
     for conf in "$AWG_DIR"/*.conf; do
       [ ! -f "$conf" ] && continue
       local awg_name=$(basename "$conf" .conf)
-      local awg_yaml="${CONFIG_DIR}/${awg_name}.yaml"
+      local awg_yaml="${RUNTIME_DIR}/${awg_name}.yaml"
 
       {
         echo "proxies:"
@@ -1250,7 +1998,7 @@ generate_awg_providers() {
       cat >> "$CONFIG_YAML" <<EOF
   ${awg_name}:
     type: file
-    path: ${awg_name}.yaml
+    path: $RUNTIME_DIR/${awg_name}.yaml
 EOF
 emit_provider_override "$awg_name" >> "$CONFIG_YAML"
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
@@ -1272,12 +2020,11 @@ generate_mounted_providers() {
       [ ! -f "$yaml_file" ] && continue
       local provider_name=$(basename "$yaml_file" .yaml)
       [ "$provider_name" = "$(basename "$yaml_file")" ] && provider_name=$(basename "$yaml_file" .yml)
-      local target_yaml="${CONFIG_DIR}/${provider_name}.yaml"
-      cp "$yaml_file" "$target_yaml"
+      # Reference the mounted file directly — no copy to flash needed.
       cat >> "$CONFIG_YAML" <<EOF
   ${provider_name}:
     type: file
-    path: ${provider_name}.yaml
+    path: $yaml_file
 EOF
 emit_provider_override "$provider_name" >> "$CONFIG_YAML"
       if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
@@ -1313,8 +2060,13 @@ generate_nameserver_policy() {
     for raw in $NAMESERVER_POLICY; do
       item=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
       [ -z "$item" ] && continue
+      case "$item" in
+        *#*) ;;
+        *) log "Skipping invalid NAMESERVER_POLICY item: $item"; continue ;;
+      esac
       domain=${item%%#*}
       dns=${item#*#}
+      [ -z "$domain" ] || [ -z "$dns" ] && continue
       printf "    '%s': '%s'\n" "$domain" "$dns"
     done
     IFS=$OLDIFS
@@ -1323,6 +2075,34 @@ generate_nameserver_policy() {
   if [ -n "$DNS_POLICY" ]; then
     printf '%s\n' "$DNS_POLICY"
   fi
+}
+
+prepare_interface_routes() {
+  local i=200
+  local iface route_line network mask net_addr gw
+
+  for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
+    route_line=$(ip route list dev "$iface" proto kernel scope link | head -n1)
+    [ -z "$route_line" ] && { i=$((i+1)); continue; }
+    network=$(echo "$route_line" | awk '{print $1}')
+    mask=$(echo "$network" | cut -d/ -f2)
+    net_addr=$(echo "$network" | cut -d/ -f1)
+    if [ "$mask" -eq 31 ] || [ "$mask" -eq 32 ]; then
+      gw="$net_addr"
+    else
+      gw=$(echo "$net_addr" | awk -F. '{printf "%d.%d.%d.%d", $1, $2, $3, $4+1}')
+    fi
+
+    if [ "$i" -eq 200 ]; then
+      ip route del default 2>/dev/null || true
+      ip route replace default via "$gw" dev "$iface"
+    else
+      ip route replace default via "$gw" dev "$iface" table $i
+      ip rule del table $i 2>/dev/null || true
+      ip rule add fwmark $i table $i pref 150
+    fi
+    i=$((i+1))
+  done
 }
 
 # ===== Registries =====
@@ -1444,7 +2224,7 @@ apply_zapret2_wg_nft() {
     echo "Adding mihomo tproxy exclusions for WG..."
 
     local mtable="mihomo"
-    local mchain="pre_filter"
+    local mchain="pre"
 
     # Убедимся что таблица есть
     nft list table inet $mtable >/dev/null 2>&1 || return 0
@@ -1483,7 +2263,7 @@ start_zapret2_wg() {
     LUA_INIT_ARGS="$LUA_INIT_ARGS --lua-init=@$f"
   done
 
-  ./nfqws2 \
+  nfqws2 \
     --qnum $queue \
     --user=root \
     $LUA_INIT_ARGS \
@@ -1572,7 +2352,7 @@ EOF
     for varname in $(env | grep -E '^LINK[0-9]*=' | cut -d'=' -f1 | sort -V); do
       url=$(printenv "$varname")
       provider_name="$varname"
-      yaml_file="$CONFIG_DIR/${provider_name}.yaml"
+      yaml_file="$RUNTIME_DIR/${provider_name}.yaml"
       case "$url" in
         vpn://*)
           if ! generate_vpn_provider "$url" "$provider_name" "$yaml_file"; then
@@ -1586,7 +2366,7 @@ EOF
       cat >> "$CONFIG_YAML" <<EOF
   $provider_name:
     type: file
-    path: ${provider_name}.yaml
+    path: $RUNTIME_DIR/${provider_name}.yaml
 EOF
 emit_provider_override "$provider_name" >> "$CONFIG_YAML"
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
@@ -1604,7 +2384,7 @@ EOF
   providers="${providers}${mounted_provs}"
 
   # SUB_LINK
-  sub_link_envs="$CONFIG_DIR/.sub_link_envs"
+  sub_link_envs="$RUNTIME_DIR/.sub_link_envs"
   env | grep -E '^SUB_LINK[0-9]+=' | sort -V > "$sub_link_envs" || true
   while IFS= read -r var; do
     name=$(echo "$var" | cut -d '=' -f1)
@@ -1696,7 +2476,7 @@ EOF
       esac
     done
     IFS=$OLDIFS
-    yaml_file="$CONFIG_DIR/${name}.yaml"
+    yaml_file="$RUNTIME_DIR/${name}.yaml"
     {
       echo "proxies:"
       echo "  - name: \"$name\""
@@ -1714,7 +2494,7 @@ EOF
     cat >> "$CONFIG_YAML" <<EOF
   $name:
     type: file
-    path: ${name}.yaml
+    path: $RUNTIME_DIR/${name}.yaml
 EOF
 emit_provider_override "$name" >> "$CONFIG_YAML"
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
@@ -1766,9 +2546,9 @@ for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2
     ip rule add fwmark $i table $i pref 150
   fi
 
-  echo "Generating $CONFIG_DIR/$iface.yaml with interface: $iface"
-  
-  cat > "$CONFIG_DIR/$iface.yaml" <<EOF
+  echo "Generating $RUNTIME_DIR/$iface.yaml with interface: $iface"
+
+  cat > "$RUNTIME_DIR/$iface.yaml" <<EOF
 proxies:
   - name: "$iface"
     type: direct
@@ -1777,7 +2557,7 @@ proxies:
     interface-name: "$iface"
 EOF
   if [ $i -gt 200 ]; then
-  cat >> "$CONFIG_DIR/$iface.yaml" <<EOF    
+  cat >> "$RUNTIME_DIR/$iface.yaml" <<EOF
     routing-mark: $i
 EOF
   fi
@@ -1785,7 +2565,7 @@ EOF
   cat >> "$CONFIG_YAML" <<EOF
   $iface:
     type: file
-    path: $iface.yaml
+    path: $RUNTIME_DIR/$iface.yaml
 EOF
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
       cat >> "$CONFIG_YAML" <<EOF
@@ -1875,13 +2655,13 @@ custom_rules_payloads=""
         continue
       fi
 
-      ruleset_file="$CONFIG_DIR/${name}_ruleset_payload.txt"
+      ruleset_file="$RUNTIME_DIR/${name}_ruleset_payload.txt"
       payload=$(printf '%s' "$base64_part" | tr -d '\r\n ' | base64 -d 2>/dev/null || true)
 
       if [ -z "$payload" ]; then
         log "Skipping $var — BASE64 decode failed"
         continue
-      fi      
+      fi
       printf '%s\n' "$payload" > "$ruleset_file"
 
       custom_rules_payloads="$custom_rules_payloads
@@ -1909,9 +2689,8 @@ custom_rules_payloads=""
           continue
         fi
 
-        ruleset_file="$CONFIG_DIR/${name}_ruleset_payload.txt"
-
-        cp "$f" "$ruleset_file"
+        # Reference the mounted file directly — no copy needed.
+        ruleset_file="$f"
 
         custom_rules_payloads="$custom_rules_payloads
     ${custom_rules_idx}|${name}|${ruleset_file}"
@@ -2679,6 +3458,11 @@ wait_for_meta() {
 
 run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$PROXIES_DIR" "$RULE_SET_DIR"
+  # Wipe runtime dirs on every start — everything here is regenerated below.
+  rm -rf "$RUNTIME_DIR" "$HS5T_DIR"
+  mkdir -p "$RUNTIME_DIR" "$HS5T_DIR"
+  # Clean up stale hs5t artefacts from previous installs (when they lived in /).
+  rm -f /hs5t_*.yml /hs5t_*.sh
 
   UNSPEC_PREF=$(ip rule show | awk '/lookup unspec/ {print $1}' | tr -d :)
   MASQUERADE_PREF=$(ip rule show | awk '/lookup masquerade/ {print $1}' | tr -d :)
@@ -2696,11 +3480,18 @@ run() {
   ip rule add pref 32766 lookup main
   ip rule add pref 32767 lookup default
 
+  prepare_interface_routes
+
   config_file_mihomo
 
-  echo "Starting Mihomo $(./mihomo -v)"
+  echo "Starting Mihomo $(mihomo -v)"
 
-  ./mihomo &
+  # -d keeps mihomo's own data (UI, geo databases, cache) on flash;
+  # -f points to the entrypoint-generated config that lives in RAM.
+  # SAFE_PATHS whitelists RUNTIME_DIR so mihomo accepts proxy-providers
+  # whose `path:` points to /dev/shm/mihomo/*.yaml (outside its home dir).
+  # Colon-separated on Linux per mihomo docs.
+  SAFE_PATHS="$RUNTIME_DIR" mihomo -d "$CONFIG_DIR" -f "$CONFIG_YAML" &
   MIHOMO_PID=$!
 
   wait_for_meta
@@ -2721,7 +3512,21 @@ run() {
     start_byedpi_processes
   fi
 
-  httpd -f -p 80 -h /www >/dev/null 2>&1 &
+  # Web UI runs from RAM. /www is the source (mounted, may not allow chmod
+  # or be on flash). /dev/shm/web is the runtime docroot:
+  #   - cgi-bin: copied so chmod +x works (tmpfs supports unix mode bits)
+  #   - HTML:    rendered straight to RAM (no flash wear)
+  #   - assets:  symlinks back to /www (picked up live without container restart)
+  WEBROOT=/dev/shm/web
+  mkdir -p "$WEBROOT"
+  rm -rf "$WEBROOT/cgi-bin"
+  cp -r /www/cgi-bin "$WEBROOT/cgi-bin"
+  chmod +x "$WEBROOT/cgi-bin/"* 2>/dev/null || true
+  for item in assets templates favicon.png style.css ui.js; do
+    [ -e "/www/$item" ] && ln -sfn "/www/$item" "$WEBROOT/$item"
+  done
+  WWW_DIR="$WEBROOT" /bin/sh /www/render_static.sh >/dev/null 2>&1 || true
+  httpd -f -p 80 -h "$WEBROOT" >/dev/null 2>&1 &
 
   wait $MIHOMO_PID
 }
