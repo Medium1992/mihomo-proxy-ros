@@ -1,71 +1,96 @@
+# Example docker-compose for running mihomo-proxy-ros on a Linux Docker host
+# (e.g. mini-PC, NAS, VPS).  For native install on MikroTik RouterOS, use the
+# script snippet from README ("RouterOS install") — RouterOS does NOT use
+# compose, it manages the container via /container/* commands.
+
 services:
   mihomo-proxy-ros:
+    # Pick one of the registries (both publish the same images):
+    image: ghcr.io/medium1992/mihomo-proxy-ros:latest
+    # image: medium1992/mihomo-proxy-ros:latest      # Docker Hub mirror
+    container_name: mihomo-proxy-ros
+    restart: unless-stopped
+
+    # Required for TUN/TPROXY/NFQUEUE to work inside the container.
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+
     environment:
-      FAKE_IP_RANGE: "198.18.0.0/15"
-      FAKE_IP_FILTER: "www.youtube.com"
-      FAKE_IP_TTL: "10"
+      # --- Core ---
       LOG_LEVEL: "error"
-      BYEDPI: "true"
-      BYEDPI_CMD: "--disorder 1 --fake 0 --ttl 1 --auto=torst --tlsrec 1+s --debug 1" #paste your strategy BYEDPI
-      BYEDPI_CMD_UDP: "--disorder 1 --fake 0 --ttl 1 --auto=torst --tlsrec 1+s --debug 1" #paste your strategy BYEDPI
+      DNS_MODE: "fake-ip"
+      FAKE_IP_RANGE: "198.18.0.0/15"
+      FAKE_IP_TTL: "10"
+      FAKE_IP_FILTER: "www.youtube.com"
+      SNIFFER: "true"
+      # UI_SECRET: "your-secret-here"               # auth for :9090 (optional)
+
+      # --- DPI engine (uncomment to enable BYEDPI; strategy is just an example) ---
+      # BYEDPI_CMD: "--disorder 1 --fake 0 --ttl 1 --auto=torst --tlsrec 1+s"
+      # BYEDPI_CMD1: "--tlsrec 41+s --udp-fake 1 --oob 1 --auto=torst,redirect,ssl_err"
+
+      # --- Proxy providers ---
+      LINK1: ""                                      # vless://… / vmess://… / ss://… / trojan://…
+      SUB_LINK1: ""                                  # https://… subscription
+      # SUB_LINK1_HEADERS: "x-hwid=...#user-agent=..." # optional, e.g. RemnaWave HWID
+
+      # --- Groups + routing rules ---
       GROUP: "youtube,telegram,discord,amazon"
+
       YOUTUBE_GEOSITE: "youtube"
       YOUTUBE_PRIORITY: "1"
+
       TELEGRAM_GEOSITE: "telegram"
-      TELEGRAM_GEOIP: "telegram"
-      TELEGRAM_AS: "AS62041,AS59930,AS62014,AS211157,AS44907"
+      TELEGRAM_GEOIP:   "telegram"
+      TELEGRAM_AS:      "AS62041,AS59930,AS62014,AS211157,AS44907"
       TELEGRAM_PRIORITY: "2"
+
       DISCORD_GEOSITE: "discord"
-      DISCORD_GEOIP: "discord"
+      DISCORD_GEOIP:   "discord"
+
       AMAZON_AS: "AS16509"
-      LINK1: " " #paste your link proxy
-      SUB_LINK1: " " #paste your sublink proxyies
-    image: ghcr.io/medium1992/mihomo-proxy-ros
-    restart: unless-stopped
-    container_name: mihomo-proxy-ros
+
     volumes:
-      - ./awg_conf/:/root/.config/mihomo/awg/ #use dir with wg,awg conf
-      - /dev/net/tun:/dev/net/tun
-#    cap_add:
-#      - ALL
+      # WireGuard / AmneziaWG configs → become proxy-providers
+      - ./awg/:/root/.config/mihomo/awg/
+      # Custom proxy-providers (native mihomo YAML)
+      # - ./proxies_mount/:/root/.config/mihomo/proxies_mount/
+      # Custom rule-sets (payload format, one file per group)
+      # - ./rule_set_list/:/root/.config/mihomo/rule_set_list/
+
     networks:
       macvlan_network:
         ipv4_address: 192.168.255.2
 
-#  byedpi:
-#    image: wiktorbgu/byedpi-mikrotik
-#    restart: unless-stopped
-#    container_name: byedpi
-#    command: --disorder 1 --fake 0 --ttl 1 --auto=torst --tlsrec 1+s --debug 1 #paste your strategy BYEDPI
-#    depends_on:
-#      - mihomo-proxy-ros
-#      - dnsproxy
-#    networks:
-#      macvlan_network:
-#        ipv4_address: 192.168.255.3
-#    dns:
-#      - 192.168.255.4
-
-#  dnsproxy:
-#    image: ghcr.io/medium1992/dns-proxy-ros
-#    restart: unless-stopped
-#    container_name: dnsproxy
-#    command: --cache --hosts-files=/hosts --upstream "[/www.youtube.com/]192.168.255.2:53" --ipv6-disabled --upstream https://dns.google/dns-query --upstream https://cloudflare-dns.com/dns-query --upstream https://dns.quad9.net/dns-query --upstream-mode=parallel
-#    depends_on:
-#      - mihomo-proxy-ros
-#    networks:
-#      macvlan_network:
-#        ipv4_address: 192.168.255.4
-
+  # Optional helper: a separate DNS proxy that forwards specific zones to mihomo
+  # dnsproxy:
+  #   image: ghcr.io/medium1992/dns-proxy-ros
+  #   container_name: dnsproxy
+  #   restart: unless-stopped
+  #   command: >-
+  #     --cache --hosts-files=/hosts --ipv6-disabled --upstream-mode=parallel
+  #     --upstream "[/www.youtube.com/]192.168.255.2:53"
+  #     --upstream https://dns.google/dns-query
+  #     --upstream https://cloudflare-dns.com/dns-query
+  #     --upstream https://dns.quad9.net/dns-query
+  #   depends_on:
+  #     - mihomo-proxy-ros
+  #   networks:
+  #     macvlan_network:
+  #       ipv4_address: 192.168.255.4
 
 networks:
   macvlan_network:
     driver: macvlan
     driver_opts:
-      parent: enp1s0 #check name network adapter "ip a"
+      parent: enp1s0          # replace with your host interface (find via `ip a`)
     ipam:
       driver: default
       config:
-       - subnet: 192.168.255.0/24
-         ip_range: 192.168.255.0/24
-         gateway: 192.168.255.1
+        - subnet: 192.168.255.0/24
+          ip_range: 192.168.255.0/24
+          gateway: 192.168.255.1

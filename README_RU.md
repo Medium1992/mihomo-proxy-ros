@@ -35,14 +35,14 @@
 
 2. **Вставить установочный сниппет** в терминал RouterOS — см. раздел [§ Установка через RouterOS](#-установка-через-routeros) ниже.
 
-3. **Открыть веб-панель**: `http://<ip-роутера>:80/`
+3. **Открыть веб-панель**: `http://<ip-контейнера>:80/`
    Настроить ENV визуально → нажать *Команды MikroTik* → скопировать → вставить в терминал RouterOS.
 
-4. **Или панель mihomo**: `http://<ip-роутера>:9090/` (UI из `EXTERNAL_UI_URL`).
+4. **Или панель mihomo**: `http://<ip-контейнера>:9090/` (UI из `EXTERNAL_UI_URL`).
 
 ## 🖥 Веб-панель
 
-**`http://<ip-роутера>:80/`** — локальная панель управления, которая раздаётся busybox httpd прямо из контейнера.
+**`http://<ip-контейнера>:80/`** — локальная панель управления, которая раздаётся busybox httpd прямо из контейнера.
 
 <p align="center">
   <img src="docs/screenshots/webui-1.png" width="800" alt="Веб-панель — обзор">
@@ -89,7 +89,7 @@
 
 В контейнер можно прикрепить **несколько VETH-интерфейсов** — они появятся как direct-выходы в mihomo, а маршрутизацию между ними делаешь через mangle в RouterOS. Входящий трафик в контейнер должен идти **только через первый VETH**.
 
-## 🧑‍🍳 Типовые рецепты
+## 🧑‍🍳 Несколько примеров
 
 ### YouTube через одну VLESS-ссылку
 ```yaml
@@ -104,6 +104,7 @@ YOUTUBE_GEOSITE: "youtube"
 GROUP: "telegram"
 TELEGRAM_USE: "tunnel1"
 TELEGRAM_GEOSITE: "telegram"
+TELEGRAM_GEOIP: "telegram"
 TELEGRAM_AS: "AS62041,AS59930,AS62014,AS211157,AS44907"
 ```
 
@@ -113,8 +114,10 @@ BYEDPI_CMD: "--tlsrec 41+s --udp-fake 1 --oob 1 --auto=torst,redirect,ssl_err --
 GROUP: "discord,google"
 DISCORD_USE: "BYEDPI"
 DISCORD_GEOSITE: "discord"
+DISCORD_GEOIP: "discord"
 GOOGLE_USE: "BYEDPI"
 GOOGLE_GEOSITE: "google"
+GOOGLE_GEOIP: "google"
 ```
 
 ### Завернуть LAN-подсеть через SOCKS5
@@ -167,6 +170,7 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 | `BYEDPI_CMDxx` | — | Стратегия [ByeDPI](https://github.com/hufrea/byedpi). `BYEDPI_CMD` → выход `BYEDPI`; `BYEDPI_CMD1` → `BYEDPI_1` и т.д. Подбор стратегий — [byedpi-orchestrator](https://hub.docker.com/r/vindibona/byedpi-orchestrator). |
 | `ZAPRET_CMDxx` | — | Стратегия [Zapret/nfqws](https://github.com/bol-van/zapret). В контейнере есть готовые fake-файлы в `/zapret-fakebin/` (например `quic_initial_www_google_com.bin`) и списки в `/zapret-lists/` (`ipset-all.txt`, `list-general.txt` и т.п.). |
 | `ZAPRET2_CMDxx` | — | Стратегия [Zapret2/nfqws2](https://github.com/bol-van/zapret2). |
+| `ZAPRET2_WG_CMD` | *(дефолт с blob `quic_initial_vk_com`)* | Отдельная стратегия nfqws2 для заворота WireGuard handshake. |
 | `ZAPRET_PACKETSxx` | `12` | Сколько первых пакетов идёт через очередь nfqws. `ZAPRET_PACKETS` — для всех по умолчанию, `ZAPRET_PACKETSxx` — переопределение конкретному провайдеру. Не-натуральное число = неограниченно (всегда в очереди). |
 | `ZAPRET2_PACKETSxx` | `12` | То же для nfqws2. |
 
@@ -187,11 +191,14 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 
 `GROUP` объявляет набор групп. Для каждой группы `XXX` (в верхнем регистре) работают префиксные ENV ниже.
 
+> 💡 Кроме пользовательских групп есть три «системные», встроенные в entrypoint: `GROUP_*` (дефолтные значения для всех групп), `GLOBAL_*` (специальная группа GLOBAL) и `DNS_*` (служебная группа для DNS-резолвинга). Все три принимают тот же набор префиксных ENV из таблицы ниже.
+
 | ENV | По умолчанию | Описание |
 |---|---|---|
 | `GROUP` | — | Список [прокси-групп](https://wiki.metacubex.one/ru/config/proxy-groups) через запятую. `telegram,youtube,google,ai,geoblock` → группы `TELEGRAM, YOUTUBE, GOOGLE, AI, GEOBLOCK`. Группа создаётся только если у неё есть хотя бы один ресурс (`XXX_*`) или `XXX_USE`. |
 | `XXX_TYPE` | `select` | [Тип группы](https://wiki.metacubex.one/ru/config/proxy-groups/#type): `select` / `url-test` / `fallback` / `load-balance` / `relay`. |
 | `XXX_USE` | *все провайдеры в порядке: LINKs, SUB_LINKs, WG/AWG, BYEDPI, DIRECT* | Какие [провайдеры](https://wiki.metacubex.one/ru/config/proxy-providers) включить в группу. Пример: `YOUTUBE_USE=BYEDPI,LINK1`. |
+| `XXX_PROXIES` | — | Явный список [proxies](https://wiki.metacubex.one/ru/config/proxy-groups/#proxies) (конкретных узлов, не провайдеров) через запятую. Альтернатива/дополнение к `XXX_USE`. |
 | `XXX_FILTER` | — | [Regex-фильтр имён](https://wiki.metacubex.one/ru/config/proxy-groups/#filter). Пример: `RU\|BYEDPI`. |
 | `XXX_EXCLUDE` | — | [Regex-исключение](https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter). |
 | `XXX_EXCLUDE_TYPE` | — | [Исключение по типу](https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type). Пример: `vmess\|direct`. |
@@ -218,6 +225,7 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 | `XXX_KEYWORD` | [DOMAIN-KEYWORD](https://wiki.metacubex.one/ru/config/rules/#domain-keyword) совпадения. |
 | `XXX_IPCIDR` | [IP-CIDR](https://wiki.metacubex.one/ru/config/rules/#ip-cidr-ip-cidr6) подсети. |
 | `XXX_SRCIPCIDR` | [SRC-IP-CIDR](https://wiki.metacubex.one/ru/config/rules/#src-ip-cidr) — роутинг по источнику. Пример: `SOCKS_SRCIPCIDR=192.168.88.37/32,192.168.88.65/32`. |
+| `XXX_DSCP` | Маркировка трафика группы [DSCP-меткой](https://wiki.metacubex.one/ru/config/rules/#dscp). Значение 0–63. Пример: `YOUTUBE_DSCP=10`. |
 | `XXX_PRIORITY` | Позиция правил группы в списке `rules`. Меньше = раньше. Приоритеты общие с `RULESxx`. По умолчанию ≥1000. |
 
 ### Кастомные rule-set'ы
@@ -229,8 +237,16 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 
 ## 🛠 Установка через RouterOS
 
-<details>
-<summary>📋 Сниппет автоустановки (вставить в терминал RouterOS)</summary>
+Сначала включите поддержку контейнеров (если ещё не включена):
+
+```
+/system/device-mode/print
+/system/device-mode/update mode=advanced container=yes traffic-gen=yes
+```
+
+На подтверждение даётся ~5 минут — выключите/включите питание или кратковременно нажмите любую физическую кнопку на устройстве.
+
+Затем вставьте сниппет ниже в терминал RouterOS:
 
 ```routeros
 :global currentVersion [/system resource get version];
@@ -272,8 +288,6 @@ $s
 }
 ```
 
-</details>
-
 В процессе скрипт спросит:
 
 - одну прокси-ссылку (`vless://`, `vmess://`, `ss://`, `trojan://`)
@@ -300,7 +314,7 @@ PR приветствуются — сначала прочитайте [Код�
 
 ## 💖 Поддержка проекта
 
-Если проект сэкономил вам выходные борьбы с MikroTik-скриптами:
+Если проект сэкономил вам время с настройкой микротика и скриптами:
 
 - **USDT (TRC20):** `TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ`
 

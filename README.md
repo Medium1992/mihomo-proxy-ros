@@ -35,14 +35,14 @@
 
 2. **Paste the install snippet** into RouterOS terminal — see [§ RouterOS install](#-routeros-install) below.
 
-3. **Open the WebUI**: `http://<router-ip>:80/`
+3. **Open the WebUI**: `http://<container-ip>:80/`
    Configure ENVs visually, click *MikroTik commands* → copy → paste back into RouterOS terminal.
 
-4. **Or use mihomo's panel**: `http://<router-ip>:9090/` (UI from `EXTERNAL_UI_URL`).
+4. **Or use mihomo's panel**: `http://<container-ip>:9090/` (UI from `EXTERNAL_UI_URL`).
 
 ## 🖥 WebUI
 
-**`http://<router-ip>:80/`** — local management panel served by busybox httpd from the container itself.
+**`http://<container-ip>:80/`** — local management panel served by busybox httpd from the container itself.
 
 <p align="center">
   <img src="docs/screenshots/webui-1.png" width="800" alt="WebUI — overview">
@@ -89,7 +89,7 @@ All runtime artifacts (generated config, provider YAMLs, pre-rendered HTML) live
 
 You can also attach **multiple VETH interfaces** to the container — they show up as direct outbounds in mihomo, route to whichever you want via mangle in RouterOS. Inbound traffic to the container must enter via the **first VETH** only.
 
-## 🧑‍🍳 Common recipes
+## 🧑‍🍳 A few examples
 
 ### YouTube via a single VLESS link
 ```yaml
@@ -104,6 +104,7 @@ YOUTUBE_GEOSITE: "youtube"
 GROUP: "telegram"
 TELEGRAM_USE: "tunnel1"
 TELEGRAM_GEOSITE: "telegram"
+TELEGRAM_GEOIP: "telegram"
 TELEGRAM_AS: "AS62041,AS59930,AS62014,AS211157,AS44907"
 ```
 
@@ -113,8 +114,10 @@ BYEDPI_CMD: "--tlsrec 41+s --udp-fake 1 --oob 1 --auto=torst,redirect,ssl_err --
 GROUP: "discord,google"
 DISCORD_USE: "BYEDPI"
 DISCORD_GEOSITE: "discord"
+DISCORD_GEOIP: "discord"
 GOOGLE_USE: "BYEDPI"
 GOOGLE_GEOSITE: "google"
+GOOGLE_GEOIP: "google"
 ```
 
 ### Route a specific LAN subnet via SOCKS5
@@ -167,6 +170,7 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 | `BYEDPI_CMDxx` | — | [ByeDPI](https://github.com/hufrea/byedpi) strategy. `BYEDPI_CMD` → outbound `BYEDPI`; `BYEDPI_CMD1` → `BYEDPI_1`; etc. Pick strategies with [byedpi-orchestrator](https://hub.docker.com/r/vindibona/byedpi-orchestrator). |
 | `ZAPRET_CMDxx` | — | [Zapret/nfqws](https://github.com/bol-van/zapret) strategy. Bundled fakes in `/zapret-fakebin/` (e.g. `quic_initial_www_google_com.bin`) and lists in `/zapret-lists/` (`ipset-all.txt`, `list-general.txt`, etc.). |
 | `ZAPRET2_CMDxx` | — | [Zapret2/nfqws2](https://github.com/bol-van/zapret2) strategy. |
+| `ZAPRET2_WG_CMD` | *(default with `quic_initial_vk_com` blob)* | Dedicated nfqws2 strategy for WireGuard handshake routing. |
 | `ZAPRET_PACKETSxx` | `12` | Number of first packets routed through the nfqws queue. `xx` overrides per-provider. Non-positive values = unlimited (always queued). |
 | `ZAPRET2_PACKETSxx` | `12` | Same for nfqws2. |
 
@@ -187,11 +191,14 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 
 `GROUP` declares the set of named groups. For each group `XXX` (uppercased), prefix-ENV variants below are honored.
 
+> 💡 In addition to user-defined groups, three "system" groups are hardwired in entrypoint: `GROUP_*` (defaults for every group), `GLOBAL_*` (the special GLOBAL group) and `DNS_*` (a dedicated group for DNS resolution). All three accept the same prefix ENVs as the table below.
+
 | ENV | Default | Description |
 |---|---|---|
 | `GROUP` | — | Comma-separated list of [proxy groups](https://wiki.metacubex.one/en/config/proxy-groups). `telegram,youtube,google,ai,geoblock` → groups `TELEGRAM, YOUTUBE, GOOGLE, AI, GEOBLOCK`. A group is created only if it has at least one resource (`XXX_*`) or `XXX_USE`. |
 | `XXX_TYPE` | `select` | [Group type](https://wiki.metacubex.one/en/config/proxy-groups/#type): `select` / `url-test` / `fallback` / `load-balance` / `relay`. |
 | `XXX_USE` | *all providers in order: LINKs, SUB_LINKs, WG/AWG, BYEDPI, DIRECT* | Subset of [providers](https://wiki.metacubex.one/en/config/proxy-providers) to include. Example: `YOUTUBE_USE=BYEDPI,LINK1`. |
+| `XXX_PROXIES` | — | Explicit [proxies](https://wiki.metacubex.one/en/config/proxy-groups/#proxies) (specific nodes, not providers), comma-separated. Alternative/addition to `XXX_USE`. |
 | `XXX_FILTER` | — | [Provider name filter regex](https://wiki.metacubex.one/en/config/proxy-groups/#filter). Example: `RU\|BYEDPI`. |
 | `XXX_EXCLUDE` | — | [Exclude regex](https://wiki.metacubex.one/en/config/proxy-groups/#exclude-filter). |
 | `XXX_EXCLUDE_TYPE` | — | [Exclude by type](https://wiki.metacubex.one/en/config/proxy-groups/#exclude-type). Example: `vmess\|direct`. |
@@ -218,6 +225,7 @@ Each entry creates an automatic [rule](https://wiki.metacubex.one/en/config/rule
 | `XXX_KEYWORD` | [DOMAIN-KEYWORD](https://wiki.metacubex.one/en/config/rules/#domain-keyword) matches. |
 | `XXX_IPCIDR` | [IP-CIDR](https://wiki.metacubex.one/en/config/rules/#ip-cidr-ip-cidr6) ranges. |
 | `XXX_SRCIPCIDR` | [SRC-IP-CIDR](https://wiki.metacubex.one/en/config/rules/#src-ip-cidr) — route by source. Example: `SOCKS_SRCIPCIDR=192.168.88.37/32,192.168.88.65/32`. |
+| `XXX_DSCP` | Marks this group's traffic with a [DSCP](https://wiki.metacubex.one/en/config/rules/#dscp) value (0–63). Example: `YOUTUBE_DSCP=10`. |
 | `XXX_PRIORITY` | Position of this group's rules in the `rules` list. Lower = earlier. Shared priority space with `RULESxx`. Default ≥1000. |
 
 ### Custom rule-sets
@@ -229,8 +237,16 @@ Each entry creates an automatic [rule](https://wiki.metacubex.one/en/config/rule
 
 ## 🛠 RouterOS install
 
-<details>
-<summary>📋 Auto-install snippet (paste into RouterOS terminal)</summary>
+First, enable container support (if not enabled already):
+
+```
+/system/device-mode/print
+/system/device-mode/update mode=advanced container=yes traffic-gen=yes
+```
+
+You have ~5 minutes to confirm via power-cycle or briefly pressing any physical button on the device.
+
+Then paste the snippet below into RouterOS terminal:
 
 ```routeros
 :global currentVersion [/system resource get version];
@@ -272,8 +288,6 @@ $s
 }
 ```
 
-</details>
-
 During execution the script asks for:
 
 - one proxy URL (`vless://`, `vmess://`, `ss://`, `trojan://`)
@@ -300,7 +314,7 @@ Report sensitive issues per [SECURITY.md](./SECURITY.md).
 
 ## 💖 Support the project
 
-If this saved you a weekend of fighting MikroTik scripts:
+If this saved you time configuring MikroTik and its scripts:
 
 - **USDT (TRC20):** `TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ`
 
