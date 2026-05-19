@@ -8,6 +8,23 @@
 :set start [/terminal ask]
 :put "Starting script"
 
+:local TempContainer
+:local flagTempContainer false
+:while ($flagTempContainer=false) do={
+:put "Would you like to create a RAM disk for container temporary files?"
+:put "- yes"
+:put "- no"
+:set TempContainer [/terminal ask]
+:if ($TempContainer="yes") do={
+/disk/add type=tmpfs slot=ContainerTemp
+/container/config/set tmpdir=ContainerTemp/
+:set flagTempContainer true
+}
+:if ($TempContainer="yes")do={
+:set flagTempContainer true
+}
+}
+
 :local pathPull ""
 :if (([:len [/container/find comment="MihomoProxyRoS"]] = 0) or (([:len [/container/find comment="DNSProxy"]] = 0) and $dnsproxy=true)) do={
 :local slotArray 
