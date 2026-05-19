@@ -1,146 +1,238 @@
-[English](/README.md) | [Русский](/README_RU.md)
+[English](/README.md) | [Русский](/README_RU.md) · [Telegram](https://t.me/+96HVPF3Ww6o3YTNi) · [Code of Conduct](./CODE_OF_CONDUCT.md)
 
-[Telegram group](https://t.me/+96HVPF3Ww6o3YTNi)
+# mihomo-proxy-ros
 
-# 🇬🇧 Description in English
+> Multi-arch Docker container for **MikroTik RouterOS**: [mihomo](https://github.com/metacubex/mihomo) + [byedpi](https://github.com/hufrea/byedpi) + [zapret](https://github.com/bol-van/zapret) + [zapret2](https://github.com/bol-van/zapret2), fully ENV-driven, with a built-in sh-only WebUI that generates ready-to-paste RouterOS commands.
 
-👉 Please read the [Code of Conduct](./CODE_OF_CONDUCT.md) before participating in the project.
+[![GitHub release](https://img.shields.io/github/v/release/Medium1992/mihomo-proxy-ros?label=release)](https://github.com/Medium1992/mihomo-proxy-ros/releases)
+[![Docker Pulls](https://img.shields.io/docker/pulls/medium1992/mihomo-proxy-ros?logo=docker&label=docker%20pulls)](https://hub.docker.com/r/medium1992/mihomo-proxy-ros)
+[![Docker Image Size](https://img.shields.io/docker/image-size/medium1992/mihomo-proxy-ros/latest?logo=docker&label=image%20size)](https://hub.docker.com/r/medium1992/mihomo-proxy-ros)
+[![License](https://img.shields.io/github/license/Medium1992/mihomo-proxy-ros)](./LICENSE)
+![Platforms](https://img.shields.io/badge/arch-amd64%20%7C%20arm64%20%7C%20armv7%20%7C%20armv5-blue)
+[![Telegram](https://img.shields.io/badge/Telegram-group-blue?logo=telegram)](https://t.me/+96HVPF3Ww6o3YTNi)
 
-**mihomo-proxy-ros** is a multi-architecture Docker container based on  [Mihomo](https://github.com/metacubex/mihomo), [byedpi](https://github.com/hufrea/byedpi), [zapret](https://github.com/bol-van/zapret)(nfqws; only amd64 and arm64) and [zapret2](https://github.com/bol-van/zapret2)(nfqws2; only amd64 and arm64)  
-supporting platforms **ARM**, **ARM64**, **AMD64v1**, **AMD64v2**, and **AMD64v3**.  
-The `latest` tag includes **ARM**, **ARM64**, and **AMD64v3**.  
-If you have **AMD64v1** or **AMD64v2**, you need to pull the corresponding tag.
+## ✨ Features
 
-## 💖 Project Support
+- 🌍 **Multi-arch**: ARM, ARM64, AMD64v1/v2/v3 (the `latest` tag bundles ARM, ARM64, AMD64v3 — for v1/v2 pull the dedicated tag)
+- 🖥 **Built-in WebUI** on port `80` — visual ENV editor, YAML validator, AWG/proxy/rule-set file managers, generates MikroTik terminal commands
+- 🔐 **DPI bypass** via [ByeDPI](https://github.com/hufrea/byedpi), [Zapret/nfqws](https://github.com/bol-van/zapret), [Zapret2/nfqws2](https://github.com/bol-van/zapret2) (nfqws/nfqws2 — amd64/arm64 only)
+- 🧩 **Flexible routing** by domain / IP / GeoSite / GeoIP / ASN, all controlled via ENV
+- 🛡 Multiple proxy links and **subscriptions** (including [RemnaWave](https://docs.rw/docs/features/hwid-device-limit) with HWID)
+- 🚀 **WireGuard / AmneziaWG** integration by dropping `.conf` files into a mount folder
+- 📦 Single-step **automated install** via MikroTik terminal snippet
+- 🛠 Multiple VETH interfaces appear as outbound proxies → mangle in RouterOS to send traffic where you want
 
-If you find this project useful, you can support it via donation:  
-**USDT(TRC20): TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ**
+> Tested with **RouterOS 7.20+**. Requires the `container` package and `device-mode container=yes`.
 
+## ⚡ Quickstart
 
+1. **Enable container support** on RouterOS:
+   ```
+   /system/device-mode/print
+   /system/device-mode/update mode=advanced container=yes traffic-gen=yes
+   ```
+   You have ~5 minutes to confirm via power-cycle or physical button.
 
-## 🌟 Features of the Automated Installation Script for MikroTik Routers
+2. **Paste the install snippet** into RouterOS terminal — see [§ RouterOS install](#-routeros-install) below.
 
-The repository contains an **interactive automated installation script** for **RouterOS MikroTik**.
+3. **Open the WebUI**: `http://<router-ip>:80/`
+   Configure ENVs visually, click *MikroTik commands* → copy → paste back into RouterOS terminal.
 
-- 🌍 Multi-architecture: ARM, ARM64, AMD64v1-v3  
-- ⚙️ Automated installation via MikroTik terminal using the script at the end of this description  
-- 🔐 DPI bypass via ByeDPI (You can change the strategy in the container’s ENVs. For selecting strategies, there is an option called [byedpi-orchestrator](https://hub.docker.com/r/vindibona/byedpi-orchestrator).)
-- 🔐 DPI bypass using Zapret (nfqws) (amd64 and arm64 only) — strategies must be selected separately from the container according to the instructions from the author of [zapret](https://github.com/bol-van/zapret)
-- 🔐 DPI bypass using Zapret2 (nfqws2) (amd64 and arm64 only) — strategies must be selected separately from the container according to the instructions from the author of [zapret2](https://github.com/bol-van/zapret2)
-- 🧩 Flexible routing and management of domain, IP, and AS pools via ENVs  
-- 🛡️ Ability to add multiple proxy links and subscriptions (including RemnaWave subscriptions with HWID) via ENVs  
-- 🚀 Integration of multiple WG, AWG VPNs by copying config files into the mount folder  
+4. **Or use mihomo's panel**: `http://<router-ip>:9090/` (UI from `EXTERNAL_UI_URL`).
 
-During execution, the user is prompted to:  
-- Enter a single proxy link: `vless://`, `vmess://`, `ss://`, `trojan://`  
-- If available — a subscription link: `Enter sublink http(s)://... URL`  
+## 🖥 WebUI
 
-The script automatically performs:  
-- Router configuration  
-- Mangle and routing setup  
-- Container installation  
-- Domain pool formation for resources routed through proxies  
+**`http://<router-ip>:80/`** — local management panel served by busybox httpd from the container itself.
 
-This makes the project significantly **simplify the setup process**,  
-making it convenient even for **inexperienced users**,  
-and provides a **flexible, ready-to-use proxy solution**.
+<p align="center">
+  <img src="docs/screenshots/webui-1.png" width="800" alt="WebUI — overview">
+</p>
 
----
+<details>
+<summary>📸 More screenshots</summary>
 
-After installation, you can **flexibly configure resource routing** on the router itself by modifying the resources in the existing script or creating new ones ([DNS_FWD](https://github.com/Medium1992/MikroTik_DNS_FWD), [IPList](https://github.com/Medium1992/MikroTik_IPlist)),  
-as well as **adding new links** and other parameters via environment variables (`ENV`) for flexible routing and container logic configuration of `mihomo-proxy-ros`.
+<p align="center">
+  <img src="docs/screenshots/webui-2.png" width="800" alt="WebUI — proxy providers"><br><br>
+  <img src="docs/screenshots/webui-3.png" width="800" alt="WebUI — proxy groups"><br><br>
+  <img src="docs/screenshots/webui-4.png" width="800" alt="WebUI — DPI / zapret files"><br><br>
+  <img src="docs/screenshots/webui-5.png" width="800" alt="WebUI — YAML / rule-sets">
+</p>
 
-## 🌟 ENVs Description
-
-| ENVs | Default | Description |
-|------------------------|---------------------------------------|---------|
-| `TPROXY` | `true` | In RoS>=7.21 on `arm64` and `adm64` architectures, `NFTables` is used by default in the container. If the `TPROXY` ENV is set to `true`, inbound TProxy (tcp, udp) will be used; if set to `false`, inbound Redirect (tcp) + TUN (udp) will be used |
-| `DNS_MODE` | `fake-ip` | DNS server operation mode [DOCs](https://wiki.metacubex.one/en/config/dns/#enhanced-mode) |
-| `NAMESERVER_POLICY` | — | Specifies which domains should be resolved by which DNS servers [DOCs](https://wiki.metacubex.one/en/config/dns/#nameserver-policy). ENV example: `domain1#dns1,domain2#dns2` |
-| `SNIFFER` | `true` | [Domain sniffer](https://wiki.metacubex.one/en/config/sniff). Applied when routing by domains, when the domain is resolved not by mihomo |
-| `FAKE_IP_RANGE` | `198.18.0.0/15` | Fake-IP pool range [DOCs](https://wiki.metacubex.one/en/config/dns/#fake-ip-range) |
-| `FAKE_IP_TTL` | `1` | Lifetime of FakeIP record in DNS cache in seconds [DOCs](https://wiki.metacubex.one/en/config/dns/#fake-ip-ttl)|
-| `FAKE_IP_FILTERXXX`    | —                    | List of rules for DNS server operation in rule mode.|
-| `EXTERNAL_UI_URL` | [link](https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip) | Web interface link (zip archive) [DOCs](https://wiki.metacubex.one/en/config/general/#url) |
-| `LOG_LEVEL` | `error` | mihomo log level (`silent`, `error`, `warning`, `info`, `debug`) [DOCs](https://wiki.metacubex.one/en/config/general/#_5) |
-| `HEALTHCHECK_URL` | `https://www.gstatic.com/generate_204`| [Health-check URL](https://wiki.metacubex.one/en/config/proxy-providers/#health-checkurl) |
-| `HEALTHCHECK_URL_STATUS`| `204` | Expected health-checked status [DOCs](https://wiki.metacubex.one/en/config/proxy-groups/#expected-status) |
-| `HEALTHCHECK_INTERVAL` | `120` | Health-check interval in seconds [DOCs](https://wiki.metacubex.one/en/config/proxy-providers/#health-checkinterval) |
-| `HEALTHCHECK_URL_BYEDPI` | `https://www.facebook.com`| [Health-check URL](https://wiki.metacubex.one/en/config/proxy-providers/#health-checkurl) for `BYEDPI` proxy provider |
-| `HEALTHCHECK_URL_STATUS_BYEDPI`| `200` | Expected health-check status [DOCs](https://wiki.metacubex.one/en/config/proxy-groups/#expected-status) for `BYEDPI` proxy provider |
-| `HEALTHCHECK_URL_ZAPRET`| `https://www.facebook.com`           | [URL health-check](https://wiki.metacubex.one/en/config/proxy-providers/#health-checkurl) for all proxy providers `ZAPRET` and `ZAPRET2`|
-| `HEALTHCHECK_URL_STATUS_ZAPRET`| `200`                         | Expected health-check status [DOCs](https://wiki.metacubex.one/en/config/proxy-groups/#expected-status) for all proxy providers `ZAPRET` and `ZAPRET2` |
-| `HEALTHCHECK_PROVIDER` | `true` | If `true` — health checks use `HEALTHCHECK_URL`, `HEALTHCHECK_INTERVAL`, `HEALTHCHECK_URL_STATUS`. If `false` — health checks use `GROUP_URL`, `XXX_URL`, `GROUP_URL_STATUS`, `XXX_URL_STATUS`, `GROUP_INTERVAL`, `XXX_INTERVAL` |
-| `BYEDPI_CMDxx`           | —                                     | Strategy [BYEDPI](https://github.com/hufrea/byedpi) if `BYEDPI_CMD` is set, proxy output `BYEDPI` appears; if `BYEDPI_CMD1` is set, proxy output `BYEDPI_1` appears, and so on |
-| `ZAPRET_CMDxx`        | —                                     | Strategy [Zapret(nfqws)] (https://github.com/bol-van/zapret), if `ZAPRET_CMD` is set, the proxy output `ZAPRET` appears; if `ZAPRET_CMD1` is set, the proxy output `ZAPRET_1` appears, and so on. The container contains bin files for fakes from the repository [zapret-discord-youtube] (https://github.com/Flowseal/zapret-discord-youtube), paths for their use `/zapret-fakebin/quic_initial_www_google_com.bin`, `/zapret-fakebin/tls_clienthello_4pda_to.bin`, `/zapret-fakebin/tls_clienthello_max_ru.bin`, `/zapret-fakebin/tls_clienthello_www_google_com.bin`, as well as txt list files `/zapret-lists/ipset-all.txt`, `/zapret-lists/ipset-exclude.txt`, `/zapret-lists/list-exclude.txt`, `/zapret-lists/list-general.txt`, `/zapret-lists/list-google.txt` |
-| `ZAPRET2_CMDxx`       | —                                     | Strategy [Zapret2(nfqws2)](https://github.com/bol-van/zapret2), if `ZAPRET2_CMD` is set, proxy output `ZAPRET2` appears, if `ZAPRET2_CMD1` is set, proxy output `ZAPRET2_1` appears, and so on |
-| `ZAPRET_PACKETSxx`        | `12`                                    | Number of first packets that will pass through the ban queue. `ZAPRET_PACKETS` value for all nfqws by default. `ZAPRET_PACKETSxx` value for a specific proxy provider. Values other than natural numbers are treated as 0, and packets will always pass through the queue. |
-| `ZAPRET2_PACKETSxx`       | `12`                                     | Number of first packets that will pass through the ban queue2. `ZAPRET2_PACKETS` is the default value for all nfqws2. `ZAPRET2_PACKETSxx` value for a specific proxy provider. Values other than natural numbers are treated as 0, and packets will always go through the queue.  |
-| `LINK0`, `LINK1`... | — | Proxy links `vless://`, `vmess://`, `ss://`, `trojan://`... For each proxy link, a separate [proxy provider](https://wiki.metacubex.one/en/config/proxy-providers) is created |
-| `SUB_LINK0`, `SUB_LINK1`... | — | Subscriptions of type `http(s)://`... For each subscription, a separate [proxy provider](https://wiki.metacubex.one/en/config/proxy-providers) is created. Supports setting [HWID](https://docs.rw/docs/features/hwid-device-limit) individually for each subscription |
-| `SUB_LINKxx_PROXY` | `DIRECT` | Specifies through which [proxy](https://wiki.metacubex.one/en/config/proxy-providers/#proxy) the subscription should be fetched. Example: `SUB_LINK1_PROXY` with value `proxies1` → the subscription will be downloaded via the proxy `proxies1` |
-| `SUB_LINKxx_HEADERS` | — | Specification of [headers](https://wiki.metacubex.one/en/config/proxy-providers/#header) for the subscription request with special headers. Example format: `header1=value1#header2=value2`. Example with x-hwid: `x-hwid=xxx#x-device-os=xxx#x-ver-os=xxx#x-device-model=xxx#user-agent=xxx` |
-| `SUB_LINKxx_INTERVAL`     | `3600`                             | Specifies the [subscription update interval](https://wiki.metacubex.one/en/config/proxy-providers/#interval) in seconds. ENV `SUB_LINK_INTERVAL` sets the default value for all. `SUB_LINKxx_INTERVAL` reassigns the interval for a specific subscription.  |
-| `SOCKS0`, `SOCKS1`... | — | SOCKS5 proxies [](https://wiki.metacubex.one/en/config/proxies/socks/). Each defined SOCKS5 proxy gets its own separate [proxy-provider](https://wiki.metacubex.one/en/config/proxy-providers). ENV examples: `server=192.168.88.3#port=1080#username=admin#password=admin#tls=true#fingerprint=chrome#skip-cert-verify=false#udp=false#ip-version=ipv4` or shorter `server=192.168.88.3#port=1080#username=admin#password=admin` All SOCKS5 config parameters are separated by `#` instead of the usual YAML/JSON syntax. |
-| `XXX_DIALER_PROXY`    | —                                   | proxy provider parameter, see [override dialer-proxy](https://wiki.metacubex.one/en/config/proxy-providers/#override). Allows you to specify which proxy group to use for the connection. For example, you can specify that LINK1 should connect through the YouTube group - `LINK1_DIALER_PROXY` with the value `YouTube` |
-| `GROUP`                | —                                     | A comma-separated list of [proxy groups](https://wiki.metacubex.one/en/config/proxy-groups), for example `telegram,youtube,google,ai,geoblock` will create [proxy groups](https://wiki.metacubex.one/en/config/proxy-groups) `TELEGRAM`,`YOUTUBE`,`GOOGLE`,`AI`,`GEOBLOCK`. A [proxy group](https://wiki.metacubex.one/en/config/proxy-groups) is created only if it has at least one of the resources `XXX_` or `XXX_USE`|
-| `XXX_TYPE` | `select` | [Proxy group type](https://wiki.metacubex.one/en/config/proxy-groups/#type) [](https://wiki.metacubex.one/en/config/proxy-groups/load-balance). `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,youtube,...` → `YOUTUBE_TYPE` |
-| `GROUP_URL` | `https://www.gstatic.com/generate_204` | [Proxy health check URL](https://wiki.metacubex.one/en/config/proxy-groups/#url) used when `HEALTHCHECK_PROVIDER`=`false` and `XXX_TYPE` is [url-test](https://wiki.metacubex.one/en/config/proxy-groups/url-test), [fallback](https://wiki.metacubex.one/en/config/proxy-groups/fallback), or [load-balance](https://wiki.metacubex.one/en/config/proxy-groups/load-balance) |
-| `XXX_URL` | ENV `GROUP_URL` | Sets the [proxy health check URL](https://wiki.metacubex.one/en/config/proxy-groups/#url) for a specific proxy group when `HEALTHCHECK_PROVIDER`=`false` |
-| `GROUP_URL_STATUS` | `204` | [Expected status code for proxy health check](https://wiki.metacubex.one/en/config/proxy-groups/#expected-status) used when `HEALTHCHECK_PROVIDER`=`false` and `XXX_TYPE` is [url-test](https://wiki.metacubex.one/en/config/proxy-groups/url-test), [fallback](https://wiki.metacubex.one/en/config/proxy-groups/fallback), or [load-balance](https://wiki.metacubex.one/en/config/proxy-groups/load-balance) |
-| `XXX_URL_STATUS` | ENV `GROUP_URL_STATUS` | Sets the [expected status code for proxy health check](https://wiki.metacubex.one/en/config/proxy-groups/#expected-status) for a specific proxy group when `HEALTHCHECK_PROVIDER`=`false` |
-| `GROUP_INTERVAL` | `60` | [Proxy health check interval](https://wiki.metacubex.one/en/config/proxy-groups/#interval) in seconds, used when `HEALTHCHECK_PROVIDER`=`false` and `XXX_TYPE` is [url-test](https://wiki.metacubex.one/en/config/proxy-groups/url-test), [fallback](https://wiki.metacubex.one/en/config/proxy-groups/fallback), or [load-balance](https://wiki.metacubex.one/en/config/proxy-groups/load-balance) |
-| `XXX_INTERVAL` | ENV `GROUP_INTERVAL` | Sets the [proxy health check interval](https://wiki.metacubex.one/en/config/proxy-groups/#interval) for a specific proxy group when `HEALTHCHECK_PROVIDER`=`false` |
-| `GROUP_TOLERANCE` | `20` | [Difference for selecting the best proxy](https://wiki.metacubex.one/en/config/proxy-groups/url-test/#tolerance) in ms, used for `XXX_TYPE` [url-test](https://wiki.metacubex.one/en/config/proxy-groups/url-test)|
-| `XXX_TOLERANCE` | ENV `GROUP_TOLERANCE` | Setting [difference for selecting the best proxy](https://wiki.metacubex.one/en/config/proxy-groups/url-test/#tolerance) for the proxy group|
-| `GROUP_STRATEGY` | `consistent-hashing` | [Load balancing strategy](https://wiki.metacubex.one/en/config/proxy-groups/load-balance/#strategy), used for `XXX_TYPE` [load-balance](https://wiki.metacubex.one/en/config/proxy-groups/load-balance)|
-| `XXX_STRATEGY` | ENV `GROUP_STRATEGY` | Setting [load balancing strategy](https://wiki.metacubex.one/en/config/proxy-groups/load-balance/#strategy) for the proxy group|
-| `XXX_USE` | *(all providers)* in order `LINKs`, `SUB_LINKs`, `WG,AWG`, `BYEDPI`, `DIRECT` | Comma-separated list of [proxy providers](https://wiki.metacubex.one/en/config/proxy-providers) to be used in the specified order for the [proxy group](https://wiki.metacubex.one/en/config/proxy-groups), where `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,youtube,...` → `YOUTUBE_USE` with value `BYEDPI,LINK1` will leave two proxy providers for the YOUTUBE group, with BYEDPI first and LINK1 second |
-| `XXX_FILTER` | — | [Proxy group filter](https://wiki.metacubex.one/en/config/proxy-groups/#filter), where `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,youtube,...` → `YOUTUBE_FILTER` with value `RU\|BYEDPI` will leave proxies with the RF flag emoji and name BYEDPI for the YOUTUBE group |
-| `XXX_EXCLUDE` | — | [Proxy group exclude filter](https://wiki.metacubex.one/en/config/proxy-groups/#exclude-filter), where `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,youtube,...` → `YOUTUBE_EXCLUDE` with value `RU\|BYEDPI` will exclude proxies with the RF flag emoji and name BYEDPI from the YOUTUBE group |
-| `XXX_EXCLUDE_TYPE` | — | [Proxy group filter by type](https://wiki.metacubex.one/en/config/proxy-groups/#exclude-type), where `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,youtube,...` → `YOUTUBE_EXCLUDE_TYPE` with value `vmess\|direct` will exclude `vmess` and `direct` type proxies from the YOUTUBE group |
-| `XXX_DNS`     | —                                     | Ability to specify which DNS to use to resolve domains in proxy group `XXX`. Example value: `https://dns.google/dns-query#disable-qtype-65=true&disable-ipv6=true` [Docs](https://wiki.metacubex.one/en/config/dns/). This may be relevant, for example, for those who resolve AI through comss or other similar proxy DNS, i.e., set the required DNS for the AI group and select MihomoProxyRoS in the group. |
-| `XXX_GEOSITE` | — | Comma-separated list of [geosite](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/geo/geosite) for proxy group `XXX`. Actually creates a [rule-set](https://wiki.metacubex.one/en/config/rules/#rule-set) in rms format and corresponding routing [rules](https://wiki.metacubex.one/en/config/rules) to the [proxy group](https://wiki.metacubex.one/en/config/proxy-groups), where `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,geoblock,...` → `GEOBLOCK_GEOSITE` with value `intel,openai,xai` will load domain lists for `intel`,`openai`,`xai` resources and route them to the `GEOBLOCK` proxy-group |
-| `XXX_GEOIP` | — | Comma-separated list of [geoip](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/geo/geoip) for proxy group `XXX`. Actually creates a [rule-set](https://wiki.metacubex.one/en/config/rules/#rule-set) in rms format and corresponding routing [rules](https://wiki.metacubex.one/en/config/rules) to the [proxy group](https://wiki.metacubex.one/en/config/proxy-groups), where `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,geoblock,...` → `GEOBLOCK_GEOIP` with value `netflix` will load IP pools for `netflix` and route them to the `GEOBLOCK` proxy-group |
-| `XXX_AS` | — | Comma-separated list of [AS](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/asn) for proxy group `XXX`. Actually creates a [rule-set](https://wiki.metacubex.one/en/config/rules/#rule-set) in rms format and corresponding routing [rules](https://wiki.metacubex.one/en/config/rules) to the [proxy group](https://wiki.metacubex.one/en/config/proxy-groups), where `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,telegram,...` → `TELEGRAM_AS` with value `AS62041,AS59930,AS62014,AS211157,AS44907` will load IP pools for `AS62041`,`AS59930`,`AS62014`,`AS211157`,`AS44907` and route them to the `TELEGRAM` proxy-group |
-| `XXX_DOMAIN` | — | Comma-separated list of [domains](https://wiki.metacubex.one/en/config/rules/#domain) for proxy group `XXX`. Actually creates corresponding routing [rules](https://wiki.metacubex.one/en/config/rules) to the [proxy group](https://wiki.metacubex.one/en/config/proxy-groups), where `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,telegram,...` → `TELEGRAM_DOMAIN` with value `telegram.org,telegram.com` will route the specified domains to the `TELEGRAM` proxy-group |
-| `XXX_SUFFIX` | — | Comma-separated list of [domain suffixes](https://wiki.metacubex.one/en/config/rules/#domain-suffix) for proxy group `XXX`. Actually creates corresponding routing [rules](https://wiki.metacubex.one/en/config/rules) to the [proxy group](https://wiki.metacubex.one/en/config/proxy-groups), where `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,telegram,...` → `TELEGRAM_SUFFIX` with value `telegram.org,telegram.com` will route the specified domains and their subdomains to the `TELEGRAM` proxy-group |
-| `XXX_KEYWORD`      | —                     | Comma-separated list of [domain keywords](https://wiki.metacubex.one/en/config/rules/#domain-keyword) for the proxy-group named `XXX`. Automatically creates corresponding [rules](https://wiki.metacubex.one/en/config/rules) that route matching domains to the proxy-group `XXX`. The group name `XXX` is taken from the `GROUP` environment variable (comma-separated list). Example: `GROUP=...,telegram,...` + `TELEGRAM_KEYWORD=telegram,tg` → all domains containing `telegram` or `tg` will be routed to the `TELEGRAM` proxy-group |
-| `XXX_IPCIDR` | — | Comma-separated list of [IP-CIDR](https://wiki.metacubex.one/en/config/rules/#ip-cidr-ip-cidr6) for proxy group `XXX`. Actually creates corresponding routing [rules](https://wiki.metacubex.one/en/config/rules) to the [proxy group](https://wiki.metacubex.one/en/config/proxy-groups), where `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) set in the `GROUP` ENV. For example, for `GROUP` `...,telegram,...` → `TELEGRAM_IPCIDR` with value `91.108.4.0/22,91.108.56.0/22` will route the specified subnets to the `TELEGRAM` proxy-group |
-| `XXX_SRCIPCIDR` | — | Comma-separated list of [SRC-IP-CIDR](https://wiki.metacubex.one/en/config/rules/#src-ip-cidr) for the proxy group `XXX`. Actually creates corresponding routing [rules](https://wiki.metacubex.one/en/config/rules) that send traffic from these source IPs/subnets to the proxy group `XXX`. `XXX` is the [proxy group name](https://wiki.metacubex.one/en/config/proxy-groups/#name) you specify in the ENV variable `GROUP`. Example: if `GROUP` contains `...,socks,...`, then the variable `SOCKS_IPCIDR` with value `192.168.88.37/32,192.168.88.65/32` will route **all traffic** from these subnets to the proxy-group named `SOCKS`. |
-| `XXX_PRIORITY`         | —                                     | Priority of [proxy group](https://wiki.metacubex.one/en/config/proxy-groups) `XXX`, in terms of the order of rules in [rules](https://wiki.metacubex.one/en/config/rules). For example, `YOUTUBE_PRIORITY` with a value of `1` and `TELEGRAM_PRIORITY` with a value of `2` will create rules in [rules](https://wiki.metacubex.one/en/config/rules) in order, first `YOUTUBE`, then `TELEGRAM`. The default priority is 1000+. |
-| `XXX_ICON`         | —                                     | [Proxy group icon](https://wiki.metacubex.one/en/config/proxy-groups/#icon) specify a link to the icon `“url”` |
-| `XXX_HIDDEN`         | `false`                              | true/false, hides/shows the proxy group in the web panel. |
-| `RULE_SETXXX_BASE64`         | —                               | String in the format `base64#name`, where `base64`-encoded list in the format [payload](https://wiki.metacubex.one/ru/config/rule-providers/# payload) and `name` is the name of the proxy group that will be created. Routing rules for this group with priority 2000+ will also be added automatically. Encoding strings such as `DOMAIN-SUFFIX,ntc.party` on the next line `DOMAIN,abc.com` will create a rule set with two rules.  |
-| `RULESXXX` | — | [Routing rules](https://wiki.metacubex.one/en/config/rules/) of the Mihomo core, where `XXX` is the rule priority (order). For example, ENV `RULES1` with the value `AND,((NETWORK,udp),(DST-PORT,443)),REJECT` will create a QUIC drop rule with priority 1, meaning it will be in the first position. These priorities are shared with the priorities of `XXX_PRIORITY` groups. |
+</details>
 
 
-> **WG, AWG** configs need to be mounted to the container folder `/root/.config/mihomo/awg/`, proxy providers will be created in the number of config files with their filenames.
+It **does not modify** the running container directly. Instead it:
 
-> Any [proxy](https://wiki.metacubex.one/en/config/proxies/) can be formatted in a `.yaml` file according to the documentation and mounted in the folder `/root/.config/mihomo/proxies_mount/`.
+- shows every ENV that `entrypoint.sh` understands, grouped into logical pages (Core, Providers, DPI, Groups, Rules, Rule-sets, YAML, Tools)
+- tracks edits locally in `localStorage` against the original values
+- generates the exact `/container/envs/add|set|remove` commands you need to paste into RouterOS terminal, plus the final `/container/stop`+`start` to apply
 
-> You can create a group from your list file in the [payload](https://wiki.metacubex.one/ru/config/rule-providers/#payload) format, the `name.txt` file, where `name` is the name of the proxy group that will be created. Routing rules for this group with a priority of 2000+ will also be added automatically. Mount it in the `/root/.config/mihomo/rule_set_list/` folder. Lines such as `DOMAIN-SUFFIX,ntc.party`, followed by `DOMAIN,abc.com` on the next line, will create a rule set with two rules.
+What's also in there:
 
-> Multiple VETH interfaces can be added to the container; they will appear as proxy outbounds in mihomo. You can choose which interface to send traffic through, and then, in RouterOS, use mangle to route it as desired, but traffic must be sent to the mihomo container only through the first interface in the list.
----
+- **Proxy YAML editor** with 12 protocol templates (vless-tcp/reality, vless-xhttp, vmess, trojan, ss, anytls, wireguard, amneziawg, hysteria2, tuic, ssh, vless-ws) — *"Load template"* fills the textarea
+- **Live `mihomo -t` validation** of proxy YAMLs before save, plus uniqueness check of `name:` field across all providers
+- **AWG editor** with full `[Interface]/[Peer]/[Mihomo]` template covering every key the parser understands
+- **DPI files manager** — upload `.bin` fakes to `/zapret-fakebin/`, edit text lists in `/zapret-lists/`, with filter
+- **Rule-set builder** — paste a payload-format list, get a `RULE_SETxx_BASE64` ENV ready
 
-### MikroTik Terminal Installation Example
+All runtime artifacts (generated config, provider YAMLs, pre-rendered HTML) live in `/dev/shm` — **zero flash wear**.
 
-First, make sure you have the `container` package installed and that the necessary device-mode functions are enabled.
-```bash
-/system/device-mode/print
-```
-Enable device-mode if necessary.
-Follow the instructions after executing the command below. You have 5 minutes to reboot the power supply or briefly press any button on the device (I recommend using any button).
-```bash
-/system/device-mode/update mode=advanced container=yes traffic-gen=yes
+## 📁 Mount points
+
+| Path in container | Purpose | Format |
+|---|---|---|
+| `/root/.config/mihomo/awg/` | WireGuard / AmneziaWG configs → become proxy-providers | `*.conf` |
+| `/root/.config/mihomo/proxies_mount/` | Custom proxy-providers in mihomo native YAML | `*.yaml` / `*.yml` |
+| `/root/.config/mihomo/rule_set_list/` | Custom rule-set lists in [payload](https://wiki.metacubex.one/en/config/rule-providers/#payload) format | `*.txt` (filename = group name) |
+| `/zapret-fakebin/` | Binary fake-packets used by `nfqws --dpi-desync-fake-*` | `*.bin` |
+| `/zapret-lists/` | Text domain / IP lists for nfqws lua scripts | `*.txt` |
+
+You can also attach **multiple VETH interfaces** to the container — they show up as direct outbounds in mihomo, route to whichever you want via mangle in RouterOS. Inbound traffic to the container must enter via the **first VETH** only.
+
+## 🧑‍🍳 Common recipes
+
+### YouTube via a single VLESS link
+```yaml
+LINK1: "vless://uuid@server:443?type=tcp&security=reality&pbk=...#myvless"
+GROUP: "youtube"
+YOUTUBE_USE: "LINK1"
+YOUTUBE_GEOSITE: "youtube"
 ```
 
-🧩 Installation is done **directly via MikroTik terminal** —  
-just **copy and paste** the snippet below into the **RouterOS terminal**,  
-then the script **automatically downloads** from the repository and **starts installation**.
+### Telegram via AmneziaWG (config dropped into `/root/.config/mihomo/awg/tunnel1.conf`)
+```yaml
+GROUP: "telegram"
+TELEGRAM_USE: "tunnel1"
+TELEGRAM_GEOSITE: "telegram"
+TELEGRAM_AS: "AS62041,AS59930,AS62014,AS211157,AS44907"
+```
 
-```bash
+### Discord + Google via ByeDPI strategy
+```yaml
+BYEDPI_CMD: "--tlsrec 41+s --udp-fake 1 --oob 1 --auto=torst,redirect,ssl_err --fake -1"
+GROUP: "discord,google"
+DISCORD_USE: "BYEDPI"
+DISCORD_GEOSITE: "discord"
+GOOGLE_USE: "BYEDPI"
+GOOGLE_GEOSITE: "google"
+```
+
+### Route a specific LAN subnet via SOCKS5
+```yaml
+SOCKS1: "server=192.168.88.10#port=1080#username=user#password=pass"
+GROUP: "lan_socks"
+LAN_SOCKS_USE: "SOCKS1"
+LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
+```
+
+## ⚙️ Environment variables
+
+### Core
+
+| ENV | Default | Description |
+|---|---|---|
+| `TPROXY` | `true` | On RoS ≥ 7.21 with `arm64`/`amd64`, the container uses **NFTables**. `true` → TProxy in (TCP+UDP); `false` → Redirect (TCP) + TUN (UDP). |
+| `DNS_MODE` | `fake-ip` | DNS [enhanced-mode](https://wiki.metacubex.one/en/config/dns/#enhanced-mode). |
+| `NAMESERVER_POLICY` | — | Per-domain DNS resolver routing. Format: `domain1#dns1,domain2#dns2`. [Docs](https://wiki.metacubex.one/en/config/dns/#nameserver-policy). |
+| `SNIFFER` | `true` | [Domain sniffer](https://wiki.metacubex.one/en/config/sniff) for domain-based rules when not resolved by mihomo. |
+| `FAKE_IP_RANGE` | `198.18.0.0/15` | [fake-ip pool](https://wiki.metacubex.one/en/config/dns/#fake-ip-range). |
+| `FAKE_IP_TTL` | `1` | [fake-ip cache TTL](https://wiki.metacubex.one/en/config/dns/#fake-ip-ttl) (seconds). |
+| `FAKE_IP_FILTERxx` | — | Rules list for DNS server in `rule` mode. |
+
+### Logs & UI
+
+| ENV | Default | Description |
+|---|---|---|
+| `LOG_LEVEL` | `error` | mihomo log level: `silent`/`error`/`warning`/`info`/`debug`. [Docs](https://wiki.metacubex.one/en/config/general/#_5). |
+| `EXTERNAL_UI_URL` | [MetaCube zip](https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip) | Source zip for the panel served on `:9090`. [Docs](https://wiki.metacubex.one/en/config/general/#url). |
+| `UI_SECRET` | — | Secret for the external controller (port `9090`). Empty = no auth (LAN-only setups). |
+
+### Health-check
+
+| ENV | Default | Description |
+|---|---|---|
+| `HEALTHCHECK_PROVIDER` | `true` | `true` → checks use `HEALTHCHECK_*`. `false` → checks use `GROUP_URL`/`XXX_URL`/etc. (per-group). |
+| `HEALTHCHECK_URL` | `https://www.gstatic.com/generate_204` | [Default URL](https://wiki.metacubex.one/en/config/proxy-providers/#health-checkurl). |
+| `HEALTHCHECK_URL_STATUS` | `204` | [Expected status](https://wiki.metacubex.one/en/config/proxy-groups/#expected-status). |
+| `HEALTHCHECK_INTERVAL` | `120` | Interval (seconds). [Docs](https://wiki.metacubex.one/en/config/proxy-providers/#health-checkinterval). |
+| `HEALTHCHECK_URL_BYEDPI` | `https://www.facebook.com` | URL for `BYEDPI` provider. |
+| `HEALTHCHECK_URL_STATUS_BYEDPI` | `200` | Expected status for `BYEDPI` provider. |
+| `HEALTHCHECK_URL_ZAPRET` | `https://www.facebook.com` | URL for all `ZAPRET`/`ZAPRET2` providers. |
+| `HEALTHCHECK_URL_STATUS_ZAPRET` | `200` | Expected status for `ZAPRET`/`ZAPRET2` providers. |
+
+### DPI engines
+
+| ENV | Default | Description |
+|---|---|---|
+| `BYEDPI_CMDxx` | — | [ByeDPI](https://github.com/hufrea/byedpi) strategy. `BYEDPI_CMD` → outbound `BYEDPI`; `BYEDPI_CMD1` → `BYEDPI_1`; etc. Pick strategies with [byedpi-orchestrator](https://hub.docker.com/r/vindibona/byedpi-orchestrator). |
+| `ZAPRET_CMDxx` | — | [Zapret/nfqws](https://github.com/bol-van/zapret) strategy. Bundled fakes in `/zapret-fakebin/` (e.g. `quic_initial_www_google_com.bin`) and lists in `/zapret-lists/` (`ipset-all.txt`, `list-general.txt`, etc.). |
+| `ZAPRET2_CMDxx` | — | [Zapret2/nfqws2](https://github.com/bol-van/zapret2) strategy. |
+| `ZAPRET_PACKETSxx` | `12` | Number of first packets routed through the nfqws queue. `xx` overrides per-provider. Non-positive values = unlimited (always queued). |
+| `ZAPRET2_PACKETSxx` | `12` | Same for nfqws2. |
+
+### Proxy providers
+
+| ENV | Default | Description |
+|---|---|---|
+| `LINK0`, `LINK1`, … | — | Single proxy URL: `vless://`, `vmess://`, `ss://`, `trojan://`, `vpn://`. Each creates a [proxy-provider](https://wiki.metacubex.one/en/config/proxy-providers). |
+| `SUB_LINK0`, `SUB_LINK1`, … | — | Subscription URL (`http(s)://...`). One [proxy-provider](https://wiki.metacubex.one/en/config/proxy-providers) per sub, supports per-sub HWID via headers. |
+| `SUB_LINKxx_PROXY` | `DIRECT` | Which [proxy](https://wiki.metacubex.one/en/config/proxy-providers/#proxy) is used to fetch the subscription. Example: `SUB_LINK1_PROXY=proxies1`. |
+| `SUB_LINKxx_HEADERS` | — | Custom [HTTP headers](https://wiki.metacubex.one/en/config/proxy-providers/#header) for the sub request. Format: `key1=val1#key2=val2`. HWID example: `x-hwid=...#x-device-os=...#x-ver-os=...#x-device-model=...#user-agent=...`. |
+| `SUB_LINK_INTERVAL` | `3600` | Default [refresh interval](https://wiki.metacubex.one/en/config/proxy-providers/#interval) (s) for all subs. |
+| `SUB_LINKxx_INTERVAL` | inherits `SUB_LINK_INTERVAL` | Override interval per sub. |
+| `SOCKS0`, `SOCKS1`, … | — | SOCKS5 proxy. Format: `server=ip#port=1080#username=#password=#tls=#fingerprint=#skip-cert-verify=#udp=#ip-version=`. [Docs](https://wiki.metacubex.one/en/config/proxies/socks/). |
+| `XXX_DIALER_PROXY` | — | [Override dialer-proxy](https://wiki.metacubex.one/en/config/proxy-providers/#override) — route this provider's connections through another group. Example: `LINK1_DIALER_PROXY=YouTube`. |
+
+### Proxy groups
+
+`GROUP` declares the set of named groups. For each group `XXX` (uppercased), prefix-ENV variants below are honored.
+
+| ENV | Default | Description |
+|---|---|---|
+| `GROUP` | — | Comma-separated list of [proxy groups](https://wiki.metacubex.one/en/config/proxy-groups). `telegram,youtube,google,ai,geoblock` → groups `TELEGRAM, YOUTUBE, GOOGLE, AI, GEOBLOCK`. A group is created only if it has at least one resource (`XXX_*`) or `XXX_USE`. |
+| `XXX_TYPE` | `select` | [Group type](https://wiki.metacubex.one/en/config/proxy-groups/#type): `select` / `url-test` / `fallback` / `load-balance` / `relay`. |
+| `XXX_USE` | *all providers in order: LINKs, SUB_LINKs, WG/AWG, BYEDPI, DIRECT* | Subset of [providers](https://wiki.metacubex.one/en/config/proxy-providers) to include. Example: `YOUTUBE_USE=BYEDPI,LINK1`. |
+| `XXX_FILTER` | — | [Provider name filter regex](https://wiki.metacubex.one/en/config/proxy-groups/#filter). Example: `RU\|BYEDPI`. |
+| `XXX_EXCLUDE` | — | [Exclude regex](https://wiki.metacubex.one/en/config/proxy-groups/#exclude-filter). |
+| `XXX_EXCLUDE_TYPE` | — | [Exclude by type](https://wiki.metacubex.one/en/config/proxy-groups/#exclude-type). Example: `vmess\|direct`. |
+| `XXX_DNS` | — | DNS resolver for this group's domain rules. Example: `https://dns.google/dns-query#disable-qtype-65=true&disable-ipv6=true`. |
+| `XXX_ICON` | — | URL for the group's [icon](https://wiki.metacubex.one/en/config/proxy-groups/#icon). |
+| `XXX_HIDDEN` | `false` | Hide the group from mihomo's WebUI. |
+| `GROUP_URL` / `XXX_URL` | `https://www.gstatic.com/generate_204` | Per-group health-check URL when `HEALTHCHECK_PROVIDER=false` and `XXX_TYPE` is `url-test`/`fallback`/`load-balance`. |
+| `GROUP_URL_STATUS` / `XXX_URL_STATUS` | `204` | Expected status for the above. |
+| `GROUP_INTERVAL` / `XXX_INTERVAL` | `60` | Check interval (seconds). |
+| `GROUP_TOLERANCE` / `XXX_TOLERANCE` | `20` | [URL-test tolerance](https://wiki.metacubex.one/en/config/proxy-groups/url-test/#tolerance) in ms. |
+| `GROUP_STRATEGY` / `XXX_STRATEGY` | `consistent-hashing` | [Load-balance strategy](https://wiki.metacubex.one/en/config/proxy-groups/load-balance/#strategy). |
+
+### Routing rules (per group)
+
+Each entry creates an automatic [rule](https://wiki.metacubex.one/en/config/rules) targeting the group `XXX`. `XXX_GEOSITE/GEOIP/AS` also build a rule-set in `.mrs` format from the [meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat) repo.
+
+| ENV | Description |
+|---|---|
+| `XXX_GEOSITE` | Comma-separated [geosite](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/geo/geosite) names. Example: `GEOBLOCK_GEOSITE=intel,openai,xai`. |
+| `XXX_GEOIP` | Comma-separated [geoip](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/geo/geoip). Example: `GEOBLOCK_GEOIP=netflix`. |
+| `XXX_AS` | [AS](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/asn) numbers. Example: `TELEGRAM_AS=AS62041,AS59930,AS62014,AS211157,AS44907`. |
+| `XXX_DOMAIN` | Exact [DOMAIN](https://wiki.metacubex.one/en/config/rules/#domain) matches. |
+| `XXX_SUFFIX` | [DOMAIN-SUFFIX](https://wiki.metacubex.one/en/config/rules/#domain-suffix) matches. |
+| `XXX_KEYWORD` | [DOMAIN-KEYWORD](https://wiki.metacubex.one/en/config/rules/#domain-keyword) matches. |
+| `XXX_IPCIDR` | [IP-CIDR](https://wiki.metacubex.one/en/config/rules/#ip-cidr-ip-cidr6) ranges. |
+| `XXX_SRCIPCIDR` | [SRC-IP-CIDR](https://wiki.metacubex.one/en/config/rules/#src-ip-cidr) — route by source. Example: `SOCKS_SRCIPCIDR=192.168.88.37/32,192.168.88.65/32`. |
+| `XXX_PRIORITY` | Position of this group's rules in the `rules` list. Lower = earlier. Shared priority space with `RULESxx`. Default ≥1000. |
+
+### Custom rule-sets
+
+| ENV | Description |
+|---|---|
+| `RULE_SETxx_BASE64` | `<base64>#<name>` — `<base64>` is base64-encoded [payload](https://wiki.metacubex.one/en/config/rule-providers/#payload) list. Creates a rule-set + group `<name>` with priority ≥2000. The WebUI's *Rule-sets → New base64* builds these for you. |
+| `RULESxx` | Raw [mihomo rule](https://wiki.metacubex.one/en/config/rules/) where `xx` is the priority. Example: `RULES1=AND,((NETWORK,udp),(DST-PORT,443)),REJECT` drops QUIC first. |
+
+## 🛠 RouterOS install
+
+<details>
+<summary>📋 Auto-install snippet (paste into RouterOS terminal)</summary>
+
+```routeros
 :global currentVersion [/system resource get version];
 :global currentMinor [:pick $currentVersion ([:find $currentVersion "."] + 1) ([:find $currentVersion "."] + 3)];
 :global r
@@ -178,15 +270,37 @@ $s
 /system/script/environment/remove [find where ]
 }
 }
-
 ```
-### Docker compose example
 
-[Docker](https://github.com/Medium1992/mihomo-proxy-ros/blob/main/docker-compose.yml)
+</details>
 
-## 💖 Project Support
+During execution the script asks for:
 
-If you find this project useful, you can support it via donation:  
-**USDT(TRC20): TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ**
+- one proxy URL (`vless://`, `vmess://`, `ss://`, `trojan://`)
+- optional subscription URL (`http(s)://...`)
 
+…then sets up router config, mangle + routing, container install, and the initial domain pool.
+
+After install, fine-tune everything either via the **WebUI on `:80`** or via the existing helper repos:
+
+- [DNS_FWD](https://github.com/Medium1992/MikroTik_DNS_FWD) — DNS forwarding management
+- [IPList](https://github.com/Medium1992/MikroTik_IPlist) — IP-list helpers
+
+## 🐳 Docker Compose
+
+See [`docker-compose.yml`](./docker-compose.yml) for a standalone example.
+
+## 🤝 Contributing
+
+PRs welcome — read the [Code of Conduct](./CODE_OF_CONDUCT.md) and [CONTRIBUTING.md](./CONTRIBUTING.md) first.
+
+## 🔐 Security
+
+Report sensitive issues per [SECURITY.md](./SECURITY.md).
+
+## 💖 Support the project
+
+If this saved you a weekend of fighting MikroTik scripts:
+
+- **USDT (TRC20):** `TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ`
 
