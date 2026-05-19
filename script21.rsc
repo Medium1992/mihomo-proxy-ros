@@ -20,7 +20,7 @@
 /container/config/set tmpdir=ContainerTemp/
 :set flagTempContainer true
 }
-:if ($TempContainer="yes")do={
+:if ($TempContainer="no") do={
 :set flagTempContainer true
 }
 }
