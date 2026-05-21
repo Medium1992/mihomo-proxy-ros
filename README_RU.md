@@ -184,6 +184,11 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 | `SUB_LINKxx_HEADERS` | — | Кастомные [HTTP-заголовки](https://wiki.metacubex.one/ru/config/proxy-providers/#header) для запроса подписки. Формат: `key1=val1#key2=val2`. Пример с HWID: `x-hwid=...#x-device-os=...#x-ver-os=...#x-device-model=...#user-agent=...`. |
 | `SUB_LINK_INTERVAL` | `3600` | Дефолтный [интервал обновления](https://wiki.metacubex.one/ru/config/proxy-providers/#interval) (сек) для всех подписок. |
 | `SUB_LINKxx_INTERVAL` | наследует `SUB_LINK_INTERVAL` | Переопределение per-подписка. |
+| `SUB_LINKxx_FILTER` | — | Provider-level [filter](https://wiki.metacubex.one/ru/config/proxy-providers/#filter) — regex по именам узлов внутри подписки. Несколько шаблонов через `\|`. |
+| `SUB_LINKxx_EXCLUDE_FILTER` | — | Provider-level [exclude-filter](https://wiki.metacubex.one/ru/config/proxy-providers/#exclude-filter) — regex исключения. |
+| `SUB_LINKxx_EXCLUDE_TYPE` | — | Provider-level [exclude-type](https://wiki.metacubex.one/ru/config/proxy-providers/#exclude-type) — список [Adapter Type](https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45) (регистр не важен) через `\|`. Пример: `vmess\|direct`. |
+| `SUB_LINKxx_ADDITIONAL_PREFIX` | — | Идёт в `override.`[`additional-prefix`](https://wiki.metacubex.one/ru/config/proxy-providers/#overrideadditional-prefix) — фиксированный префикс к каждому имени узла. |
+| `SUB_LINKxx_ADDITIONAL_SUFFIX` | — | Идёт в `override.`[`additional-suffix`](https://wiki.metacubex.one/ru/config/proxy-providers/#overrideadditional-suffix) — фиксированный суффикс к каждому имени узла. |
 | `SOCKS0`, `SOCKS1`, … | — | SOCKS5 прокси. Формат: `server=ip#port=1080#username=#password=#tls=#fingerprint=#skip-cert-verify=#udp=#ip-version=`. [Docs](https://wiki.metacubex.one/ru/config/proxies/socks/). |
 | `XXX_DIALER_PROXY` | — | [Override dialer-proxy](https://wiki.metacubex.one/ru/config/proxy-providers/#override) — пускать соединения этого провайдера через другую группу. Пример: `LINK1_DIALER_PROXY=YouTube`. |
 

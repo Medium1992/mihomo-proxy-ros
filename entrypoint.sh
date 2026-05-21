@@ -2365,15 +2365,17 @@ $prio|$rule"
 
 emit_provider_override() {
   local name="$1"
-  local dialer
+  local dialer add_prefix add_suffix
 
   dialer=$(printenv "${name}_DIALER_PROXY" 2>/dev/null || true)
+  add_prefix=$(printenv "${name}_ADDITIONAL_PREFIX" 2>/dev/null || true)
+  add_suffix=$(printenv "${name}_ADDITIONAL_SUFFIX" 2>/dev/null || true)
 
-  if [ -n "$dialer" ]; then
-    cat <<EOF
-    override:
-      dialer-proxy: $dialer
-EOF
+  if [ -n "$dialer" ] || [ -n "$add_prefix" ] || [ -n "$add_suffix" ]; then
+    echo "    override:"
+    [ -n "$dialer" ]     && echo "      dialer-proxy: $dialer"
+    [ -n "$add_prefix" ] && printf '      additional-prefix: "%s"\n' "$(echo "$add_prefix" | sed 's/"/\\"/g')"
+    [ -n "$add_suffix" ] && printf '      additional-suffix: "%s"\n' "$(echo "$add_suffix" | sed 's/"/\\"/g')"
   fi
 }
 
@@ -2662,6 +2664,14 @@ EOF
     fi
     cat >> "$CONFIG_YAML" <<EOF
 EOF
+    # Provider-level filter/exclude (mihomo proxy-providers): применяются к
+    # узлам внутри подписки. exclude-type — список типов через `|`.
+    sub_filter=$(printenv "${name}_FILTER" 2>/dev/null || true)
+    sub_excl=$(printenv "${name}_EXCLUDE_FILTER" 2>/dev/null || true)
+    sub_excl_type=$(printenv "${name}_EXCLUDE_TYPE" 2>/dev/null || true)
+    [ -n "$sub_filter" ]    && printf '    filter: "%s"\n'         "$(echo "$sub_filter"    | sed 's/"/\\"/g')" >> "$CONFIG_YAML"
+    [ -n "$sub_excl" ]      && printf '    exclude-filter: "%s"\n' "$(echo "$sub_excl"      | sed 's/"/\\"/g')" >> "$CONFIG_YAML"
+    [ -n "$sub_excl_type" ] && printf '    exclude-type: "%s"\n'   "$(echo "$sub_excl_type" | sed 's/"/\\"/g')" >> "$CONFIG_YAML"
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
       cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)

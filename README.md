@@ -184,6 +184,11 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 | `SUB_LINKxx_HEADERS` | — | Custom [HTTP headers](https://wiki.metacubex.one/en/config/proxy-providers/#header) for the sub request. Format: `key1=val1#key2=val2`. HWID example: `x-hwid=...#x-device-os=...#x-ver-os=...#x-device-model=...#user-agent=...`. |
 | `SUB_LINK_INTERVAL` | `3600` | Default [refresh interval](https://wiki.metacubex.one/en/config/proxy-providers/#interval) (s) for all subs. |
 | `SUB_LINKxx_INTERVAL` | inherits `SUB_LINK_INTERVAL` | Override interval per sub. |
+| `SUB_LINKxx_FILTER` | — | Provider-level [filter](https://wiki.metacubex.one/en/config/proxy-providers/#filter) regex — keep only nodes whose name matches. Multiple patterns separated by `\|`. |
+| `SUB_LINKxx_EXCLUDE_FILTER` | — | Provider-level [exclude-filter](https://wiki.metacubex.one/en/config/proxy-providers/#exclude-filter) regex. |
+| `SUB_LINKxx_EXCLUDE_TYPE` | — | Provider-level [exclude-type](https://wiki.metacubex.one/en/config/proxy-providers/#exclude-type) — list of [Adapter Type](https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45) (case-insensitive) via `\|`. Example: `vmess\|direct`. |
+| `SUB_LINKxx_ADDITIONAL_PREFIX` | — | Goes into `override.`[`additional-prefix`](https://wiki.metacubex.one/en/config/proxy-providers/#overrideadditional-prefix) — fixed prefix for every node name. |
+| `SUB_LINKxx_ADDITIONAL_SUFFIX` | — | Goes into `override.`[`additional-suffix`](https://wiki.metacubex.one/en/config/proxy-providers/#overrideadditional-suffix) — fixed suffix for every node name. |
 | `SOCKS0`, `SOCKS1`, … | — | SOCKS5 proxy. Format: `server=ip#port=1080#username=#password=#tls=#fingerprint=#skip-cert-verify=#udp=#ip-version=`. [Docs](https://wiki.metacubex.one/en/config/proxies/socks/). |
 | `XXX_DIALER_PROXY` | — | [Override dialer-proxy](https://wiki.metacubex.one/en/config/proxy-providers/#override) — route this provider's connections through another group. Example: `LINK1_DIALER_PROXY=YouTube`. |
 

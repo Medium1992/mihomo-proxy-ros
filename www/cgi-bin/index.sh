@@ -584,7 +584,7 @@ providers_page() {
     cat <<EOF
 <div class="env-row env-row-stack link-row" data-index="$idx">
   <label><span>$name</span><input name="$name" value="$val" placeholder="vless://..."></label>
-  <label><span>${name}_DIALER_PROXY</span><input name="${name}_DIALER_PROXY" value="$(env_attr "${name}_DIALER_PROXY" "")" placeholder="GLOBAL"></label>
+  <label class="field-validated" data-validate="proxy_name"><span>${name}_DIALER_PROXY</span><input name="${name}_DIALER_PROXY" value="$(env_attr "${name}_DIALER_PROXY" "")" placeholder="GLOBAL"></label>
   <label><span>${name}_AMNEZIA_COUNTRY</span><input name="${name}_AMNEZIA_COUNTRY" value="$(env_attr "${name}_AMNEZIA_COUNTRY" "")" placeholder="nl"></label>
   <button type="button" onclick="removeEnvRow(this)">Удалить</button>
 </div>
@@ -610,7 +610,14 @@ EOF
   <label><span>$name</span><input name="$name" value="$val" placeholder="https://subscription"></label>
   <label><span>${name}_INTERVAL</span><input type="number" name="${name}_INTERVAL" value="$(env_attr "${name}_INTERVAL" "")" placeholder="3600"></label>
   <label><span>${name}_PROXY</span><input name="${name}_PROXY" value="$(env_attr "${name}_PROXY" "")" placeholder="DIRECT"></label>
-  <label><span>${name}_DIALER_PROXY</span><input name="${name}_DIALER_PROXY" value="$(env_attr "${name}_DIALER_PROXY" "")" placeholder="GLOBAL"></label>
+  <label class="field-validated" data-validate="proxy_name"><span>${name}_DIALER_PROXY</span><input name="${name}_DIALER_PROXY" value="$(env_attr "${name}_DIALER_PROXY" "")" placeholder="GLOBAL"></label>
+  <div class="sub-link-extras">
+    <label><span>${name}_FILTER</span><input name="${name}_FILTER" value="$(env_attr "${name}_FILTER" "")" placeholder="(?i)hk|hongkong"></label>
+    <label><span>${name}_EXCLUDE_FILTER</span><input name="${name}_EXCLUDE_FILTER" value="$(env_attr "${name}_EXCLUDE_FILTER" "")" placeholder="(?i)test"></label>
+    <label class="field-validated" data-validate="exclude_type"><span>${name}_EXCLUDE_TYPE</span><input name="${name}_EXCLUDE_TYPE" value="$(env_attr "${name}_EXCLUDE_TYPE" "")" placeholder="vmess|direct"></label>
+    <label><span>${name}_ADDITIONAL_PREFIX</span><input name="${name}_ADDITIONAL_PREFIX" value="$(env_attr "${name}_ADDITIONAL_PREFIX" "")" placeholder="${name} | "></label>
+    <label><span>${name}_ADDITIONAL_SUFFIX</span><input name="${name}_ADDITIONAL_SUFFIX" value="$(env_attr "${name}_ADDITIONAL_SUFFIX" "")" placeholder=" | ${name}"></label>
+  </div>
   <div class="headers-editor">
     <span>${name}_HEADERS</span>
     <input type="hidden" class="sub-link-headers-value" name="${name}_HEADERS" value="$(env_attr "${name}_HEADERS" "")">
@@ -628,6 +635,11 @@ EOF
   <div><b>SUB_LINKxx_DIALER_PROXY</b><span>Прокидывается в <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxies/#dialer-proxy" target="_blank" rel="noopener">dialer-proxy</a> созданных proxy.</span></div>
   <div><b>SUB_LINKxx_INTERVAL</b><span>Интервал обновления подписки, соответствует provider <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#interval" target="_blank" rel="noopener">interval</a>.</span></div>
   <div><b>SUB_LINKxx_HEADERS</b><span>HTTP <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#header" target="_blank" rel="noopener">headers</a>. Редактор собирает env в формат <code>key=value#key2=value2</code>.</span></div>
+  <div><b>SUB_LINKxx_FILTER</b><span>Provider-level <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#filter" target="_blank" rel="noopener">filter</a> — regex по именам узлов внутри подписки, несколько через <code>|</code>.</span></div>
+  <div><b>SUB_LINKxx_EXCLUDE_FILTER</b><span>Provider-level <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#exclude-filter" target="_blank" rel="noopener">exclude-filter</a> — regex исключения.</span></div>
+  <div><b>SUB_LINKxx_EXCLUDE_TYPE</b><span>Provider-level <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#exclude-type" target="_blank" rel="noopener">exclude-type</a> — список <a class="doc-link" href="https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45" target="_blank" rel="noopener">Adapter Type</a>'ов через <code>|</code>, регистр не важен.</span></div>
+  <div><b>SUB_LINKxx_ADDITIONAL_PREFIX</b><span>Идёт в <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#overrideadditional-prefix" target="_blank" rel="noopener">override.additional-prefix</a> — фиксированный префикс к имени каждого узла.</span></div>
+  <div><b>SUB_LINKxx_ADDITIONAL_SUFFIX</b><span>Идёт в <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#overrideadditional-suffix" target="_blank" rel="noopener">override.additional-suffix</a> — фиксированный суффикс к имени каждого узла.</span></div>
 </div>
 EOF
   section_end
@@ -967,7 +979,7 @@ EOF
   field GROUP_TOLERANCE "GROUP_TOLERANCE" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#tolerance\" target=\"_blank\" rel=\"noopener\">Tolerance</a> для url-test." "20" number "20"
   field GROUP_FILTER "GROUP_FILTER" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#filter\" target=\"_blank\" rel=\"noopener\">filter</a> по умолчанию." "" text ""
   field GROUP_EXCLUDE "GROUP_EXCLUDE" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter\" target=\"_blank\" rel=\"noopener\">exclude-filter</a> по умолчанию." "" text ""
-  field GROUP_EXCLUDE_TYPE "GROUP_EXCLUDE_TYPE" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type\" target=\"_blank\" rel=\"noopener\">exclude-type</a> по умолчанию. Пример: <code>vmess|direct</code>." "" text ""
+  printf '<label class="field field-validated" data-env="GROUP_EXCLUDE_TYPE" data-validate="exclude_type"><span><b>GROUP_EXCLUDE_TYPE</b><em>GROUP_EXCLUDE_TYPE</em></span><input type="text" name="GROUP_EXCLUDE_TYPE" value="%s" placeholder="vmess|direct" data-default=""><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type" target="_blank" rel="noopener">exclude-type</a> по умолчанию через <code>|</code>. <a class="doc-link" href="https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45" target="_blank" rel="noopener">Adapter Type</a>, регистр не важен. Пример: <code>vmess|direct</code>.</small><i>%s</i></label>\n' "$(env_attr GROUP_EXCLUDE_TYPE "")" "$(is_set GROUP_EXCLUDE_TYPE)"
   echo '</div></article>'
 }
 
@@ -1022,7 +1034,7 @@ EOF
   field "${prefix}_TOLERANCE" "Tolerance" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/url-test/#tolerance\" target=\"_blank\" rel=\"noopener\">Tolerance</a> для url-test в мс. Пусто → наследует <code>GROUP_TOLERANCE</code>." "" number ""
   field "${prefix}_FILTER" "Filter" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#filter\" target=\"_blank\" rel=\"noopener\">filter</a> по именам прокси." "" text ""
   field "${prefix}_EXCLUDE" "Exclude" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter\" target=\"_blank\" rel=\"noopener\">exclude-filter</a>." "" text ""
-  field "${prefix}_EXCLUDE_TYPE" "Exclude type" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type\" target=\"_blank\" rel=\"noopener\">exclude-type</a> — исключить прокси указанных типов. Пример: <code>vmess|direct</code>." "" text ""
+  printf '<label class="field field-validated" data-env="%s_EXCLUDE_TYPE" data-validate="exclude_type"><span><b>Exclude type</b><em>%s_EXCLUDE_TYPE</em></span><input type="text" name="%s_EXCLUDE_TYPE" value="%s" placeholder="vmess|direct" data-default=""><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type" target="_blank" rel="noopener">exclude-type</a> — исключить прокси указанных типов, разделитель <code>|</code>. <a class="doc-link" href="https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45" target="_blank" rel="noopener">Adapter Type</a>, регистр не важен. Пример: <code>vmess|direct</code>.</small><i>%s</i></label>\n' "$prefix" "$prefix" "$prefix" "$(env_attr "${prefix}_EXCLUDE_TYPE" "")" "$(is_set "${prefix}_EXCLUDE_TYPE")"
   field "${prefix}_ICON" "Icon" "URL <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#icon\" target=\"_blank\" rel=\"noopener\">иконки</a> группы." "" text ""
   printf '<label class="field" data-env="%s_HIDDEN"><span><b>Hidden</b><em>%s_HIDDEN</em></span><select name="%s_HIDDEN" data-default=""><option value="" %s>— показать (default) —</option><option value="true" %s>true (скрыть из веб-панели)</option><option value="false" %s>false (показать)</option></select><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#hidden" target="_blank" rel="noopener">hidden</a> — скрыть/показать группу в веб-панели mihomo.</small><i>%s</i></label>\n' "$prefix" "$prefix" "$prefix" \
     "$( [ -z "$(env_default "${prefix}_HIDDEN" "")" ] && echo selected )" \
@@ -1068,6 +1080,18 @@ groups_page() {
       seed_mounted="$seed_mounted \"$(printf '%s' "$name" | h)\","
     done
   fi
+  # Interface DIRECT-providers: entrypoint enumerates up'ed ethernet ifaces
+  # (см. entrypoint.sh "all interfaces") и пишет $RUNTIME_DIR/$iface.yaml с
+  # `type: direct, interface-name: $iface`. Имя провайдера = имя интерфейса.
+  # Без этого блока валидатор _USE ругался на ether-провайдеры как на
+  # несуществующие.
+  for iface in $(ip -o link show up 2>/dev/null | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo") print $2}'); do
+    [ -n "$iface" ] || continue
+    # entrypoint скипает интерфейс без kernel-route — yaml-провайдер не создаётся.
+    route_line="$(ip route list dev "$iface" proto kernel scope link 2>/dev/null | head -n1)"
+    [ -z "$route_line" ] && continue
+    seed_mounted="$seed_mounted \"$(printf '%s' "$iface" | h)\","
+  done
   seed_envs=""
   for prov in $(env | grep -E '^(LINK[0-9]*|SUB_LINK[0-9]+|SOCKS[0-9]+)=' | cut -d= -f1 | sort -V); do
     seed_envs="$seed_envs \"$(printf '%s' "$prov" | h)\","

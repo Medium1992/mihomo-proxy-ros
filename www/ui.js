@@ -291,7 +291,7 @@ function addRow(containerId, prefix, startAtOne) {
   } else if (prefix === "LINK") {
     div.innerHTML =
       `<label><span>${displayKey}</span><input name="${key}" placeholder="vless:// / vmess:// / ss:// / trojan:// / vpn://"></label>` +
-      `<label><span>${displayKey}_DIALER_PROXY</span><input name="${key}_DIALER_PROXY" placeholder="GLOBAL"></label>` +
+      `<label class="field-validated" data-validate="proxy_name"><span>${displayKey}_DIALER_PROXY</span><input name="${key}_DIALER_PROXY" placeholder="GLOBAL"></label>` +
       `<label><span>${displayKey}_AMNEZIA_COUNTRY</span><input name="${key}_AMNEZIA_COUNTRY" placeholder="nl"></label>` +
       `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   } else if (prefix === "SUB_LINK") {
@@ -299,7 +299,14 @@ function addRow(containerId, prefix, startAtOne) {
       `<label><span>${displayKey}</span><input name="${key}" placeholder="https://subscription"></label>` +
       `<label><span>${displayKey}_INTERVAL</span><input type="number" name="${key}_INTERVAL" placeholder="3600"></label>` +
       `<label><span>${displayKey}_PROXY</span><input name="${key}_PROXY" placeholder="DIRECT"></label>` +
-      `<label><span>${displayKey}_DIALER_PROXY</span><input name="${key}_DIALER_PROXY" placeholder="GLOBAL"></label>` +
+      `<label class="field-validated" data-validate="proxy_name"><span>${displayKey}_DIALER_PROXY</span><input name="${key}_DIALER_PROXY" placeholder="GLOBAL"></label>` +
+      `<div class="sub-link-extras">` +
+        `<label><span>${displayKey}_FILTER</span><input name="${key}_FILTER" placeholder="(?i)hk|hongkong"></label>` +
+        `<label><span>${displayKey}_EXCLUDE_FILTER</span><input name="${key}_EXCLUDE_FILTER" placeholder="(?i)test"></label>` +
+        `<label class="field-validated" data-validate="exclude_type"><span>${displayKey}_EXCLUDE_TYPE</span><input name="${key}_EXCLUDE_TYPE" placeholder="vmess|direct"></label>` +
+        `<label><span>${displayKey}_ADDITIONAL_PREFIX</span><input name="${key}_ADDITIONAL_PREFIX" placeholder="${displayKey} | "></label>` +
+        `<label><span>${displayKey}_ADDITIONAL_SUFFIX</span><input name="${key}_ADDITIONAL_SUFFIX" placeholder=" | ${displayKey}"></label>` +
+      `</div>` +
       `<div class="headers-editor">` +
         `<span>${displayKey}_HEADERS</span>` +
         `<input type="hidden" class="sub-link-headers-value" name="${key}_HEADERS" value="">` +
@@ -320,6 +327,7 @@ function addRow(containerId, prefix, startAtOne) {
   wireFieldEvents(div);
   ensureIndexedRowControls(div);
   if (prefix === "SUB_LINK" && typeof initHeadersEditors === "function") initHeadersEditors(div);
+  if (typeof wirePaneValidators === "function") wirePaneValidators(div);
   sortIndexedRows(wrap);
   if (typeof refreshAllBadges === "function") refreshAllBadges();
   if (typeof renderRulesPreview === 'function') renderRulesPreview();
@@ -689,7 +697,7 @@ function restoreMissingIndexedRows() {
     } else if (prefix === "LINK") {
       div.innerHTML =
         `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="vless://..."></label>` +
-        `<label><span>${displayName}_DIALER_PROXY</span><input name="${envName}_DIALER_PROXY" value="${escapeAttr(localStorage.getItem(envKey(envName + "_DIALER_PROXY")) || "")}" placeholder="GLOBAL"></label>` +
+        `<label class="field-validated" data-validate="proxy_name"><span>${displayName}_DIALER_PROXY</span><input name="${envName}_DIALER_PROXY" value="${escapeAttr(localStorage.getItem(envKey(envName + "_DIALER_PROXY")) || "")}" placeholder="GLOBAL"></label>` +
         `<label><span>${displayName}_AMNEZIA_COUNTRY</span><input name="${envName}_AMNEZIA_COUNTRY" value="${escapeAttr(localStorage.getItem(envKey(envName + "_AMNEZIA_COUNTRY")) || "")}" placeholder="nl"></label>` +
         `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
     } else if (prefix === "SUB_LINK") {
@@ -697,7 +705,14 @@ function restoreMissingIndexedRows() {
         `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="https://subscription"></label>` +
         `<label><span>${displayName}_INTERVAL</span><input type="number" name="${envName}_INTERVAL" value="${escapeAttr(localStorage.getItem(envKey(envName + "_INTERVAL")) || "")}" placeholder="3600"></label>` +
         `<label><span>${displayName}_PROXY</span><input name="${envName}_PROXY" value="${escapeAttr(localStorage.getItem(envKey(envName + "_PROXY")) || "")}" placeholder="DIRECT"></label>` +
-        `<label><span>${displayName}_DIALER_PROXY</span><input name="${envName}_DIALER_PROXY" value="${escapeAttr(localStorage.getItem(envKey(envName + "_DIALER_PROXY")) || "")}" placeholder="GLOBAL"></label>` +
+        `<label class="field-validated" data-validate="proxy_name"><span>${displayName}_DIALER_PROXY</span><input name="${envName}_DIALER_PROXY" value="${escapeAttr(localStorage.getItem(envKey(envName + "_DIALER_PROXY")) || "")}" placeholder="GLOBAL"></label>` +
+        `<div class="sub-link-extras">` +
+          `<label><span>${displayName}_FILTER</span><input name="${envName}_FILTER" value="${escapeAttr(localStorage.getItem(envKey(envName + "_FILTER")) || "")}" placeholder="(?i)hk|hongkong"></label>` +
+          `<label><span>${displayName}_EXCLUDE_FILTER</span><input name="${envName}_EXCLUDE_FILTER" value="${escapeAttr(localStorage.getItem(envKey(envName + "_EXCLUDE_FILTER")) || "")}" placeholder="(?i)test"></label>` +
+          `<label class="field-validated" data-validate="exclude_type"><span>${displayName}_EXCLUDE_TYPE</span><input name="${envName}_EXCLUDE_TYPE" value="${escapeAttr(localStorage.getItem(envKey(envName + "_EXCLUDE_TYPE")) || "")}" placeholder="vmess|direct"></label>` +
+          `<label><span>${displayName}_ADDITIONAL_PREFIX</span><input name="${envName}_ADDITIONAL_PREFIX" value="${escapeAttr(localStorage.getItem(envKey(envName + "_ADDITIONAL_PREFIX")) || "")}" placeholder="${displayName} | "></label>` +
+          `<label><span>${displayName}_ADDITIONAL_SUFFIX</span><input name="${envName}_ADDITIONAL_SUFFIX" value="${escapeAttr(localStorage.getItem(envKey(envName + "_ADDITIONAL_SUFFIX")) || "")}" placeholder=" | ${displayName}"></label>` +
+        `</div>` +
         `<div class="headers-editor">` +
           `<span>${displayName}_HEADERS</span>` +
           `<input type="hidden" class="sub-link-headers-value" name="${envName}_HEADERS" value="${escapeAttr(localStorage.getItem(envKey(envName + "_HEADERS")) || "")}">` +
@@ -726,6 +741,7 @@ function restoreMissingIndexedRows() {
     wireFieldEvents(div);
     ensureIndexedRowControls(div);
     if (prefix === "SUB_LINK" && typeof initHeadersEditors === "function") initHeadersEditors(div);
+    if (typeof wirePaneValidators === "function") wirePaneValidators(div);
   });
   // Restored rows are appended in localStorage iteration order. Re-sort every
   // wrap we touched so #0 isn't visually orphaned at the bottom.
@@ -1854,6 +1870,12 @@ function groupFieldMarkup(prefix, suffix, label, hint, placeholder, type, value)
   return `<label class="field" data-env="${name}"><span><b>${label}</b><em>${name}</em></span><input type="${type || "text"}" name="${name}" value="${escapeAttr(value)}" placeholder="${escapeAttr(placeholder || "")}" data-default=""><small>${hint || ""}</small><i>new</i></label>`;
 }
 
+// Validated-вариант (для USE / PROXIES / EXCLUDE_TYPE — типы валидируются JS).
+function groupValidatedFieldMarkup(prefix, suffix, validateKind, label, hint, placeholder) {
+  const name = prefix + "_" + suffix;
+  return `<label class="field field-validated" data-env="${name}" data-validate="${validateKind}"><span><b>${label}</b><em>${name}</em></span><input type="text" name="${name}" value="" placeholder="${escapeAttr(placeholder || "")}" data-default=""><small>${hint || ""}</small><i>new</i></label>`;
+}
+
 function groupTypeHint() {
   return `Тип <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#type" target="_blank" rel="noopener">proxy-groups type</a>: select/url-test/load-balance/fallback/relay.`;
 }
@@ -1887,15 +1909,23 @@ function addGroupPane(name) {
       <label class="field"><span><b>Group name</b><em>GROUP</em></span><input class="group-name-input" value="${escapeAttr(clean)}" data-original="${escapeAttr(clean)}"><small>Имя группы и prefix env.</small><i>${prefix}</i></label>
     </div>
     <div class="grid">
+      ${groupValidatedFieldMarkup(prefix, "PROXIES", "proxies", "Proxies", `Явные <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> через запятую: имена других прокси-групп (регистрозависимо) либо служебные <code>DIRECT</code>, <code>REJECT</code>, <code>REJECT-DROP</code>, <code>PASS</code>.`, "DIRECT,REJECT,YOUTUBE")}
+      ${groupValidatedFieldMarkup(prefix, "USE", "use", "Use", `Список <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">providers</a> через запятую или <code>none</code>. Регистрозависимо.`, "LINK1,SUB_LINK1,BYEDPI")}
       <label class="field" data-env="${prefix}_TYPE"><span><b>Type</b><em>${prefix}_TYPE</em></span><select name="${prefix}_TYPE" data-default="select"><option value="select">select</option><option value="url-test">url-test</option><option value="load-balance">load-balance</option><option value="fallback">fallback</option><option value="relay">relay</option></select><small>${groupTypeHint()}</small><i>new</i></label>
-      ${groupFieldMarkup(prefix, "USE", "Use", `Список <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">providers</a> через запятую или none.`, "", "text", "")}
-      ${groupFieldMarkup(prefix, "PROXIES", "Proxies", `Явные <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> через запятую.`, "", "text", "")}
+      ${groupFieldMarkup(prefix, "INTERVAL", "Interval", `<a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#interval" target="_blank" rel="noopener">Интервал</a> проверки в секундах. Пусто → наследует <code>GROUP_INTERVAL</code>.`, "", "number", "")}
+      ${groupFieldMarkup(prefix, "URL", "URL", `URL <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#url" target="_blank" rel="noopener">health-check</a>. Пусто → наследует <code>GROUP_URL</code>.`, "", "text", "")}
+      ${groupFieldMarkup(prefix, "URL_STATUS", "URL status", `Ожидаемый <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status" target="_blank" rel="noopener">expected-status</a>. Пусто → наследует <code>GROUP_URL_STATUS</code>.`, "", "number", "")}
+      <label class="field" data-env="${prefix}_STRATEGY"><span><b>Strategy</b><em>${prefix}_STRATEGY</em></span><select name="${prefix}_STRATEGY" data-default=""><option value="" selected>— inherit GROUP_STRATEGY —</option><option value="round-robin">round-robin</option><option value="consistent-hashing">consistent-hashing</option><option value="sticky-sessions">sticky-sessions</option></select><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/load-balance/#strategy" target="_blank" rel="noopener">Стратегия</a> для load-balance. Пусто → наследует <code>GROUP_STRATEGY</code>.</small><i>new</i></label>
+      ${groupFieldMarkup(prefix, "TOLERANCE", "Tolerance", `<a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/url-test/#tolerance" target="_blank" rel="noopener">Tolerance</a> для url-test в мс. Пусто → наследует <code>GROUP_TOLERANCE</code>.`, "", "number", "")}
       ${groupFieldMarkup(prefix, "FILTER", "Filter", `Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#filter" target="_blank" rel="noopener">filter</a> по именам прокси.`, "", "text", "")}
       ${groupFieldMarkup(prefix, "EXCLUDE", "Exclude", `Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter" target="_blank" rel="noopener">exclude-filter</a>.`, "", "text", "")}
-      ${groupFieldMarkup(prefix, "PRIORITY", "Priority", "Чем меньше, тем выше в rules.", "", "number", "")}
+      ${groupValidatedFieldMarkup(prefix, "EXCLUDE_TYPE", "exclude_type", "Exclude type", `<a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type" target="_blank" rel="noopener">exclude-type</a> — исключить прокси указанных типов, разделитель <code>|</code>. <a class="doc-link" href="https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45" target="_blank" rel="noopener">Adapter Type</a>, регистр не важен.`, "vmess|direct")}
+      ${groupFieldMarkup(prefix, "ICON", "Icon", `URL <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#icon" target="_blank" rel="noopener">иконки</a> группы.`, "", "text", "")}
+      <label class="field" data-env="${prefix}_HIDDEN"><span><b>Hidden</b><em>${prefix}_HIDDEN</em></span><select name="${prefix}_HIDDEN" data-default=""><option value="" selected>— показать (default) —</option><option value="true">true (скрыть из веб-панели)</option><option value="false">false (показать)</option></select><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#hidden" target="_blank" rel="noopener">hidden</a> — скрыть/показать группу в веб-панели mihomo.</small><i>new</i></label>
       ${groupFieldMarkup(prefix, "GEOSITE", "Geosite", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">GEOSITE</a> списком через запятую.`, "youtube,category-ru", "text", "")}
       ${groupFieldMarkup(prefix, "GEOIP", "Geoip", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">GEOIP</a> списком через запятую.`, "telegram,discord", "text", "")}
       ${groupFieldMarkup(prefix, "AS", "ASN", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">IP-ASN</a>: AS123,AS456.`, "AS15169", "text", "")}
+      ${groupFieldMarkup(prefix, "PRIORITY", "Priority", "Чем меньше, тем выше в rules.", "", "number", "")}
       ${groupFieldMarkup(prefix, "DOMAIN", "Domain", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN</a> через запятую.`, "example.com", "text", "")}
       ${groupFieldMarkup(prefix, "SUFFIX", "Suffix", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN-SUFFIX</a> через запятую.`, "example.com", "text", "")}
       ${groupFieldMarkup(prefix, "KEYWORD", "Keyword", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN-KEYWORD</a> через запятую.`, "google", "text", "")}
@@ -1907,7 +1937,36 @@ function addGroupPane(name) {
   panes.appendChild(pane);
   wireFieldEvents(pane);
   wireGroupRename(pane);
+  wirePaneValidators(pane);
   switchGroupPane(clean);
+  // Новая группа сразу должна засветиться в бейджах (модификация GROUP env
+  // + добавленные originals). rememberField в setGroupListValue пишет в
+  // localStorage без input-события, поэтому form-bubble listener мимо.
+  if (typeof refreshAllBadges === "function") refreshAllBadges();
+}
+
+// Подцепляет валидаторы (use / proxies / exclude_type) к динамически созданной
+// панели — initFieldValidators при загрузке страницы трогает только серверные
+// поля, новые группы создаются позже.
+function wirePaneValidators(pane) {
+  const fns = {
+    use: validateUseInput,
+    proxies: validateProxiesInput,
+    exclude_type: validateExcludeTypeInput,
+    proxy_name: validateProxyNameInput,
+  };
+  pane.querySelectorAll(".field-validated").forEach((box) => {
+    const kind = box.dataset.validate;
+    const fn = fns[kind];
+    if (!fn) return;
+    const input = box.querySelector("input, textarea");
+    if (!input || input.dataset.validatorWired === "true") return;
+    input.dataset.validatorWired = "true";
+    const run = () => fn(input);
+    input.addEventListener("input", run);
+    input.addEventListener("change", run);
+    run();
+  });
 }
 
 function removeGroupPane(name) {
@@ -1972,6 +2031,11 @@ function wireGroupRename(pane) {
 
 function initGroupEditor() {
   document.querySelectorAll(".group-pane").forEach(wireGroupRename);
+  // Восстановление групп, существующих только в draft'е GROUP: сервер их
+  // не рендерит до Применить, но в localStorage GROUP=... уже содержит имя,
+  // плюс могут быть драфты <prefix>_USE/_PROXIES/... — без этого блока
+  // новая группа исчезает из колонки при переходе на другую страницу и обратно.
+  restoreDraftGroups();
   demoteOrPromoteRuleSetGroups();
   document.querySelectorAll('.group-pane[data-source="ruleset"] input[name], .group-pane[data-source="ruleset"] textarea[name], .group-pane[data-source="ruleset"] select[name]').forEach((el) => {
     el.addEventListener("input", demoteOrPromoteRuleSetGroups);
@@ -1979,6 +2043,18 @@ function initGroupEditor() {
   });
   const first = document.querySelector(".group-list button[data-group]");
   if (first) switchGroupPane(first.dataset.group);
+}
+
+function restoreDraftGroups() {
+  if (!document.getElementById("groupPanes")) return;
+  const existing = new Set([...document.querySelectorAll(".group-pane")].map((p) => p.dataset.group));
+  // groupListValue читает текущее значение input[name=GROUP] — wireFieldEvents
+  // уже применил draft из localStorage к этому полю на момент initGroupEditor.
+  groupListValue().forEach((name) => {
+    if (!name || existing.has(name)) return;
+    if (name === "DEFAULT" || name === "GLOBAL" || name === "DNS") return;
+    addGroupPane(name);
+  });
 }
 
 function addDnsPolicyRow(match, server, params) {
@@ -2534,6 +2610,17 @@ function knownGroups() {
 
 const PROXIES_SPECIALS = new Set(["DIRECT", "REJECT", "REJECT-DROP", "PASS"]);
 
+// Adapter Type из mihomo/constant/adapters.go (Direct..Ssh).
+// Сравнение регистронезависимое — храним lower-case.
+// https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45
+const EXCLUDE_TYPE_VALUES = new Set([
+  "direct", "reject", "rejectdrop", "compatible", "pass", "dns",
+  "relay", "selector", "fallback", "urltest", "loadbalance",
+  "shadowsocks", "shadowsocksr", "snell", "socks5", "http",
+  "vmess", "vless", "trojan", "hysteria", "hysteria2",
+  "wireguard", "tuic", "ssh",
+]);
+
 function setFieldValidity(box, kind, message) {
   box.classList.remove("field-invalid", "field-warn");
   const input = box.querySelector("input, textarea");
@@ -2607,10 +2694,67 @@ function validateProxiesInput(input) {
   }
 }
 
+// exclude-type использует `|` как разделитель (см. mihomo wiki).
+// Допустимы только Adapter Type'ы (case-insensitive).
+function validateExcludeTypeInput(input) {
+  const box = input.closest(".field-validated");
+  if (!box) return;
+  const raw = input.value || "";
+  if (!raw) { setFieldValidity(box, "ok"); return; }
+  if (/^\s|\s$/.test(raw)) {
+    setFieldValidity(box, "invalid", "Синтаксис: лишние пробелы по краям значения");
+    return;
+  }
+  const parts = raw.split("|");
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i] === "") {
+      setFieldValidity(box, "invalid", "Синтаксис: " + (i === parts.length - 1
+        ? 'висячий "|" в конце'
+        : 'пустой элемент между "|"'));
+      return;
+    }
+    if (/^\s|\s$/.test(parts[i])) {
+      setFieldValidity(box, "invalid", 'Синтаксис: лишний пробел вокруг "' + parts[i].trim() + '"');
+      return;
+    }
+  }
+  const unknown = parts.filter((it) => !EXCLUDE_TYPE_VALUES.has(it.toLowerCase()));
+  if (unknown.length) {
+    setFieldValidity(box, "invalid", "Не Adapter Type (регистр не важен): " + unknown.join(", "));
+  } else {
+    setFieldValidity(box, "ok");
+  }
+}
+
+// Одно имя прокси-группы / служебка (DIRECT/REJECT/...). Используется
+// для *_DIALER_PROXY (SUB_LINK*, LINK*) — там mihomo принимает один токен,
+// CSV невалидно. Допустимый набор совпадает с _PROXIES (групп + спецы).
+function validateProxyNameInput(input) {
+  const box = input.closest(".field-validated");
+  if (!box) return;
+  const raw = input.value || "";
+  if (!raw) { setFieldValidity(box, "ok"); return; }
+  if (/^\s|\s$/.test(raw)) {
+    setFieldValidity(box, "invalid", "Лишние пробелы по краям");
+    return;
+  }
+  if (raw.indexOf(",") !== -1) {
+    setFieldValidity(box, "invalid", "Одно имя — без запятых");
+    return;
+  }
+  if (PROXIES_SPECIALS.has(raw) || knownGroups().has(raw)) {
+    setFieldValidity(box, "ok");
+  } else {
+    setFieldValidity(box, "invalid", "Неизвестная прокси-группа (регистрозависимо). Допустимы группы + DIRECT/REJECT/REJECT-DROP/PASS.");
+  }
+}
+
 function initFieldValidators() {
   const validators = {
     use: validateUseInput,
     proxies: validateProxiesInput,
+    exclude_type: validateExcludeTypeInput,
+    proxy_name: validateProxyNameInput,
   };
   document.querySelectorAll(".field-validated").forEach((box) => {
     const kind = box.dataset.validate;
