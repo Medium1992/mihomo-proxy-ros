@@ -2,7 +2,20 @@ const containerName = "mihomo-proxy-ros";
 const defaultEnvListName = "MihomoProxyRoS";
 
 function mtEscape(value) {
-  return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  let s = String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  // Winbox/SSH-терминал MikroTik режет не-ASCII (особенно supplementary-plane:
+  // флаги 🇷🇺 = два U+1F1xx). RouterOS строки поддерживают \xHH в кавычках,
+  // поэтому каждый не-ASCII символ кодируем как набор \xHH по байтам UTF-8.
+  // После парсинга RouterOS в env уходят исходные байты, mihomo regex
+  // матчит их 1:1. Флаг /u нужен чтобы regex обходил code points, а не
+  // 16-битные code units (иначе суррогатные пары ломаются на TextEncoder).
+  return s.replace(/[^\x00-\x7F]/gu, (ch) => {
+    let out = "";
+    for (const b of new TextEncoder().encode(ch)) {
+      out += "\\x" + b.toString(16).toUpperCase().padStart(2, "0");
+    }
+    return out;
+  });
 }
 
 function envKey(name) { return "mihomo-env:" + name; }
