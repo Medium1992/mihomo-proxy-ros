@@ -1211,6 +1211,171 @@ emit_vpn_xray_vless_proxy() {
   echo ""
 }
 
+ovpn_directive_value() {
+  local file="$1"
+  local key="$2"
+  local field_index="${3:-1}"
+
+  awk -v key="$key" -v field_index="$field_index" '
+    function strip_quotes(s) {
+      gsub(/^"/, "", s)
+      gsub(/"$/, "", s)
+      gsub(/^'\''/, "", s)
+      gsub(/'\''$/, "", s)
+      return s
+    }
+    /^[[:space:]]*($|#|;)/ { next }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      sub(/^[[:space:]]+/, "", line)
+      n = split(line, parts, /[[:space:]]+/)
+      if (parts[1] == key && field_index <= n) {
+        print strip_quotes(parts[field_index])
+        exit
+      }
+    }
+  ' "$file"
+}
+
+ovpn_extract_block() {
+  local file="$1"
+  local tag="$2"
+  local out_file="$3"
+
+  awk -v tag="$tag" '
+    BEGIN {
+      start = "<" tag ">"
+      stop = "</" tag ">"
+    }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (line == stop) {
+        in_block = 0
+        exit
+      }
+      if (in_block) {
+        print line
+      }
+      if (line == start) {
+        in_block = 1
+      }
+    }
+  ' "$file" > "$out_file"
+  [ -s "$out_file" ]
+}
+
+ovpn_extract_pem_block() {
+  local file="$1"
+  local tag="$2"
+  local out_file="$3"
+  local raw_file="${out_file}.raw"
+
+  ovpn_extract_block "$file" "$tag" "$raw_file" || return 1
+  awk '
+    /^-----BEGIN / { in_pem = 1 }
+    in_pem { print }
+    /^-----END / { exit }
+  ' "$raw_file" > "$out_file"
+  rm -f "$raw_file"
+  [ -s "$out_file" ]
+}
+
+emit_yaml_block_file() {
+  local key="$1"
+  local file="$2"
+
+  [ -s "$file" ] || return 1
+  echo "    $key: |"
+  sed 's/^/      /' "$file"
+}
+
+emit_vpn_openvpn_proxy() {
+  local ovpn_file="$1"
+  local name="$2"
+  local tmp_prefix="$3"
+  local server="" port="" proto="" dev="" cipher="" auth="" mtu="" username="" password=""
+  local ca_file cert_file key_file tls_file auth_user_file tls_source=""
+
+  grep -q '^[[:space:]]*remote[[:space:]]' "$ovpn_file" 2>/dev/null || return 1
+  grep -q '^[[:space:]]*<ca>[[:space:]]*$' "$ovpn_file" 2>/dev/null || return 1
+
+  server=$(ovpn_directive_value "$ovpn_file" "remote" 2)
+  port=$(ovpn_directive_value "$ovpn_file" "remote" 3)
+  proto=$(ovpn_directive_value "$ovpn_file" "proto" 2)
+  [ -n "$proto" ] || proto=$(ovpn_directive_value "$ovpn_file" "remote" 4)
+  dev=$(ovpn_directive_value "$ovpn_file" "dev" 2)
+  cipher=$(ovpn_directive_value "$ovpn_file" "cipher" 2)
+  [ -n "$cipher" ] || cipher=$(ovpn_directive_value "$ovpn_file" "data-ciphers" 2)
+  auth=$(ovpn_directive_value "$ovpn_file" "auth" 2)
+  mtu=$(ovpn_directive_value "$ovpn_file" "tun-mtu" 2)
+  [ -n "$mtu" ] || mtu=$(ovpn_directive_value "$ovpn_file" "mtu" 2)
+
+  [ -n "$server" ] || return 1
+  [ -n "$port" ] || port=1194
+  case "$proto" in
+    tcp-client|tcp-server|tcp4|tcp6) proto="tcp" ;;
+    udp4|udp6) proto="udp" ;;
+  esac
+  case "$proto" in
+    tcp|udp) ;;
+    *) proto="udp" ;;
+  esac
+  [ -n "$dev" ] || dev="tun"
+  [ -n "$auth" ] || auth="SHA256"
+
+  ca_file="${tmp_prefix}.ca"
+  cert_file="${tmp_prefix}.cert"
+  key_file="${tmp_prefix}.key"
+  tls_file="${tmp_prefix}.tls"
+  auth_user_file="${tmp_prefix}.auth_user"
+
+  ovpn_extract_pem_block "$ovpn_file" "ca" "$ca_file" || return 1
+  ovpn_extract_pem_block "$ovpn_file" "cert" "$cert_file" || true
+  ovpn_extract_pem_block "$ovpn_file" "key" "$key_file" || true
+  if ovpn_extract_pem_block "$ovpn_file" "tls-crypt" "$tls_file"; then
+    tls_source="tls-crypt"
+  elif ovpn_extract_pem_block "$ovpn_file" "tls-auth" "$tls_file"; then
+    tls_source="tls-auth"
+  else
+    return 1
+  fi
+
+  if ovpn_extract_block "$ovpn_file" "auth-user-pass" "$auth_user_file"; then
+    username=$(sed -n '1p' "$auth_user_file")
+    password=$(sed -n '2p' "$auth_user_file")
+  fi
+
+  if [ ! -s "$cert_file" ] || [ ! -s "$key_file" ]; then
+    [ -n "$username" ] || return 1
+    [ -n "$password" ] || return 1
+  fi
+
+  echo "  - name: \"$name\""
+  echo "    type: openvpn"
+  echo "    server: $server"
+  echo "    port: $port"
+  echo "    proto: $proto"
+  [ -n "$username" ] && printf '    username: %s\n' "$(printf '%s' "$username" | yaml_quote)"
+  [ -n "$password" ] && printf '    password: %s\n' "$(printf '%s' "$password" | yaml_quote)"
+  emit_yaml_block_file "ca" "$ca_file"
+  [ -s "$cert_file" ] && emit_yaml_block_file "cert" "$cert_file"
+  [ -s "$key_file" ] && emit_yaml_block_file "key" "$key_file"
+  emit_yaml_block_file "tls-crypt" "$tls_file"
+  echo "    dev: $dev"
+  case "$cipher" in
+    AES-128-GCM|AES-256-GCM|CHACHA20-POLY1305) echo "    cipher: $cipher" ;;
+  esac
+  [ "$auth" = "SHA256" ] && echo "    auth: $auth"
+  [ -n "$mtu" ] && echo "    mtu: $mtu"
+  echo ""
+
+  [ "$tls_source" = "tls-auth" ] && log "Warning: $name OpenVPN uses <tls-auth>; emitted it as tls-crypt for mihomo compatibility" >&2
+  [ "$auth" != "SHA256" ] && log "Warning: $name OpenVPN auth '$auth' skipped; mihomo supports SHA256 only" >&2
+  return 0
+}
+
 vpn_json_is_amnezia_premium() {
   local json_file="$1"
 
@@ -1980,11 +2145,26 @@ generate_vpn_provider() {
       if grep -q '^\[Interface\]' "$conf_file" && grep -q '^\[Peer\]' "$conf_file"; then
         count=$(cat "$count_file" 2>/dev/null || echo 0)
         count=$((count + 1))
-        echo "$count" > "$count_file"
         if [ "$count" -eq 1 ]; then
           parse_awg_config "$conf_file" "$provider_name" >> "$yaml_file"
         else
           parse_awg_config "$conf_file" "${provider_name}_${count}" >> "$yaml_file"
+        fi
+        echo "$count" > "$count_file"
+        continue
+      fi
+
+      if grep -q '^[[:space:]]*remote[[:space:]]' "$conf_file" && grep -q '^[[:space:]]*<ca>[[:space:]]*$' "$conf_file"; then
+        count=$(cat "$count_file" 2>/dev/null || echo 0)
+        count=$((count + 1))
+        if [ "$count" -eq 1 ]; then
+          proxy_name="$provider_name"
+        else
+          proxy_name="${provider_name}_${count}"
+        fi
+        if emit_vpn_openvpn_proxy "$conf_file" "$proxy_name" "${tmp_prefix}.openvpn" >> "$yaml_file"; then
+          echo "$count" > "$count_file"
+          continue
         fi
       fi
     done
@@ -1994,7 +2174,7 @@ generate_vpn_provider() {
   rm -f "${tmp_prefix}."*
 
   if [ "$count" -eq 0 ]; then
-    log "ERROR: $provider_name vpn:// has no supported WireGuard/AmneziaWG/VLESS config"
+    log "ERROR: $provider_name vpn:// has no supported WireGuard/AmneziaWG/VLESS/OpenVPN config"
     return 1
   fi
 
@@ -2267,6 +2447,41 @@ apply_zapret2_wg_nft() {
         ip daddr $ip udp dport $port return
 
     done
+  fi
+
+  # === Exclude WG from container masquerade ===
+  # Контейнер сам делает `ip nat postrouting … masquerade`. WG-пакеты должны
+  # уходить с оригинальным src IP (zapret2/nfqws обрабатывает их по сырому
+  # endpoint'у). В nft базовые цепочки независимы — `accept` в отдельной
+  # таблице/цепочке НЕ предотвращает срабатывание masquerade в другой
+  # цепочке на том же хуке. Поэтому вставляем `return` в саму
+  # `ip nat postrouting` ВЫШЕ строк с masquerade.
+  echo "Adding masquerade exclusions for WG..."
+
+  # Убедимся, что основная nat-цепочка уже есть (создаётся выше в run()).
+  if nft list chain ip nat postrouting >/dev/null 2>&1; then
+
+    echo "$ZAPRET2_WG_DST" | tr ',' '\n' | while read -r ep; do
+
+      [ -z "$ep" ] && continue
+
+      ip="${ep%%:*}"
+      port="${ep##*:}"
+
+      # Идемпотентность — не дублируем правило, если оно уже есть.
+      nft list chain ip nat postrouting | \
+        grep -q "ip daddr $ip udp dport $port return" && continue
+
+      echo "No-masquerade WG: $ip:$port"
+
+      # insert (без position) ставит правило в самое начало цепочки —
+      # выше всех `oifname … masquerade`.
+      nft insert rule ip nat postrouting \
+        ip daddr $ip udp dport $port return
+
+    done
+  else
+    echo "Warning: ip nat postrouting chain not found, skipping masquerade exclusion"
   fi
 }
 

@@ -1170,10 +1170,80 @@ pre {
 
 .group-list button {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-auto-rows: auto;
+  align-items: center;
   justify-items: start;
+  column-gap: 10px;
   height: auto;
   min-height: 52px;
   text-align: left;
+}
+.group-list button > b,
+.group-list button > small { grid-column: 1; }
+.group-list button > .group-badges {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 4px;
+  align-self: stretch;
+}
+/* Match side-nav badge geometry: round chip with min-width 18px, height 18px,
+   white text, accent/warn background. Previously these inherited only the
+   `nav a .nav-badge` rule which didn't apply inside group-list buttons. */
+.group-list button .nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.group-list button .nav-badge.badge-changed { background: var(--accent); }
+.group-list button .nav-badge.badge-error   { background: var(--warn); }
+
+/* Pending removals banner — shows env names that will turn into
+   /container/envs/remove commands so the user can see why their change
+   count is higher than they expected. */
+.pending-removals {
+  border-left: 3px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface-2));
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.pending-removals-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+.pending-removals-head > b { color: var(--warn); font-size: 13px; }
+.pending-removals-head > span { font-size: 12px; color: var(--muted); }
+.pending-removals-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pending-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 12px;
+}
+.pending-chip > code {
+  font-family: var(--mono);
+  color: var(--ink);
 }
 
 .group-list button.active {
@@ -1447,3 +1517,300 @@ pre {
   font-size: 12px;
 }
 .mount-link.hidden { display: none; }
+
+/* ============== Page tabs (providers / dpi / core) ============== */
+.page-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding: 6px;
+  margin: 0 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: var(--shadow);
+  position: sticky;
+  top: 88px;       /* clears the sticky .top header */
+  z-index: 25;
+  overflow-x: auto;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+@media (max-width: 700px) {
+  .page-tabs { top: 72px; }
+}
+
+.page-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.page-tab:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.page-tab.active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+.page-tab-label { line-height: 1; }
+
+/* Generic pill badge used both in tab buttons and in the side nav. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.badge-changed { background: var(--accent); }
+.badge-error   { background: var(--warn); }
+
+/* Side navigation badges (auto-appended by JS). */
+nav a .nav-badge {
+  margin-left: 6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+nav a .nav-badge.badge-changed { background: var(--accent); }
+nav a .nav-badge.badge-error   { background: var(--warn); }
+nav a .nav-badge[data-kind="changed"] + .nav-badge[data-kind="error"] {
+  margin-left: 4px;
+}
+
+/* Modified-field highlight: accent left border + slight tint. */
+.field-modified,
+.toggle.field-modified {
+  border-left: 3px solid var(--accent);
+  padding-left: 11px;        /* compensate for the 3px border vs default 14px */
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface-2));
+}
+.field-modified > .field-meta > i,
+.field-modified > i {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* ============== Inline field validation ============== */
+/* Tooltip-based: layout doesn't reflow when an error appears; the bubble
+   shows only on hover/focus of the field itself. */
+.field-validated { position: relative; }
+.field-validated.field-invalid > input,
+.field-validated.field-invalid > textarea {
+  border-color: var(--warn);
+  box-shadow: 0 0 0 1px var(--warn) inset;
+}
+.field-validated.field-warn > input,
+.field-validated.field-warn > textarea {
+  border-color: color-mix(in srgb, var(--warn) 60%, var(--accent));
+}
+/* Small in-corner indicator dot (always visible while invalid). */
+.field-validated[data-tooltip]::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent);
+  pointer-events: none;
+}
+.field-validated.field-warn[data-tooltip]::before {
+  background: color-mix(in srgb, var(--warn) 65%, var(--accent));
+}
+/* Tooltip bubble — appears on hover/focus, absolutely positioned so it
+   does NOT push content below. */
+.field-validated[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% - 4px);
+  z-index: 40;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn) 18%, var(--surface));
+  color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity .12s ease, transform .12s ease;
+}
+.field-validated[data-tooltip]:hover::after,
+.field-validated[data-tooltip]:focus-within::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ============== SOCKS5 provider editor ============== */
+/* Layout matches other indexed env-rows: 28px grip + 56px index + content + auto button.
+   Content column stacks: title, fields-grid, toggles-row.
+   grip/index get explicit align-self because the global `.env-row .env-index`
+   rule sets align-self: end (which would push them to bottom of this tall row). */
+.env-row.socks-row {
+  grid-template-columns: 28px 56px minmax(0, 1fr) auto;
+  align-items: start;
+}
+.env-row.socks-row > .env-grip {
+  align-self: start;
+  margin-top: 6px;
+}
+.env-row.socks-row > .env-index {
+  align-self: start;
+  margin-top: 6px;
+}
+.env-row.socks-row > .env-index::before { display: none; }
+.env-row.socks-row > button {
+  align-self: start;
+  margin-top: 0;
+}
+.socks-content {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.socks-title {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--accent);
+}
+.socks-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 900px) {
+  .socks-grid { grid-template-columns: repeat(2, 1fr); }
+}
+.socks-grid > label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.socks-grid > label > span {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .02em;
+}
+.socks-grid > label > input,
+.socks-grid > label > select {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Toggles row: pill-shaped buttons, checkbox on the left, label on the right,
+   always on a single line. The pill background highlights when toggle is on. */
+.socks-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* `.env-row label { display: grid }` outranks plain `.socks-toggle` on
+   specificity (class+element vs class) and forces the chexbox above the text.
+   Match the env-row scope to win the cascade and keep the toggle horizontal. */
+.env-row label.socks-toggle,
+.socks-toggle {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  gap: 8px;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.socks-toggle:hover { border-color: var(--accent); }
+.socks-toggle > span {
+  font-family: var(--mono);
+  color: var(--ink);
+  line-height: 1;
+}
+.socks-toggle:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.socks-toggle:has(input:checked) > span {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+/* Custom-drawn checkbox: hide native styling, draw our own box + checkmark.
+   Must explicitly reset min-height/padding/width because the global
+   `input, textarea, select` rule forces 42px tall + 100% wide. */
+.socks-toggle > input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  flex: 0 0 16px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
+  box-sizing: border-box;
+}
+.socks-toggle > input[type="checkbox"]:hover { border-color: var(--accent); }
+.socks-toggle > input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.socks-toggle > input[type="checkbox"]:checked::after {
+  content: "✓";
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+.socks-toggle:has(input:checked) > span { color: var(--accent-strong); font-weight: 700; }

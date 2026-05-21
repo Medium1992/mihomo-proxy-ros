@@ -308,6 +308,38 @@ section_start() {
 EOF
 }
 
+# Begin a section that is also a tab panel.
+# Args: $1=tab-id (matches data-tab in the page-tabs nav), $2=title, $3=description.
+section_start_tab() {
+  tab_id="$1"; title="$2"; text="$3"
+  cat <<EOF
+<section class="panel tab-panel" data-tab="$tab_id" hidden>
+  <div class="section-head">
+    <div>
+      <h2>$title</h2>
+      <p>$text</p>
+    </div>
+  </div>
+EOF
+}
+
+# Render the sticky tab navigation at the top of a tabbed page.
+# Args: pairs of "tab-id" "Label", repeated. Example:
+#   page_tabs_nav health "Health-check" link "LINK" sub-link "SUB_LINK"
+page_tabs_nav() {
+  printf '<nav class="page-tabs" role="tablist" aria-label="Разделы страницы">'
+  while [ "$#" -ge 2 ]; do
+    tid="$1"; tlabel="$2"; shift 2
+    printf '<button type="button" class="page-tab" data-tab="%s" role="tab" aria-selected="false">'\
+'<span class="page-tab-label">%s</span>'\
+'<span class="badge badge-changed" data-kind="changed" hidden></span>'\
+'<span class="badge badge-error"   data-kind="error"   hidden></span>'\
+'</button>' \
+      "$(printf '%s' "$tid" | h)" "$(printf '%s' "$tlabel" | h)"
+  done
+  printf '</nav>\n'
+}
+
 section_end() {
   printf '</section>\n'
 }
@@ -477,7 +509,10 @@ EOF
 }
 
 core_page() {
-  section_start "Ядро mihomo" "Базовые настройки контроллера, UI, inbound-режима и sniffing."
+  page_tabs_nav \
+    core "Ядро" \
+    dns  "DNS"
+  section_start_tab core "Ядро mihomo" "Базовые настройки контроллера, UI, inbound-режима и sniffing."
   echo '<div class="grid">'
   select_field LOG_LEVEL "Логи" "Уровень <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/#log-level\" target=\"_blank\" rel=\"noopener\">log-level</a> mihomo." error "silent error warning info debug"
   field EXTERNAL_UI_URL "External UI" "Zip-архив панели для <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/#external-ui-url\" target=\"_blank\" rel=\"noopener\">external-ui-url</a>." "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip" text "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip"
@@ -488,7 +523,7 @@ core_page() {
   echo '</div>'
   section_end
 
-  section_start "DNS и fake-ip" "Параметры, которые попадают в блок dns и fake-ip-filter."
+  section_start_tab dns "DNS и fake-ip" "Параметры, которые попадают в блок dns и fake-ip-filter."
   echo '<div class="grid">'
   select_field DNS_MODE "DNS mode" "mihomo <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/dns/#enhanced-mode\" target=\"_blank\" rel=\"noopener\">enhanced-mode</a>: fake-ip или redir-host." fake-ip "fake-ip redir-host"
   field FAKE_IP_RANGE "Fake-IP range" "Диапазон <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/dns/#fake-ip-range\" target=\"_blank\" rel=\"noopener\">fake-ip-range</a>." "198.18.0.0/15" text "198.18.0.0/15"
@@ -523,7 +558,13 @@ EOF
 }
 
 providers_page() {
-  section_start "Health-check" "Общие настройки проверки доступности для file/http proxy-providers или proxy-groups."
+  page_tabs_nav \
+    health    "Health-check" \
+    link      "LINK*" \
+    sub-link  "SUB_LINK*" \
+    socks     "SOCKS*" \
+    mounted   "Mounted"
+  section_start_tab health "Health-check" "Общие настройки проверки доступности для file/http proxy-providers или proxy-groups."
   echo '<div class="grid">'
   toggle_field HEALTHCHECK_PROVIDER "Healthcheck в providers" "true: health-check внутри proxy-providers, false: параметры в proxy-groups." true
   field HEALTHCHECK_INTERVAL "Интервал" "Секунды между проверками, параметр <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-providers/#interval\" target=\"_blank\" rel=\"noopener\">interval</a>." "120" number "120"
@@ -536,7 +577,7 @@ providers_page() {
   echo '</div>'
   section_end
 
-  section_start "LINK*" "Одиночные ссылки: vless/vmess/ss/trojan/base64/vpn://. Для каждого можно задать DIALER_PROXY."
+  section_start_tab link "LINK*" "Одиночные ссылки: vless/vmess/ss/trojan/base64/vpn://. Для каждого можно задать DIALER_PROXY."
   echo '<div class="subhead"><b>LINK</b><button type="button" onclick="addRow('\''links'\'', '\''LINK'\'', false)">Добавить LINK</button></div><div id="links" class="rows">'
   for name in $(env_names '^LINK[0-9]*='); do
     val="$(env_attr "$name" "")"; idx="$(printf '%s' "$name" | sed 's/LINK//')"; [ -z "$idx" ] && idx=0
@@ -559,15 +600,15 @@ EOF
 EOF
   section_end
 
-  section_start "SUB_LINK*" "HTTP subscriptions: URL, interval, proxy, headers и dialer-proxy."
+  section_start_tab sub-link "SUB_LINK*" "HTTP subscriptions: URL, interval, proxy, headers и dialer-proxy."
   field SUB_LINK_INTERVAL "Default interval" "Дефолт для SUB_LINK*_INTERVAL." "3600" number "3600"
-  echo '<div class="subhead"><b>SUB_LINK</b><button type="button" onclick="addRow('\''subs'\'', '\''SUB_LINK'\'', true)">Добавить SUB_LINK</button></div><div id="subs" class="rows">'
+  echo '<div class="subhead"><b>SUB_LINK</b><button type="button" onclick="addRow('\''subs'\'', '\''SUB_LINK'\'', false)">Добавить SUB_LINK</button></div><div id="subs" class="rows">'
   for name in $(env_names '^SUB_LINK[0-9]+='); do
     val="$(env_attr "$name" "")"; idx="$(printf '%s' "$name" | sed 's/SUB_LINK//')"
     cat <<EOF
 <div class="env-row env-row-stack sub-link-row" data-index="$idx">
   <label><span>$name</span><input name="$name" value="$val" placeholder="https://subscription"></label>
-  <label><span>${name}_INTERVAL</span><input name="${name}_INTERVAL" value="$(env_attr "${name}_INTERVAL" "")" placeholder="3600"></label>
+  <label><span>${name}_INTERVAL</span><input type="number" name="${name}_INTERVAL" value="$(env_attr "${name}_INTERVAL" "")" placeholder="3600"></label>
   <label><span>${name}_PROXY</span><input name="${name}_PROXY" value="$(env_attr "${name}_PROXY" "")" placeholder="DIRECT"></label>
   <label><span>${name}_DIALER_PROXY</span><input name="${name}_DIALER_PROXY" value="$(env_attr "${name}_DIALER_PROXY" "")" placeholder="GLOBAL"></label>
   <div class="headers-editor">
@@ -591,7 +632,68 @@ EOF
 EOF
   section_end
 
-  section_start "Mounted providers" "Файлы, которые entrypoint читает из каталогов."
+  section_start_tab socks "SOCKS*" "SOCKS5-провайдеры. Для каждого SOCKS&lt;N&gt; собирается отдельный proxy-provider. Удобнее использовать <code>LINK*</code> с URL вида <code>socks5://user:pass@host:port</code> — формат универсальнее. Этот блок оставлен для совместимости и тонкой настройки полей."
+  echo '<div class="subhead"><b>SOCKS*</b><button type="button" onclick="addSocksRow()">Добавить SOCKS</button></div>'
+  echo '<div id="socksRows" class="rows">'
+  env | grep -E '^SOCKS[0-9]+=' | sort -V | while IFS='=' read -r sname svalue; do
+    [ -z "$sname" ] && continue
+    idx=$(printf '%s' "$sname" | sed 's/^SOCKS//')
+    s_server=""; s_port=""; s_user=""; s_pass=""; s_tls=""; s_fp=""; s_skip=""; s_udp=""; s_ipv=""
+    OLDIFS=$IFS
+    IFS='#'
+    for pair in $svalue; do
+      [ -z "$pair" ] && continue
+      key="${pair%%=*}"
+      val="${pair#*=}"
+      case "$key" in
+        server)           s_server="$val" ;;
+        port)             s_port="$val" ;;
+        username)         s_user="$val" ;;
+        password)         s_pass="$val" ;;
+        tls)              s_tls="$val" ;;
+        fingerprint)      s_fp="$val" ;;
+        skip-cert-verify) s_skip="$val" ;;
+        udp)              s_udp="$val" ;;
+        ip-version)       s_ipv="$val" ;;
+      esac
+    done
+    IFS=$OLDIFS
+    cat <<EOF
+<div class="env-row socks-row" data-index="$idx" data-max-index="99">
+  <input type="hidden" name="$sname" value="$(printf '%s' "$svalue" | h)" data-default="" data-base="SOCKS">
+  <div class="socks-content">
+    <b class="socks-title">$sname</b>
+    <div class="socks-grid">
+      <label><span>server *</span><input class="socks-server" value="$(printf '%s' "$s_server" | h)" placeholder="1.2.3.4 / host"></label>
+      <label><span>port *</span><input class="socks-port" type="number" value="$(printf '%s' "$s_port" | h)" placeholder="1080"></label>
+      <label><span>username</span><input class="socks-username" value="$(printf '%s' "$s_user" | h)"></label>
+      <label><span>password</span><input class="socks-password" value="$(printf '%s' "$s_pass" | h)"></label>
+      <label><span>fingerprint</span><input class="socks-fingerprint" value="$(printf '%s' "$s_fp" | h)" placeholder="chrome / firefox / …"></label>
+      <label><span>ip-version</span>
+        <select class="socks-ip-version">
+          <option value="" $([ -z "$s_ipv" ] && echo selected)>— (default ipv4) —</option>
+          <option value="ipv4" $([ "$s_ipv" = "ipv4" ] && echo selected)>ipv4</option>
+          <option value="ipv6" $([ "$s_ipv" = "ipv6" ] && echo selected)>ipv6</option>
+          <option value="dual" $([ "$s_ipv" = "dual" ] && echo selected)>dual</option>
+          <option value="ipv4-prefer" $([ "$s_ipv" = "ipv4-prefer" ] && echo selected)>ipv4-prefer</option>
+          <option value="ipv6-prefer" $([ "$s_ipv" = "ipv6-prefer" ] && echo selected)>ipv6-prefer</option>
+        </select>
+      </label>
+    </div>
+    <div class="socks-toggles">
+      <label class="socks-toggle"><input type="checkbox" class="socks-tls" $([ "$s_tls" = "true" ] && echo checked)><span>tls</span></label>
+      <label class="socks-toggle"><input type="checkbox" class="socks-skip-cert-verify" $([ "$s_skip" = "true" ] && echo checked)><span>skip-cert-verify</span></label>
+      <label class="socks-toggle"><input type="checkbox" class="socks-udp" $([ "$s_udp" != "false" ] && echo checked)><span>udp</span></label>
+    </div>
+  </div>
+  <button type="button" onclick="removeSocksRow(this)">Удалить</button>
+</div>
+EOF
+  done
+  echo '</div>'
+  section_end
+
+  section_start_tab mounted "Mounted providers" "Файлы, которые entrypoint читает из каталогов: AWG configs, proxies_mount."
   yaml_url="$(page_url yaml)"
   echo '<div class="mounts">'
   printf '<article><b>AWG configs</b><div class="mount-links" id="awg-mount-links">'
@@ -706,7 +808,14 @@ EOF
 }
 
 dpi_page() {
-  section_start "BYEDPI" "Команды BYEDPI_CMD* создают file provider и отдельные маршруты."
+  page_tabs_nav \
+    byedpi     "BYEDPI" \
+    zapret     "ZAPRET" \
+    zapret2    "ZAPRET2" \
+    zapret-wg  "ZAPRET2 WG" \
+    fakebin    "fakebin" \
+    lists      "lists"
+  section_start_tab byedpi "BYEDPI" "Команды BYEDPI_CMD* создают file provider и отдельные маршруты."
   echo '<div class="subhead"><b>BYEDPI_CMD*</b><button type="button" onclick="addRow('\''byedpi'\'', '\''BYEDPI_CMD'\'', false)">Добавить</button></div><div id="byedpi" class="rows">'
   for name in $(env_names '^BYEDPI_CMD[0-9]*='); do
     idx="$(printf '%s' "$name" | sed 's/BYEDPI_CMD//')"; [ -z "$idx" ] && idx=0
@@ -717,12 +826,11 @@ EOF
   echo '</div>'
   section_end
 
-  section_start "ZAPRET / ZAPRET2" "nfqws/nfqws2 стратегии и packet-window для обычного DPI обхода."
+  section_start_tab zapret "ZAPRET (nfqws)" "Стратегии nfqws и packet-window для обычного DPI обхода."
   echo '<div class="grid">'
   field ZAPRET_PACKETS "ZAPRET packets" "Глобальная переменная: сколько первых пакетов соединения будут проходить очередь ZAPRET. <code>0</code> — все пакеты всегда идут через ZAPRET." "12" number "12"
-  field ZAPRET2_PACKETS "ZAPRET2 packets" "Глобальная переменная: сколько первых пакетов соединения будут проходить очередь ZAPRET2. <code>0</code> — все пакеты всегда идут через ZAPRET2." "12" number "12"
   echo '</div>'
-  echo '<div class="notice"><b>Packets per strategy</b><span>У каждой стратегии можно отдельно изменить это окно через <code>ZAPRET_PACKETSn</code> или <code>ZAPRET2_PACKETSn</code>. Если поле у строки пустое, используется глобальное значение выше.</span></div>'
+  echo '<div class="notice"><b>Packets per strategy</b><span>У каждой стратегии можно отдельно изменить это окно через <code>ZAPRET_PACKETSn</code>. Если поле пустое — используется глобальное значение выше.</span></div>'
   echo '<div class="subhead"><b>ZAPRET_CMD*</b><button type="button" onclick="addRow('\''zapret'\'', '\''ZAPRET_CMD'\'', false)">Добавить</button></div><div id="zapret" class="rows">'
   for name in $(env_names '^ZAPRET_CMD[0-9]*='); do
     idx="$(printf '%s' "$name" | sed 's/ZAPRET_CMD//')"; [ -z "$idx" ] && idx=0
@@ -730,7 +838,15 @@ EOF
 <div class="env-row dpi-packet-row" data-index="$idx" data-max-index="99"><label><span>$name</span><input name="$name" value="$(env_attr "$name" "")" placeholder="--dpi-desync=..."></label><label><span>ZAPRET_PACKETS$idx</span><input name="ZAPRET_PACKETS$idx" value="$(env_attr "ZAPRET_PACKETS$idx" "")" placeholder="12"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button></div>
 EOF
   done
-  echo '</div><div class="subhead"><b>ZAPRET2_CMD*</b><button type="button" onclick="addRow('\''zapret2'\'', '\''ZAPRET2_CMD'\'', false)">Добавить</button></div><div id="zapret2" class="rows">'
+  echo '</div>'
+  section_end
+
+  section_start_tab zapret2 "ZAPRET2 (nfqws2)" "Стратегии nfqws2 (lua-движок) и packet-window."
+  echo '<div class="grid">'
+  field ZAPRET2_PACKETS "ZAPRET2 packets" "Глобальная переменная: сколько первых пакетов соединения будут проходить очередь ZAPRET2. <code>0</code> — все пакеты всегда идут через ZAPRET2." "12" number "12"
+  echo '</div>'
+  echo '<div class="notice"><b>Packets per strategy</b><span>У каждой стратегии можно отдельно изменить это окно через <code>ZAPRET2_PACKETSn</code>. Если поле пустое — используется глобальное значение выше.</span></div>'
+  echo '<div class="subhead"><b>ZAPRET2_CMD*</b><button type="button" onclick="addRow('\''zapret2'\'', '\''ZAPRET2_CMD'\'', false)">Добавить</button></div><div id="zapret2" class="rows">'
   for name in $(env_names '^ZAPRET2_CMD[0-9]*='); do
     idx="$(printf '%s' "$name" | sed 's/ZAPRET2_CMD//')"; [ -z "$idx" ] && idx=0
     cat <<EOF
@@ -740,7 +856,7 @@ EOF
   echo '</div>'
   section_end
 
-  section_start "ZAPRET2 WG" "Отдельная стратегия для пробития WireGuard handshake через nfqws2."
+  section_start_tab zapret-wg "ZAPRET2 WG" "Отдельная стратегия для пробития WireGuard handshake через nfqws2."
   cat <<EOF
 <div class="wg-editor">
   <label class="field field-wide" data-env="ZAPRET2_WG_CMD">
@@ -758,14 +874,16 @@ EOF
     <i>$(is_set ZAPRET2_WG_DST)</i>
   </div>
   <div class="notice">
-    <b>Примечание по MikroTik</b>
-    <span>Здесь будет краткая схема заворота только WireGuard handshake в контейнер через отдельный ZAPRET2 provider. Точный пример команд добавим после уточнения правил.</span>
+    <b>Заворот только WireGuard handshake в контейнер (MikroTik)</b>
+    <span>Чтобы через ZAPRET2 шёл только handshake, а основной WG-трафик — напрямую, в RouterOS на mangle помечаем только пакеты-handshake (фиксированный размер 176 байт для AmneziaWG/WireGuard) и заворачиваем их в роутинг-метку контейнера. Замените <code>162.159.192.1:2408</code> на endpoint вашего сервера, <code>MihomoProxyRoS</code> — на routing-mark, ведущую в контейнер.</span>
+    <pre><code>/ip firewall mangle
+add action=mark-routing chain=output dst-address=162.159.192.1 dst-port=2408 new-routing-mark=MihomoProxyRoS packet-size=176 passthrough=no protocol=udp</code></pre>
   </div>
 </div>
 EOF
   section_end
 
-  section_start "Файлы /zapret-fakebin" "Бинарные fake-пакеты для nfqws (--dpi-desync-fake-*). Изменения вступят в силу после перезагрузки контейнера."
+  section_start_tab fakebin "Файлы /zapret-fakebin" "Бинарные fake-пакеты для nfqws (--dpi-desync-fake-*). Изменения вступят в силу после перезагрузки контейнера."
   cat <<'EOF'
 <div class="dpi-toolbar">
   <input type="search" class="dpi-filter" data-list="fakebin-list" placeholder="Фильтр по имени…" oninput="filterDpiList(this)">
@@ -786,7 +904,7 @@ EOF
   echo '</div>'
   section_end
 
-  section_start "Файлы /zapret-lists" "Текстовые списки доменов/IP для nfqws и lua-скриптов. Редактируются прямо в браузере."
+  section_start_tab lists "Файлы /zapret-lists" "Текстовые списки доменов/IP для nfqws и lua-скриптов. Редактируются прямо в браузере."
   echo '<div class="dpi-toolbar">'
   echo '  <input type="search" class="dpi-filter" data-list="zlist-list" placeholder="Фильтр по имени…" oninput="filterDpiList(this)">'
   if [ -d /zapret-lists ]; then
@@ -837,16 +955,19 @@ default_group_block() {
   <div class="grid">
 EOF
   printf '<input type="hidden" name="GROUP" value="%s" data-default="">\n' "$(env_attr GROUP "")"
+  # Same layout as user groups: proxies | use, type | interval, url | url_status,
+  # strategy | tolerance, filter | exclude.
+  printf '<label class="field field-validated" data-env="GROUP_PROXIES" data-validate="proxies"><span><b>GROUP_PROXIES</b><em>GROUP_PROXIES</em></span><input type="text" name="GROUP_PROXIES" value="%s" placeholder="DIRECT,REJECT" data-default=""><small>Явные <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> по умолчанию: имена прокси-групп (регистрозависимо) либо служебные <code>DIRECT</code>, <code>REJECT</code>, <code>REJECT-DROP</code>, <code>PASS</code>.</small><i>%s</i></label>\n' "$(env_attr GROUP_PROXIES "")" "$(is_set GROUP_PROXIES)"
+  printf '<label class="field field-validated" data-env="GROUP_USE" data-validate="use"><span><b>GROUP_USE</b><em>GROUP_USE</em></span><input type="text" name="GROUP_USE" value="%s" placeholder="LINK1,SUB_LINK1,BYEDPI" data-default=""><small>Providers по умолчанию (регистрозависимо), параметр <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">use</a>, или <code>none</code>.</small><i>%s</i></label>\n' "$(env_attr GROUP_USE "")" "$(is_set GROUP_USE)"
   select_field GROUP_TYPE "GROUP_TYPE" "Тип <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#type\" target=\"_blank\" rel=\"noopener\">proxy-groups type</a> по умолчанию." select "select url-test load-balance fallback relay"
-  field GROUP_USE "GROUP_USE" "providers по умолчанию, параметр <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#use\" target=\"_blank\" rel=\"noopener\">use</a>, или none." "" text ""
-  field GROUP_PROXIES "GROUP_PROXIES" "Явные <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#proxies\" target=\"_blank\" rel=\"noopener\">proxies</a> по умолчанию." "" text ""
-  field GROUP_FILTER "GROUP_FILTER" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#filter\" target=\"_blank\" rel=\"noopener\">filter</a> по умолчанию." "" text ""
-  field GROUP_EXCLUDE "GROUP_EXCLUDE" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter\" target=\"_blank\" rel=\"noopener\">exclude-filter</a> по умолчанию." "" text ""
+  field GROUP_INTERVAL "GROUP_INTERVAL" "Интервал <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#interval\" target=\"_blank\" rel=\"noopener\">health-check</a>." "60" number "60"
   field GROUP_URL "GROUP_URL" "URL <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#url\" target=\"_blank\" rel=\"noopener\">health-check</a>, если HEALTHCHECK_PROVIDER=false." "https://www.gstatic.com/generate_204" text "https://www.gstatic.com/generate_204"
   field GROUP_URL_STATUS "GROUP_URL_STATUS" "Ожидаемый <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status\" target=\"_blank\" rel=\"noopener\">expected-status</a>." "204" number "204"
-  field GROUP_INTERVAL "GROUP_INTERVAL" "Интервал <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#interval\" target=\"_blank\" rel=\"noopener\">health-check</a>." "60" number "60"
-  field GROUP_TOLERANCE "GROUP_TOLERANCE" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#tolerance\" target=\"_blank\" rel=\"noopener\">Tolerance</a> для url-test." "20" number "20"
   select_field GROUP_STRATEGY "GROUP_STRATEGY" "Стратегия <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#strategy\" target=\"_blank\" rel=\"noopener\">load-balance</a>: round-robin, consistent-hashing или sticky-sessions." "consistent-hashing" "round-robin consistent-hashing sticky-sessions"
+  field GROUP_TOLERANCE "GROUP_TOLERANCE" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#tolerance\" target=\"_blank\" rel=\"noopener\">Tolerance</a> для url-test." "20" number "20"
+  field GROUP_FILTER "GROUP_FILTER" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#filter\" target=\"_blank\" rel=\"noopener\">filter</a> по умолчанию." "" text ""
+  field GROUP_EXCLUDE "GROUP_EXCLUDE" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter\" target=\"_blank\" rel=\"noopener\">exclude-filter</a> по умолчанию." "" text ""
+  field GROUP_EXCLUDE_TYPE "GROUP_EXCLUDE_TYPE" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type\" target=\"_blank\" rel=\"noopener\">exclude-type</a> по умолчанию. Пример: <code>vmess|direct</code>." "" text ""
   echo '</div></article>'
 }
 
@@ -877,15 +998,41 @@ group_block() {
   </div>
   <div class="grid">
 EOF
+  # Field layout (2-column grid):
+  #   row 1: PROXIES | USE
+  #   row 2: TYPE    | INTERVAL
+  #   row 3: URL     | URL_STATUS
+  #   row 4: STRATEGY| TOLERANCE
+  #   row 5: FILTER  | EXCLUDE
+  #   row 6: GEOSITE | GEOIP
+  #   row 7: AS      | PRIORITY
+  #   rest: DOMAIN, SUFFIX, KEYWORD, IPCIDR, SRCIPCIDR, DSCP, DNS
+  printf '<label class="field field-validated" data-env="%s_PROXIES" data-validate="proxies"><span><b>Proxies</b><em>%s_PROXIES</em></span><input type="text" name="%s_PROXIES" value="%s" placeholder="DIRECT,REJECT,YOUTUBE" data-default=""><small>Явные <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> через запятую: имена других прокси-групп (регистрозависимо) либо служебные <code>DIRECT</code>, <code>REJECT</code>, <code>REJECT-DROP</code>, <code>PASS</code>.</small><i>%s</i></label>\n' "$prefix" "$prefix" "$prefix" "$(env_attr "${prefix}_PROXIES" "")" "$(is_set "${prefix}_PROXIES")"
+  printf '<label class="field field-validated" data-env="%s_USE" data-validate="use"><span><b>Use</b><em>%s_USE</em></span><input type="text" name="%s_USE" value="%s" placeholder="LINK1,SUB_LINK1,BYEDPI" data-default=""><small>Список <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">providers</a> через запятую или <code>none</code>. Регистрозависимо. Имена берутся из LINK*/SUB_LINK*/SOCKS*/BYEDPI*/ZAPRET*/AWG-конфигов/proxies_mount.</small><i>%s</i></label>\n' "$prefix" "$prefix" "$prefix" "$(env_attr "${prefix}_USE" "")" "$(is_set "${prefix}_USE")"
   select_field "${prefix}_TYPE" "Type" "Тип <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#type\" target=\"_blank\" rel=\"noopener\">proxy-groups type</a>." "$( [ "$prefix" = DNS ] && echo select || echo "$(env_default GROUP_TYPE select)" )" "select url-test load-balance fallback relay"
-  field "${prefix}_USE" "Use" "Список <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#use\" target=\"_blank\" rel=\"noopener\">providers</a> через запятую или none." "" text ""
-  field "${prefix}_PROXIES" "Proxies" "Явные <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#proxies\" target=\"_blank\" rel=\"noopener\">proxies</a> через запятую." "" text ""
+  field "${prefix}_INTERVAL" "Interval" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#interval\" target=\"_blank\" rel=\"noopener\">Интервал</a> проверки в секундах. Пусто → наследует <code>GROUP_INTERVAL</code>." "" number ""
+  field "${prefix}_URL" "URL" "URL <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#url\" target=\"_blank\" rel=\"noopener\">health-check</a> для этой группы. Используется при HEALTHCHECK_PROVIDER=false и TYPE url-test/fallback/load-balance. Пусто → наследует <code>GROUP_URL</code>." "" text ""
+  field "${prefix}_URL_STATUS" "URL status" "Ожидаемый <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status\" target=\"_blank\" rel=\"noopener\">expected-status</a>. Пусто → наследует <code>GROUP_URL_STATUS</code>." "" number ""
+  printf '<label class="field" data-env="%s_STRATEGY"><span><b>Strategy</b><em>%s_STRATEGY</em></span><select name="%s_STRATEGY" data-default=""><option value="" %s>— inherit GROUP_STRATEGY —</option><option value="round-robin" %s>round-robin</option><option value="consistent-hashing" %s>consistent-hashing</option><option value="sticky-sessions" %s>sticky-sessions</option></select><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/load-balance/#strategy" target="_blank" rel="noopener">Стратегия</a> для load-balance. Пусто → наследует <code>GROUP_STRATEGY</code>.</small><i>%s</i></label>\n' "$prefix" "$prefix" "$prefix" \
+    "$( [ -z "$(env_default "${prefix}_STRATEGY" "")" ] && echo selected )" \
+    "$( [ "$(env_default "${prefix}_STRATEGY" "")" = "round-robin" ] && echo selected )" \
+    "$( [ "$(env_default "${prefix}_STRATEGY" "")" = "consistent-hashing" ] && echo selected )" \
+    "$( [ "$(env_default "${prefix}_STRATEGY" "")" = "sticky-sessions" ] && echo selected )" \
+    "$(is_set "${prefix}_STRATEGY")"
+  field "${prefix}_TOLERANCE" "Tolerance" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/url-test/#tolerance\" target=\"_blank\" rel=\"noopener\">Tolerance</a> для url-test в мс. Пусто → наследует <code>GROUP_TOLERANCE</code>." "" number ""
   field "${prefix}_FILTER" "Filter" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#filter\" target=\"_blank\" rel=\"noopener\">filter</a> по именам прокси." "" text ""
   field "${prefix}_EXCLUDE" "Exclude" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter\" target=\"_blank\" rel=\"noopener\">exclude-filter</a>." "" text ""
-  field "${prefix}_PRIORITY" "Priority" "Чем меньше, тем выше в rules." "" number ""
+  field "${prefix}_EXCLUDE_TYPE" "Exclude type" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type\" target=\"_blank\" rel=\"noopener\">exclude-type</a> — исключить прокси указанных типов. Пример: <code>vmess|direct</code>." "" text ""
+  field "${prefix}_ICON" "Icon" "URL <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#icon\" target=\"_blank\" rel=\"noopener\">иконки</a> группы." "" text ""
+  printf '<label class="field" data-env="%s_HIDDEN"><span><b>Hidden</b><em>%s_HIDDEN</em></span><select name="%s_HIDDEN" data-default=""><option value="" %s>— показать (default) —</option><option value="true" %s>true (скрыть из веб-панели)</option><option value="false" %s>false (показать)</option></select><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#hidden" target="_blank" rel="noopener">hidden</a> — скрыть/показать группу в веб-панели mihomo.</small><i>%s</i></label>\n' "$prefix" "$prefix" "$prefix" \
+    "$( [ -z "$(env_default "${prefix}_HIDDEN" "")" ] && echo selected )" \
+    "$( [ "$(env_default "${prefix}_HIDDEN" "")" = "true" ] && echo selected )" \
+    "$( [ "$(env_default "${prefix}_HIDDEN" "")" = "false" ] && echo selected )" \
+    "$(is_set "${prefix}_HIDDEN")"
   field "${prefix}_GEOSITE" "Geosite" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">GEOSITE</a> списком через запятую." "youtube,category-ru" text ""
   field "${prefix}_GEOIP" "Geoip" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">GEOIP</a> списком через запятую." "telegram,discord" text ""
   field "${prefix}_AS" "ASN" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">IP-ASN</a>: AS123,AS456." "AS15169" text ""
+  field "${prefix}_PRIORITY" "Priority" "Чем меньше, тем выше в rules." "" number ""
   field "${prefix}_DOMAIN" "Domain" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">DOMAIN</a> через запятую." "example.com" text ""
   field "${prefix}_SUFFIX" "Suffix" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">DOMAIN-SUFFIX</a> через запятую." "example.com" text ""
   field "${prefix}_KEYWORD" "Keyword" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">DOMAIN-KEYWORD</a> через запятую." "google" text ""
@@ -898,6 +1045,40 @@ EOF
 
 groups_page() {
   section_start "Прокси-группы" "Выберите группу слева, чтобы редактировать только ее параметры."
+  # Seed для JS-валидатора _USE / _PROXIES. Раньше сюда попадали только
+  # серверные имена (AWG / proxies_mount), а LINK*/SUB_LINK*/SOCKS*/DPI имена
+  # JS пытался достать из localStorage — но черновики этих ENV появляются
+  # там только после первого визита пользователя на соответствующую страницу.
+  # До этого валидатор ругался на «несуществующие» прокси. Теперь сервер
+  # отдаёт полный список сразу.
+  seed_awg=""
+  if [ -d "$AWG_DIR" ]; then
+    for f in "$AWG_DIR"/*.conf; do
+      [ -f "$f" ] || continue
+      name="$(basename "$f" .conf)"
+      seed_awg="$seed_awg \"$(printf '%s' "$name" | h)\","
+    done
+  fi
+  seed_mounted=""
+  if [ -d "$PROXIES_DIR" ]; then
+    for f in "$PROXIES_DIR"/*.yaml "$PROXIES_DIR"/*.yml; do
+      [ -f "$f" ] || continue
+      name="$(basename "$f")"
+      name="${name%.yaml}"; name="${name%.yml}"
+      seed_mounted="$seed_mounted \"$(printf '%s' "$name" | h)\","
+    done
+  fi
+  seed_envs=""
+  for prov in $(env | grep -E '^(LINK[0-9]*|SUB_LINK[0-9]+|SOCKS[0-9]+)=' | cut -d= -f1 | sort -V); do
+    seed_envs="$seed_envs \"$(printf '%s' "$prov" | h)\","
+  done
+  # DPI имена: BYEDPI[N], ZAPRET[N], ZAPRET2[N] — без _CMD/_PACKETS.
+  for dpi_var in $(env | grep -E '^(BYEDPI|ZAPRET|ZAPRET2)_CMD[0-9]*=' | cut -d= -f1 | sort -V); do
+    base="$(printf '%s' "$dpi_var" | sed 's/_CMD//')"
+    seed_envs="$seed_envs \"$(printf '%s' "$base" | h)\","
+  done
+  printf '<script id="known-providers-seed" type="application/json">{"awg":[%s],"mounted":[%s],"envs":[%s]}</script>\n' \
+    "${seed_awg%,}" "${seed_mounted%,}" "${seed_envs%,}"
   echo '<div class="groups-browser"><aside id="groupList" class="group-list">'
   echo '<button type="button" data-group="DEFAULT" onclick="switchGroupPane(this.dataset.group)"><b>DEFAULT</b><small>GROUP_*</small></button>'
   echo '<button type="button" data-group="GLOBAL" onclick="switchGroupPane(this.dataset.group)"><b>GLOBAL</b><small>GLOBAL_*</small></button>'

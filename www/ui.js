@@ -35,12 +35,26 @@ function rememberField(el) {
 }
 
 function wireFieldEvents(root) {
+  // `el.dataset.fromDraft="true"` is set by restoreMissingIndexedRows so we
+  // don't overwrite the stored original (which represents what the SERVER
+  // actually had) with a user-typed draft value.
   root.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
     const serverValue = fieldValue(el);
+    const fromDraft = el.dataset.fromDraft === "true";
     const storedOriginal = localStorage.getItem(originalKey(el.name));
-    if (storedOriginal === null || (serverValue !== "" && storedOriginal !== serverValue)) {
+    if (storedOriginal === null) {
+      // First time we see this name. For draft-restored inputs the server
+      // never had this env, so original should remain "" (empty).
+      localStorage.setItem(originalKey(el.name), fromDraft ? "" : serverValue);
+      if (!fromDraft) localStorage.setItem(envKey(el.name), serverValue);
+    } else if (!fromDraft && serverValue !== "" && storedOriginal !== serverValue) {
+      // Server rendered a NEW value that differs from what we'd seen before.
+      // Update original; envKey will be re-saved from server unless user
+      // had a draft.
       localStorage.setItem(originalKey(el.name), serverValue);
-      localStorage.setItem(envKey(el.name), serverValue);
+      if ((localStorage.getItem(envKey(el.name)) || "") === storedOriginal) {
+        localStorage.setItem(envKey(el.name), serverValue);
+      }
     }
     localStorage.setItem(pageKey(el.name), location.pathname);
     const saved = localStorage.getItem(envKey(el.name));
@@ -160,7 +174,13 @@ function toggleTheme() {
 
 function resetUiDraft() {
   [...Array(localStorage.length)].map((_, i) => localStorage.key(i)).forEach((key) => {
-    if (key && (key.startsWith("mihomo-env:") || key.startsWith("mihomo-original:") || key.startsWith("mihomo-page:"))) localStorage.removeItem(key);
+    if (!key) return;
+    if (key.startsWith("mihomo-env:") ||
+        key.startsWith("mihomo-original:") ||
+        key.startsWith("mihomo-page:") ||
+        key.startsWith("mihomo-tab:")) {
+      localStorage.removeItem(key);
+    }
   });
   location.reload(true);
 }
@@ -180,39 +200,128 @@ function resetCurrentPageDraft() {
   location.reload(true);
 }
 
+// Single source of truth for every "numbered" ENV family. The HTML still calls
+// addRow(id, prefix, startAtOne) for back-compat, but addRow now ignores the
+// boolean and consults this table — so SUB_LINK can have min=0 while still
+// emitting numeric env names (SUB_LINK0), and LINK can keep its legacy
+// "LINK == LINK0" zero-plain spelling.
+const INDEXED_PREFIXES = {
+  LINK:           { minIndex: 0, zeroPlain: true,  maxIndex: null, containerId: "links" },
+  SUB_LINK:       { minIndex: 0, zeroPlain: false, maxIndex: null, containerId: "subs"  },
+  SOCKS:          { minIndex: 0, zeroPlain: false, maxIndex: 99,   containerId: "socksRows" },
+  BYEDPI_CMD:     { minIndex: 0, zeroPlain: true,  maxIndex: 99,   containerId: "byedpi" },
+  ZAPRET_CMD:     { minIndex: 0, zeroPlain: true,  maxIndex: 99,   containerId: "zapret",  packets: "ZAPRET_PACKETS"  },
+  ZAPRET2_CMD:    { minIndex: 0, zeroPlain: true,  maxIndex: 99,   containerId: "zapret2", packets: "ZAPRET2_PACKETS" },
+  FAKE_IP_FILTER: { minIndex: 1, zeroPlain: false, maxIndex: null, containerId: "fakeFilters" },
+  RULES:          { minIndex: 1, zeroPlain: false, maxIndex: null, containerId: "rules" },
+  RULE_SET:       { minIndex: 1, zeroPlain: false, maxIndex: null, containerId: "rulesets", suffix: "_BASE64" },
+};
+
+function indexedSpec(prefix) { return INDEXED_PREFIXES[prefix] || null; }
+
+// Canonical env name (what entrypoint reads): "LINK" for LINK#0 with
+// zeroPlain, "SUB_LINK0" for SUB_LINK#0 (entrypoint requires the digit).
+function envNameFor(prefix, idx) {
+  const spec = indexedSpec(prefix);
+  const suffix = spec && spec.suffix ? spec.suffix : "";
+  if (spec && spec.zeroPlain && idx === 0) return prefix + suffix;
+  return prefix + idx + suffix;
+}
+
+// Human-readable label always carries the number (so "LINK" idx 0 still
+// reads as "LINK0" in the UI — but the underlying `name=` stays canonical).
+function displayNameFor(prefix, idx) {
+  const spec = indexedSpec(prefix);
+  const suffix = spec && spec.suffix ? spec.suffix : "";
+  return prefix + idx + suffix;
+}
+
+// Apply display-name relabeling to a row that's already in the DOM. Walks the
+// row's labels and rewrites <span> text so server-rendered rows (where idx 0
+// LINK got the bare span "LINK") also pick up the "LINK0" display form.
+function relabelIndexedRow(row) {
+  const cfg = indexedRowConfig(row);
+  if (!cfg) return;
+  const idx = Number(row.dataset.index);
+  if (!Number.isInteger(idx)) return;
+  const envBase = envNameFor(cfg.prefix, idx);                  // "LINK" or "LINK0"
+  const displayBase = displayNameFor(cfg.prefix, idx);          // always "LINK0"
+  if (envBase === displayBase) return;                          // nothing to relabel
+  row.querySelectorAll("label > span, .headers-editor > span").forEach((span) => {
+    const txt = span.textContent;
+    if (txt === envBase) span.textContent = displayBase;
+    else if (txt.indexOf(envBase + "_") === 0) span.textContent = displayBase + txt.slice(envBase.length);
+  });
+  const titleEl = row.querySelector(".socks-title");
+  if (titleEl && titleEl.textContent === envBase) titleEl.textContent = displayBase;
+}
+
 function addRow(containerId, prefix, startAtOne) {
+  const spec = indexedSpec(prefix);
+  // Legacy boolean still honored only if the prefix isn't in the table.
+  const minIndex = spec ? spec.minIndex : (startAtOne ? 1 : 0);
+  const maxIndex = spec && Number.isInteger(spec.maxIndex) ? spec.maxIndex : null;
   const wrap = document.getElementById(containerId);
   const used = [...wrap.querySelectorAll("[data-index]")].map((x) => Number(x.dataset.index)).filter(Number.isFinite);
-  let idx = startAtOne ? 1 : 0;
+  let idx = minIndex;
   while (used.includes(idx)) idx++;
-  const maxIndex = (prefix === "BYEDPI_CMD" || prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") ? 99 : null;
   if (maxIndex !== null && idx > maxIndex) return;
-  let key = idx === 0 && !startAtOne ? prefix : prefix + idx;
-  if (prefix === "RULE_SET") key = "RULE_SET" + idx + "_BASE64";
+  let key = spec ? envNameFor(prefix, idx) : (idx === 0 && !startAtOne ? prefix : prefix + idx);
+  const displayKey = spec ? displayNameFor(prefix, idx) : key;
+  if (!spec && prefix === "RULE_SET") key = "RULE_SET" + idx + "_BASE64";
   const div = document.createElement("div");
   div.className = "env-row";
   if (prefix === "RULES" || prefix === "RULE_SET") div.className = "env-row rule-row";
   if (prefix === "BYEDPI_CMD") div.className = "env-row dpi-single-row";
   if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") div.className = "env-row dpi-packet-row";
+  if (prefix === "LINK") div.className = "env-row env-row-stack link-row";
+  if (prefix === "SUB_LINK") div.className = "env-row env-row-stack sub-link-row";
   div.dataset.index = idx;
   div.dataset.prefix = prefix;
-  div.dataset.startAtOne = startAtOne ? "true" : "false";
-  if (prefix === "BYEDPI_CMD" || prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") div.dataset.maxIndex = "99";
+  div.dataset.startAtOne = (spec ? spec.minIndex >= 1 : startAtOne) ? "true" : "false";
+  if (maxIndex !== null) div.dataset.maxIndex = String(maxIndex);
   if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") {
     const packets = prefix === "ZAPRET_CMD" ? "ZAPRET_PACKETS" : "ZAPRET2_PACKETS";
     const packetsKey = packets + idx;
-    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="--dpi-desync=..."></label><label><span>${packetsKey}</span><input name="${packetsKey}" placeholder="12"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    div.innerHTML = `<label><span>${displayKey}</span><input name="${key}" placeholder="--dpi-desync=..."></label><label><span>${packetsKey}</span><input name="${packetsKey}" placeholder="12"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   } else if (prefix === "RULE_SET") {
-    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Редактировать">&#10002;</button><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    div.innerHTML = `<label><span>${displayKey}</span><input name="${key}" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Редактировать">&#10002;</button><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   } else if (prefix === "RULES") {
-    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="DOMAIN,example.com,GLOBAL"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    div.innerHTML = `<label><span>${displayKey}</span><input name="${key}" placeholder="DOMAIN,example.com,GLOBAL"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+  } else if (prefix === "LINK") {
+    div.innerHTML =
+      `<label><span>${displayKey}</span><input name="${key}" placeholder="vless:// / vmess:// / ss:// / trojan:// / vpn://"></label>` +
+      `<label><span>${displayKey}_DIALER_PROXY</span><input name="${key}_DIALER_PROXY" placeholder="GLOBAL"></label>` +
+      `<label><span>${displayKey}_AMNEZIA_COUNTRY</span><input name="${key}_AMNEZIA_COUNTRY" placeholder="nl"></label>` +
+      `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+  } else if (prefix === "SUB_LINK") {
+    div.innerHTML =
+      `<label><span>${displayKey}</span><input name="${key}" placeholder="https://subscription"></label>` +
+      `<label><span>${displayKey}_INTERVAL</span><input type="number" name="${key}_INTERVAL" placeholder="3600"></label>` +
+      `<label><span>${displayKey}_PROXY</span><input name="${key}_PROXY" placeholder="DIRECT"></label>` +
+      `<label><span>${displayKey}_DIALER_PROXY</span><input name="${key}_DIALER_PROXY" placeholder="GLOBAL"></label>` +
+      `<div class="headers-editor">` +
+        `<span>${displayKey}_HEADERS</span>` +
+        `<input type="hidden" class="sub-link-headers-value" name="${key}_HEADERS" value="">` +
+        `<div class="headers-rows"></div>` +
+        `<button type="button" class="headers-add">Добавить header</button>` +
+      `</div>` +
+      `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+  } else if (prefix === "BYEDPI_CMD") {
+    div.innerHTML = `<label><span>${displayKey}</span><input name="${key}" placeholder="стратегия BYEDPI без --port и --transparent (например --tlsrec 41+s --udp-fake 1 --oob 1 --auto=torst)"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   } else {
-    div.innerHTML = `<label><span>${key}</span><input name="${key}" placeholder="значение env"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    div.innerHTML = `<label><span>${displayKey}</span><input name="${key}" placeholder="значение env"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   }
   wrap.appendChild(div);
+  // New row → all inputs are user drafts, never from server.
+  div.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
+    el.dataset.fromDraft = "true";
+  });
   wireFieldEvents(div);
   ensureIndexedRowControls(div);
+  if (prefix === "SUB_LINK" && typeof initHeadersEditors === "function") initHeadersEditors(div);
   sortIndexedRows(wrap);
+  if (typeof refreshAllBadges === "function") refreshAllBadges();
   if (typeof renderRulesPreview === 'function') renderRulesPreview();
 }
 
@@ -256,19 +365,41 @@ function baseIndexedName(prefix, idx, zeroPlain) {
 }
 
 function indexedRowConfig(row) {
+  // Prefer the explicit dataset hint set when the row was built (cheaper +
+  // unambiguous). Fall back to scanning input names for legacy server-rendered
+  // rows that pre-date the dataset markup.
+  const datasetPrefix = row.dataset.prefix;
+  if (datasetPrefix && INDEXED_PREFIXES[datasetPrefix]) {
+    const spec = INDEXED_PREFIXES[datasetPrefix];
+    return {
+      kind: spec.suffix ? "ruleset" : (spec.packets ? "zapret" : (datasetPrefix === "LINK" || datasetPrefix === "SUB_LINK" ? "multi" : "base")),
+      prefix: datasetPrefix,
+      min: spec.minIndex,
+      zeroPlain: !!spec.zeroPlain,
+      max: Number.isInteger(spec.maxIndex) ? spec.maxIndex : null,
+      packets: spec.packets,
+    };
+  }
   const names = [...row.querySelectorAll("input[name], textarea[name], select[name]")].map((el) => el.name);
-  const maxFromRow = Number(row.dataset.maxIndex);
-  const rowMax = Number.isInteger(maxFromRow) ? maxFromRow : null;
-  if (names.some((name) => /^FAKE_IP_FILTER[0-9]+$/.test(name))) return {kind: "base", prefix: "FAKE_IP_FILTER", min: 1};
-  if (names.some((name) => /^RULES[0-9]+$/.test(name))) return {kind: "base", prefix: "RULES", min: 1};
-  if (names.some((name) => /^RULE_SET[0-9]+_BASE64$/.test(name))) return {kind: "ruleset", min: 1};
-  if (names.some((name) => /^SOCKS[0-9]+$/.test(name))) return {kind: "base", prefix: "SOCKS", min: 1};
-  if (names.some((name) => /^SUB_LINK[0-9]+/.test(name))) return {kind: "multi", prefix: "SUB_LINK", min: 1};
-  if (names.some((name) => /^LINK[0-9]*/.test(name))) return {kind: "multi", prefix: "LINK", min: 0, zeroPlain: true};
-  if (names.some((name) => /^BYEDPI_CMD[0-9]*$/.test(name))) return {kind: "base", prefix: "BYEDPI_CMD", min: 0, zeroPlain: true, max: 99};
-  if (names.some((name) => /^ZAPRET2_CMD[0-9]*$/.test(name))) return {kind: "zapret", prefix: "ZAPRET2_CMD", packets: "ZAPRET2_PACKETS", min: 0, zeroPlain: true, max: 99};
-  if (names.some((name) => /^ZAPRET_CMD[0-9]*$/.test(name))) return {kind: "zapret", prefix: "ZAPRET_CMD", packets: "ZAPRET_PACKETS", min: 0, zeroPlain: true, max: 99};
-  if (row.dataset.prefix) return {kind: row.dataset.prefix === "RULE_SET" ? "ruleset" : "base", prefix: row.dataset.prefix, min: row.dataset.startAtOne === "true" ? 1 : 0, zeroPlain: row.dataset.startAtOne !== "true", max: rowMax};
+  // Walk INDEXED_PREFIXES longest-first to disambiguate SUB_LINK vs LINK and ZAPRET2 vs ZAPRET.
+  const ordered = Object.keys(INDEXED_PREFIXES).sort((a, b) => b.length - a.length);
+  for (const prefix of ordered) {
+    const spec = INDEXED_PREFIXES[prefix];
+    const suffix = spec.suffix ? spec.suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : "";
+    // Allow either main "PREFIX(\d*)SUFFIX" or sub "PREFIX(\d*)_X" matches.
+    const mainRe = new RegExp("^" + prefix + (spec.zeroPlain ? "\\d*" : "\\d+") + suffix + "$");
+    const subRe = !suffix ? new RegExp("^" + prefix + (spec.zeroPlain ? "\\d*" : "\\d+") + "_[A-Z0-9_]+$") : null;
+    if (names.some((name) => mainRe.test(name) || (subRe && subRe.test(name)))) {
+      return {
+        kind: spec.suffix ? "ruleset" : (spec.packets ? "zapret" : (prefix === "LINK" || prefix === "SUB_LINK" ? "multi" : "base")),
+        prefix,
+        min: spec.minIndex,
+        zeroPlain: !!spec.zeroPlain,
+        max: Number.isInteger(spec.maxIndex) ? spec.maxIndex : null,
+        packets: spec.packets,
+      };
+    }
+  }
   return null;
 }
 
@@ -291,22 +422,9 @@ function renameIndexedRow(row, nextIndex) {
   if (!cfg) return false;
   const oldIndex = Number(row.dataset.index);
   if (usedIndexes(row.parentElement, row).includes(nextIndex)) return false;
-  row.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
-    const oldName = el.name;
-    const newName = rewriteIndexedName(oldName, cfg, oldIndex, nextIndex);
-    if (oldName === newName) return;
-    localStorage.setItem(envKey(oldName), "");
-    trackRemovedEnv(oldName);
-    if (localStorage.getItem(originalKey(newName)) === null) localStorage.setItem(originalKey(newName), "");
-    el.name = newName;
-    const caption = el.closest("label")?.querySelector("span");
-    if (caption) caption.textContent = newName;
-    rememberField(el);
-  });
-  row.dataset.index = nextIndex;
-  const indexInput = row.querySelector(".env-index input");
-  if (indexInput) indexInput.value = nextIndex;
-  sortIndexedRows(row.parentElement);
+  // Delegate to applyIndexedBatch (single-row move) so the wasOnServer /
+  // tracker-cleanup / relabel logic lives in one place.
+  applyIndexedBatch(row.parentElement, [{row, to: nextIndex}]);
   return true;
 }
 
@@ -337,9 +455,33 @@ function applyIndexedBatch(wrap, moves) {
   });
   ops.forEach(({oldName, newName, value}) => {
     if (oldName === newName) return;
-    localStorage.setItem(envKey(oldName), "");
-    trackRemovedEnv(oldName);
-    if (localStorage.getItem(originalKey(newName)) === null) localStorage.setItem(originalKey(newName), value);
+    const wasOnServer = (localStorage.getItem(originalKey(oldName)) || "") !== "";
+    if (wasOnServer) {
+      // Server had oldName=V. After rename: remove V from oldName, add V at
+      // newName. Keep originalKey(oldName) as the server value so commandFor
+      // emits `remove`, and force originalKey(newName)="" so commandFor
+      // emits `add` (rather than no-op when the value is unchanged).
+      localStorage.setItem(envKey(oldName), "");
+      trackRemovedEnv(oldName);
+    } else {
+      // Pure draft: purge old completely, no command needed.
+      localStorage.removeItem(envKey(oldName));
+      localStorage.removeItem(originalKey(oldName));
+      localStorage.removeItem(pageKey(oldName));
+    }
+    // Always set originalKey(newName)="" on rename so the new row is treated
+    // as an `add` against current value — keeps the "modified" badge and
+    // ensures we actually emit a /container/envs/add command. Skip only if
+    // the server already exposes newName (collision — leave that record
+    // untouched so the rename appears as a `set`).
+    if (localStorage.getItem(originalKey(newName)) === null) {
+      localStorage.setItem(originalKey(newName), "");
+    }
+    // Stale tracker cleanup: if newName previously had a trackRemovedEnv
+    // hidden input (because it was removed by a prior op), drop it now
+    // that newName is being recreated. Otherwise collectPageCommands would
+    // emit a phantom `remove newName` alongside the new `add newName`.
+    cleanupRemovedEnvTracker(newName);
   });
   ops.forEach(({row, el, newName, value, to}) => {
     el.name = newName;
@@ -348,12 +490,45 @@ function applyIndexedBatch(wrap, moves) {
     const caption = el.closest("label")?.querySelector("span");
     if (caption) caption.textContent = newName;
     localStorage.setItem(envKey(newName), value);
+    // pageKey is what updateNavBadges uses to attribute the change to a
+    // specific side-nav link. Without it, renamed envs disappear from the
+    // sidebar/tab/group count until the user reloads the page (because
+    // wireFieldEvents re-sets pageKey on every server-rendered or restored
+    // input). Setting it inline here keeps the badge consistent immediately.
+    localStorage.setItem(pageKey(newName), location.pathname);
     row.dataset.index = to;
     const indexInput = row.querySelector(".env-index input");
     if (indexInput) indexInput.value = to;
   });
+  // Stale-tracker sweep: any name currently present as a real (non-tracker)
+  // form input cancels the corresponding trackRemovedEnv hidden, so a row
+  // that was renamed away and then renamed back doesn't emit a stale remove.
+  sweepStaleRemovedTrackers();
   sortIndexedRows(wrap);
   if (typeof renderRulesPreview === "function") renderRulesPreview();
+  // After any batch rename, the relabel (display-name) and indexed-row
+  // controls on the moved rows must be re-applied (the index input value
+  // is updated above, but the displayed span on the LINK0 alias may have
+  // diverged from the new env name).
+  moves.forEach(({row}) => relabelIndexedRow(row));
+  if (typeof refreshAllBadges === "function") refreshAllBadges();
+}
+
+function cleanupRemovedEnvTracker(name) {
+  document.querySelectorAll('#envForm input[data-removed-env="' + CSS.escape(name) + '"]').forEach((el) => el.remove());
+}
+
+function sweepStaleRemovedTrackers() {
+  const form = document.getElementById("envForm");
+  if (!form) return;
+  const realNames = new Set();
+  form.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
+    if (el.hasAttribute("data-removed-env")) return; // skip tracker inputs themselves
+    if (el.name) realNames.add(el.name);
+  });
+  form.querySelectorAll("input[data-removed-env]").forEach((tracker) => {
+    if (realNames.has(tracker.dataset.removedEnv)) tracker.remove();
+  });
 }
 
 function cleanupRemovedIndexedRows() {
@@ -367,62 +542,203 @@ function cleanupRemovedIndexedRows() {
   });
 }
 
-function restoreMissingIndexedRows() {
-  const map = {
-    "rules": {prefix: "RULES", startAtOne: true},
-    "rulesets": {prefix: "RULE_SET", startAtOne: true},
-    "byedpi": {prefix: "BYEDPI_CMD", startAtOne: false},
-    "zapret": {prefix: "ZAPRET_CMD", startAtOne: false},
-    "zapret2": {prefix: "ZAPRET2_CMD", startAtOne: false},
-    "fakeFilters": {prefix: "FAKE_IP_FILTER", startAtOne: true}
-  };
-  Object.entries(map).forEach(([id, cfg]) => {
-    const wrap = document.getElementById(id);
-    if (!wrap) return;
-    const used = [...wrap.querySelectorAll("[data-index]")].map((r) => Number(r.dataset.index)).filter(Number.isFinite);
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key || !key.startsWith("mihomo-env:")) continue;
-      const name = key.slice("mihomo-env:".length);
-      const value = localStorage.getItem(key) || "";
-      if (value === "") continue;
-      const re = new RegExp("^" + cfg.prefix + "(\\d+)(_BASE64)?$");
-      const m = name.match(re);
-      if (!m) continue;
-      const idx = Number(m[1]);
-      if (used.includes(idx)) continue;
-      const div = document.createElement("div");
-      div.className = "env-row";
-      if (cfg.prefix === "RULES" || cfg.prefix === "RULE_SET") div.className = "env-row rule-row";
-      if (cfg.prefix === "BYEDPI_CMD") div.className = "env-row dpi-single-row";
-      if (cfg.prefix === "ZAPRET_CMD" || cfg.prefix === "ZAPRET2_CMD") div.className = "env-row dpi-packet-row";
-      if (cfg.prefix === "FAKE_IP_FILTER") div.className = "env-row env-row-stack fake-filter-row";
-      div.dataset.index = idx;
-      div.dataset.prefix = cfg.prefix;
-      div.dataset.startAtOne = cfg.startAtOne ? "true" : "false";
-      if (cfg.prefix === "RULE_SET") {
-        const keyName = "RULE_SET" + idx + "_BASE64";
-        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Редактировать">&#10002;</button><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-      } else if (cfg.prefix === "RULES") {
-        const keyName = "RULES" + idx;
-        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="DOMAIN,example.com,GLOBAL"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-      } else if (cfg.prefix === "FAKE_IP_FILTER") {
-        const keyName = "FAKE_IP_FILTER" + idx;
-        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="DOMAIN,www.youtube.com,real-ip"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-      } else {
-        const zeroPlain = !cfg.startAtOne;
-        const keyName = idx === 0 && zeroPlain ? cfg.prefix : cfg.prefix + idx;
-        div.innerHTML = `<label><span>${keyName}</span><input name="${keyName}" value="${escapeAttr(value)}" placeholder="значение env"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-      }
-      wrap.appendChild(div);
-      wireFieldEvents(div);
-      ensureIndexedRowControls(div);
-      used.push(idx);
+// Extract numeric idx + spec for any env name that belongs to an indexed
+// prefix family — including sub-keys (LINK1_DIALER_PROXY, SUB_LINK2_INTERVAL,
+// ZAPRET_PACKETS3). Returns null for non-indexed env names.
+function indexFromEnvName(name) {
+  // ZAPRET_PACKETS<N> / ZAPRET2_PACKETS<N> are sub-companions of ZAPRET(2)_CMD<N>
+  // — treat them as the parent's row so an orphan ZAPRET_PACKETS3 restores
+  // ZAPRET_CMD3's row.
+  let m = name.match(/^ZAPRET2_PACKETS(\d*)$/);
+  if (m) {
+    const idx = m[1] === "" ? 0 : Number(m[1]);
+    if (idx >= 0) return { prefix: "ZAPRET2_CMD", idx, spec: INDEXED_PREFIXES.ZAPRET2_CMD, kind: "companion", subSuffix: "" };
+  }
+  m = name.match(/^ZAPRET_PACKETS(\d*)$/);
+  if (m) {
+    const idx = m[1] === "" ? 0 : Number(m[1]);
+    if (idx >= 0) return { prefix: "ZAPRET_CMD", idx, spec: INDEXED_PREFIXES.ZAPRET_CMD, kind: "companion", subSuffix: "" };
+  }
+  // Walk prefixes longest-first so SUB_LINK wins over LINK and ZAPRET2_CMD
+  // wins over ZAPRET_CMD / ZAPRET2_PACKETS.
+  const prefixes = Object.keys(INDEXED_PREFIXES).sort((a, b) => b.length - a.length);
+  for (const prefix of prefixes) {
+    const spec = INDEXED_PREFIXES[prefix];
+    const suffix = spec.suffix || "";
+    // Main env: PREFIX(\d*)?SUFFIX — zeroPlain allows empty digits.
+    let m = name.match(new RegExp("^" + prefix + "(\\d*)" + (suffix ? suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : "") + "$"));
+    if (m) {
+      if (m[1] === "" && !spec.zeroPlain) continue;
+      const idx = m[1] === "" ? 0 : Number(m[1]);
+      if (idx < spec.minIndex) continue;
+      return { prefix, idx, spec, kind: "main", subSuffix: "" };
     }
+    // Sub env: PREFIX(\d*)_SOMETHING (only if no suffix-based prefix like RULE_SET)
+    if (!suffix) {
+      m = name.match(new RegExp("^" + prefix + "(\\d*)_([A-Z0-9_]+)$"));
+      if (m) {
+        if (m[1] === "" && !spec.zeroPlain) continue;
+        const idx = m[1] === "" ? 0 : Number(m[1]);
+        if (idx < spec.minIndex) continue;
+        // ZAPRET_PACKETS is its own pseudo-prefix exposed via spec.packets;
+        // don't double-claim ZAPRET_PACKETSn as a sub-env of ZAPRET_CMD.
+        // (the packets key gets restored as part of its parent's row markup)
+        if (spec.packets && (prefix + "_" + m[2]).indexOf(spec.packets) === 0) {
+          // accept — it's the packets companion
+        }
+        return { prefix, idx, spec, kind: "sub", subSuffix: "_" + m[2] };
+      }
+    }
+  }
+  return null;
+}
+
+function restoreMissingIndexedRows() {
+  // Collect every (prefix, idx) that has at least one non-empty draft in
+  // localStorage but no matching row in the DOM. Includes orphaned sub-keys
+  // (LINK1_DIALER_PROXY without a LINK1) so the row is rebuilt and the user
+  // doesn't lose the value silently.
+  const needed = new Map();  // key = prefix + "#" + idx → {prefix, idx, spec}
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith("mihomo-env:")) continue;
+    const value = localStorage.getItem(key) || "";
+    if (value === "") continue;
+    const info = indexFromEnvName(key.slice("mihomo-env:".length));
+    if (!info) continue;
+    const tag = info.prefix + "#" + info.idx;
+    if (!needed.has(tag)) needed.set(tag, info);
+  }
+  // Subtract whatever is already in the DOM.
+  document.querySelectorAll(".env-row[data-index]").forEach((row) => {
+    const cfg = indexedRowConfig(row);
+    if (!cfg) return;
+    needed.delete(cfg.prefix + "#" + Number(row.dataset.index));
   });
+
+  needed.forEach((info) => {
+    const { prefix, idx, spec } = info;
+    // SOCKS uses its own bespoke builder — delegate, then prefill from drafts.
+    if (prefix === "SOCKS" && typeof addSocksRow === "function") {
+      const wrap = document.getElementById(spec.containerId);
+      if (!wrap) return;
+      // addSocksRow auto-picks lowest free idx; we need a specific one.
+      addSocksRow();
+      const row = [...wrap.querySelectorAll(".socks-row")].pop();
+      if (!row) return;
+      row.dataset.index = idx;
+      const hidden = row.querySelector('input[type="hidden"]');
+      const newName = "SOCKS" + idx;
+      if (hidden) {
+        hidden.name = newName;
+        hidden.value = localStorage.getItem(envKey(newName)) || "";
+      }
+      const title = row.querySelector(".socks-title");
+      if (title) title.textContent = newName;
+      const indexInput = row.querySelector(".env-index input");
+      if (indexInput) indexInput.value = idx;
+      // Decode hidden value back into sub-fields if present.
+      if (hidden && hidden.value) {
+        const map = {};
+        hidden.value.split("#").forEach((kv) => {
+          const pos = kv.indexOf("=");
+          if (pos > 0) map[kv.slice(0, pos)] = kv.slice(pos + 1);
+        });
+        const set = (sel, v) => { const el = row.querySelector(sel); if (el && v != null) el.value = v; };
+        const chk = (sel, v) => { const el = row.querySelector(sel); if (el) el.checked = v === "true"; };
+        set(".socks-server", map.server);
+        set(".socks-port", map.port);
+        set(".socks-username", map.username);
+        set(".socks-password", map.password);
+        set(".socks-fingerprint", map.fingerprint);
+        set(".socks-ip-version", map["ip-version"]);
+        if ("tls" in map) chk(".socks-tls", map.tls);
+        if ("skip-cert-verify" in map) chk(".socks-skip-cert-verify", map["skip-cert-verify"]);
+        // udp default is true; explicit "false" → unchecked
+        const udp = row.querySelector(".socks-udp");
+        if (udp) udp.checked = map.udp !== "false";
+      }
+      return;
+    }
+
+    const wrap = document.getElementById(spec.containerId);
+    if (!wrap) return;
+    const envName = envNameFor(prefix, idx);       // canonical env (LINK / SUB_LINK0)
+    const displayName = displayNameFor(prefix, idx); // visual label (LINK0 / SUB_LINK0)
+    const value = localStorage.getItem(envKey(envName)) || "";
+
+    const div = document.createElement("div");
+    div.className = "env-row";
+    if (prefix === "RULES" || prefix === "RULE_SET") div.className = "env-row rule-row";
+    else if (prefix === "BYEDPI_CMD") div.className = "env-row dpi-single-row";
+    else if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") div.className = "env-row dpi-packet-row";
+    else if (prefix === "FAKE_IP_FILTER") div.className = "env-row env-row-stack fake-filter-row";
+    else if (prefix === "LINK") div.className = "env-row env-row-stack link-row";
+    else if (prefix === "SUB_LINK") div.className = "env-row env-row-stack sub-link-row";
+    div.dataset.index = idx;
+    div.dataset.prefix = prefix;
+    div.dataset.startAtOne = spec.minIndex >= 1 ? "true" : "false";
+    if (Number.isInteger(spec.maxIndex)) div.dataset.maxIndex = String(spec.maxIndex);
+
+    if (prefix === "RULE_SET") {
+      div.innerHTML = `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Редактировать">&#10002;</button><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    } else if (prefix === "RULES") {
+      div.innerHTML = `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="DOMAIN,example.com,GLOBAL"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    } else if (prefix === "FAKE_IP_FILTER") {
+      div.innerHTML = `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="DOMAIN,www.youtube.com,real-ip"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    } else if (prefix === "LINK") {
+      div.innerHTML =
+        `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="vless://..."></label>` +
+        `<label><span>${displayName}_DIALER_PROXY</span><input name="${envName}_DIALER_PROXY" value="${escapeAttr(localStorage.getItem(envKey(envName + "_DIALER_PROXY")) || "")}" placeholder="GLOBAL"></label>` +
+        `<label><span>${displayName}_AMNEZIA_COUNTRY</span><input name="${envName}_AMNEZIA_COUNTRY" value="${escapeAttr(localStorage.getItem(envKey(envName + "_AMNEZIA_COUNTRY")) || "")}" placeholder="nl"></label>` +
+        `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    } else if (prefix === "SUB_LINK") {
+      div.innerHTML =
+        `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="https://subscription"></label>` +
+        `<label><span>${displayName}_INTERVAL</span><input type="number" name="${envName}_INTERVAL" value="${escapeAttr(localStorage.getItem(envKey(envName + "_INTERVAL")) || "")}" placeholder="3600"></label>` +
+        `<label><span>${displayName}_PROXY</span><input name="${envName}_PROXY" value="${escapeAttr(localStorage.getItem(envKey(envName + "_PROXY")) || "")}" placeholder="DIRECT"></label>` +
+        `<label><span>${displayName}_DIALER_PROXY</span><input name="${envName}_DIALER_PROXY" value="${escapeAttr(localStorage.getItem(envKey(envName + "_DIALER_PROXY")) || "")}" placeholder="GLOBAL"></label>` +
+        `<div class="headers-editor">` +
+          `<span>${displayName}_HEADERS</span>` +
+          `<input type="hidden" class="sub-link-headers-value" name="${envName}_HEADERS" value="${escapeAttr(localStorage.getItem(envKey(envName + "_HEADERS")) || "")}">` +
+          `<div class="headers-rows"></div>` +
+          `<button type="button" class="headers-add">Добавить header</button>` +
+        `</div>` +
+        `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    } else if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") {
+      const packets = spec.packets;
+      const packetsName = packets + idx; // ZAPRET_PACKETS / ZAPRET2_PACKETS have no zeroPlain
+      const packetsVal = localStorage.getItem(envKey(packetsName)) || "";
+      div.innerHTML = `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="--dpi-desync=..."></label><label><span>${packetsName}</span><input name="${packetsName}" value="${escapeAttr(packetsVal)}" placeholder="12"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    } else if (prefix === "BYEDPI_CMD") {
+      div.innerHTML = `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="стратегия BYEDPI без --port и --transparent"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    } else {
+      div.innerHTML = `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="значение env"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    }
+    wrap.appendChild(div);
+    // Mark all inputs so wireFieldEvents knows these came from a draft, not
+    // from the server. Without this, wireFieldEvents would overwrite
+    // originalKey with the draft value, and any subsequent Delete would
+    // emit a spurious `remove` command for an env that never existed.
+    div.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
+      el.dataset.fromDraft = "true";
+    });
+    wireFieldEvents(div);
+    ensureIndexedRowControls(div);
+    if (prefix === "SUB_LINK" && typeof initHeadersEditors === "function") initHeadersEditors(div);
+  });
+  // Restored rows are appended in localStorage iteration order. Re-sort every
+  // wrap we touched so #0 isn't visually orphaned at the bottom.
+  document.querySelectorAll(".rows").forEach((wrap) => sortIndexedRows(wrap));
 }
 
 function shiftIndexedRow(row, targetIndex) {
+  // Minimal-displacement rename used by the manual number input.
+  // Rule of thumb: if the target slot is free, just rename — touch nothing
+  // else. If it's occupied, locate the nearest empty slot between source
+  // and target and only shift the rows in the narrow [gap..target] interval
+  // to fill it. So with 1,2,4,5 and a fresh row at 0, moving 0→5 leaves
+  // 1 and 2 untouched, slides 4→3 and 5→4, and the moved row lands at 5.
   const cfg = indexedRowConfig(row);
   if (!cfg) return false;
   const current = Number(row.dataset.index);
@@ -431,17 +747,30 @@ function shiftIndexedRow(row, targetIndex) {
   if (targetIndex === current) return true;
   const wrap = row.parentElement;
   const rows = indexedRowsIn(wrap);
+  const occupied = new Set(rows.filter((r) => r !== row).map((r) => Number(r.dataset.index)));
   const moves = [{row, to: targetIndex}];
-  if (targetIndex > current) {
-    rows.forEach((item) => {
-      const idx = Number(item.dataset.index);
-      if (item !== row && idx > current && idx <= targetIndex) moves.push({row: item, to: idx - 1});
-    });
-  } else {
-    rows.forEach((item) => {
-      const idx = Number(item.dataset.index);
-      if (item !== row && idx >= targetIndex && idx < current) moves.push({row: item, to: idx + 1});
-    });
+  if (occupied.has(targetIndex)) {
+    if (targetIndex > current) {
+      // Walk back from (target-1) toward current looking for an empty slot.
+      // If found at `gap`, only rows in (gap..target] need to shift down by 1.
+      let gap = current;
+      for (let i = targetIndex - 1; i > current; i--) {
+        if (!occupied.has(i)) { gap = i; break; }
+      }
+      rows.forEach((item) => {
+        const idx = Number(item.dataset.index);
+        if (item !== row && idx > gap && idx <= targetIndex) moves.push({row: item, to: idx - 1});
+      });
+    } else {
+      let gap = current;
+      for (let i = targetIndex + 1; i < current; i++) {
+        if (!occupied.has(i)) { gap = i; break; }
+      }
+      rows.forEach((item) => {
+        const idx = Number(item.dataset.index);
+        if (item !== row && idx >= targetIndex && idx < gap) moves.push({row: item, to: idx + 1});
+      });
+    }
   }
   applyIndexedBatch(wrap, moves);
   return true;
@@ -590,26 +919,25 @@ function dropIndicatorClear(wrap) {
 }
 
 function reorderIndexedRowsByVisualOrder(draggedRow, targetRow, after) {
-  const wrap = draggedRow.parentElement;
+  // Drag-drop is now a thin wrapper over shiftIndexedRow — derive the desired
+  // numeric target from the row at the drop position and let the minimal-
+  // displacement algorithm decide what (if anything) to shift. Previously
+  // we collapsed every row to a sequential cfg.min..cfg.min+N range, which
+  // gratuitously renumbered untouched rows and yanked LINK15 down to LINK8
+  // just because the user dragged it above LINK10.
   const cfg = indexedRowConfig(draggedRow);
   if (!cfg) return;
-  const rows = [...wrap.children].filter((item) => item.matches && item.matches(".env-row[data-index]") && indexedRowConfig(item));
-  const draggedPos = rows.indexOf(draggedRow);
-  let targetPos = rows.indexOf(targetRow);
-  if (draggedPos < 0 || targetPos < 0) return;
-  if (after) targetPos += 1;
-  if (draggedPos === targetPos || draggedPos + 1 === targetPos) return;
-  rows.splice(draggedPos, 1);
-  const insertPos = targetPos > draggedPos ? targetPos - 1 : targetPos;
-  rows.splice(insertPos, 0, draggedRow);
-  const maxAllowed = Number.isInteger(cfg.max) ? cfg.max : Infinity;
-  if ((cfg.min || 0) + rows.length - 1 > maxAllowed) return;
-  const moves = [];
-  rows.forEach((row, i) => {
-    const newIdx = (cfg.min || 0) + i;
-    if (Number(row.dataset.index) !== newIdx) moves.push({row, to: newIdx});
-  });
-  if (moves.length) applyIndexedBatch(wrap, moves);
+  const currentIdx = Number(draggedRow.dataset.index);
+  const targetIdx = Number(targetRow.dataset.index);
+  if (!Number.isInteger(currentIdx) || !Number.isInteger(targetIdx)) return;
+  // Visually "above" → take the target's slot. "Below" → next slot after target.
+  let desired = after ? targetIdx + 1 : targetIdx;
+  // Skip no-op: drop is on dragged row itself or right after it where it already sits.
+  if (desired === currentIdx) return;
+  const minIndex = Number.isInteger(cfg.min) ? cfg.min : 0;
+  if (desired < minIndex) desired = minIndex;
+  if (Number.isInteger(cfg.max) && desired > cfg.max) desired = cfg.max;
+  shiftIndexedRow(draggedRow, desired);
 }
 
 function ruleSetB64Decode(value) {
@@ -1405,6 +1733,7 @@ function enhanceIndexedRows(root) {
   (root || document).querySelectorAll(".env-row[data-index]").forEach((row) => {
     ensureIndexedRowControls(row);
     wireIndexedRow(row);
+    relabelIndexedRow(row);
   });
 }
 
@@ -1811,9 +2140,6 @@ function buildPreviewRules() {
     const prio = Number(name.slice(5));
     const value = env.get(name) || "";
     const parts = value.split(";").map((x) => x.trim()).filter(Boolean);
-    if (!parts.length && localStorage.getItem(originalKey(name)) === "" && localStorage.getItem(envKey(name)) === "") {
-      parts.push("");
-    }
     parts.forEach((rule) => rules.push({prio, origin: name, detail: "editable", rule, editable: true}));
   });
   const groupNames = splitList(env.get("GROUP"));
@@ -1916,14 +2242,27 @@ function removeEnvRow(btn) {
   const row = btn.closest(".env-row");
   if (!row) return;
   row.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
-    if (localStorage.getItem(originalKey(el.name)) === null) {
-      localStorage.setItem(originalKey(el.name), fieldValue(el));
+    const wasOnServer = (localStorage.getItem(originalKey(el.name)) || "") !== "";
+    if (wasOnServer) {
+      localStorage.setItem(envKey(el.name), "");
+      trackRemovedEnv(el.name);
+    } else {
+      // Pure draft — purge from localStorage instead of leaving an empty
+      // record that would later look "modified to empty" or trigger a
+      // spurious /container/envs/remove.
+      localStorage.removeItem(envKey(el.name));
+      localStorage.removeItem(originalKey(el.name));
+      localStorage.removeItem(pageKey(el.name));
     }
-    localStorage.setItem(envKey(el.name), "");
-    trackRemovedEnv(el.name);
   });
   row.remove();
   if (document.getElementById("finalRulesPreview")) renderRulesPreview();
+  // Badges + pending-removals panel need an explicit refresh: removing a row
+  // doesn't trigger any input/change event that the form's bubble listener
+  // would catch, so without this call the modified-count chip and the
+  // "будут удалены" banner stay stale until the user touches another field
+  // or navigates away and back.
+  if (typeof refreshAllBadges === "function") refreshAllBadges();
 }
 
 function switchYaml(name) {
@@ -2000,6 +2339,600 @@ document.addEventListener("pointerdown", (event) => {
   if (pre) activeYamlPre = pre;
 });
 
+// ===== SOCKS5 provider editor (Providers → SOCKS* tab) =====
+// Each SOCKS<N>= env is a single '#'-separated key=value string. The visible
+// editor breaks it into named sub-fields; on every input we rebuild the
+// hidden ENV value.
+
+function socksRowReadSubfields(row) {
+  const get = (sel) => row.querySelector(sel);
+  const trim = (v) => (v == null ? "" : String(v).trim());
+  return {
+    server:   trim(get(".socks-server")?.value),
+    port:     trim(get(".socks-port")?.value),
+    username: trim(get(".socks-username")?.value),
+    password: trim(get(".socks-password")?.value),
+    fingerprint: trim(get(".socks-fingerprint")?.value),
+    "ip-version": trim(get(".socks-ip-version")?.value),
+    tls: get(".socks-tls")?.checked ? "true" : "",
+    "skip-cert-verify": get(".socks-skip-cert-verify")?.checked ? "true" : "",
+    // udp defaults to true in entrypoint, so we emit explicit false only.
+    udp: get(".socks-udp")?.checked ? "" : "false",
+  };
+}
+
+function syncSocksRow(row) {
+  if (!row) return;
+  const hidden = row.querySelector('input[type="hidden"]');
+  if (!hidden) return;
+  const vals = socksRowReadSubfields(row);
+  // Keep deterministic order matching entrypoint expectations:
+  const order = ["server", "port", "username", "password", "tls", "fingerprint", "skip-cert-verify", "udp", "ip-version"];
+  const parts = [];
+  order.forEach((k) => {
+    const v = vals[k];
+    if (v !== "" && v !== undefined && v !== null) parts.push(k + "=" + v);
+  });
+  hidden.value = parts.join("#");
+  // Bubble to localStorage / draft system + badges.
+  rememberField(hidden);
+  refreshAllBadges();
+}
+
+function wireSocksRow(row) {
+  row.querySelectorAll("input, select").forEach((el) => {
+    if (el.type === "hidden") return;
+    el.addEventListener("input",  () => syncSocksRow(row));
+    el.addEventListener("change", () => syncSocksRow(row));
+  });
+}
+
+function socksTitleEl(row) {
+  return row.querySelector(".socks-title");
+}
+
+function addSocksRow() {
+  const wrap = document.getElementById("socksRows");
+  if (!wrap) return;
+  const usedIdx = new Set();
+  wrap.querySelectorAll(".socks-row").forEach((r) => {
+    const i = parseInt(r.dataset.index || "-1", 10);
+    if (!isNaN(i)) usedIdx.add(i);
+  });
+  let idx = 0;
+  while (usedIdx.has(idx)) idx += 1;
+  const name = "SOCKS" + idx;
+  const div = document.createElement("div");
+  div.className = "env-row socks-row";
+  div.dataset.index = String(idx);
+  div.dataset.maxIndex = "99";
+  div.innerHTML = `
+    <input type="hidden" name="${name}" value="" data-default="" data-base="SOCKS">
+    <div class="socks-content">
+      <b class="socks-title">${name}</b>
+      <div class="socks-grid">
+        <label><span>server *</span><input class="socks-server" placeholder="1.2.3.4 / host"></label>
+        <label><span>port *</span><input class="socks-port" type="number" placeholder="1080"></label>
+        <label><span>username</span><input class="socks-username"></label>
+        <label><span>password</span><input class="socks-password"></label>
+        <label><span>fingerprint</span><input class="socks-fingerprint" placeholder="chrome / firefox / …"></label>
+        <label><span>ip-version</span>
+          <select class="socks-ip-version">
+            <option value="" selected>— (default ipv4) —</option>
+            <option value="ipv4">ipv4</option>
+            <option value="ipv6">ipv6</option>
+            <option value="dual">dual</option>
+            <option value="ipv4-prefer">ipv4-prefer</option>
+            <option value="ipv6-prefer">ipv6-prefer</option>
+          </select>
+        </label>
+      </div>
+      <div class="socks-toggles">
+        <label class="socks-toggle"><input type="checkbox" class="socks-tls"><span>tls</span></label>
+        <label class="socks-toggle"><input type="checkbox" class="socks-skip-cert-verify"><span>skip-cert-verify</span></label>
+        <label class="socks-toggle"><input type="checkbox" class="socks-udp" checked><span>udp</span></label>
+      </div>
+    </div>
+    <button type="button" onclick="removeSocksRow(this)">Удалить</button>
+  `;
+  wrap.appendChild(div);
+  // New SOCKS row is a draft, not from server.
+  div.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
+    el.dataset.fromDraft = "true";
+  });
+  // Re-use existing indexed-row machinery (grip + index input + drag).
+  if (typeof ensureIndexedRowControls === "function") ensureIndexedRowControls(div);
+  if (typeof initDragAndDrop === "function") initDragAndDrop(wrap);
+  wireSocksRow(div);
+  syncSocksRow(div);
+  sortIndexedRows(wrap);
+  if (typeof refreshAllBadges === "function") refreshAllBadges();
+}
+
+function removeSocksRow(btn) {
+  const row = btn.closest(".socks-row");
+  if (!row) return;
+  const hidden = row.querySelector('input[type="hidden"]');
+  if (hidden && hidden.name) {
+    try { localStorage.setItem(envKey(hidden.name), ""); } catch (e) {}
+  }
+  row.remove();
+  refreshAllBadges();
+}
+
+function initSocksEditor() {
+  const wrap = document.getElementById("socksRows");
+  if (!wrap) return;
+  wrap.querySelectorAll(".socks-row").forEach((row) => wireSocksRow(row));
+  // Keep title <b> in sync with the index input from indexed-row machinery.
+  wrap.addEventListener("input", (e) => {
+    if (!e.target.matches(".env-index input")) return;
+    const row = e.target.closest(".socks-row");
+    if (!row) return;
+    const hidden = row.querySelector('input[type="hidden"]');
+    const title = socksTitleEl(row);
+    if (hidden && title) title.textContent = hidden.name;
+  });
+}
+
+// ===== Validation for *_USE and *_PROXIES inputs (proxy groups page) =====
+
+function readKnownProvidersSeed() {
+  const el = document.getElementById("known-providers-seed");
+  if (!el) return { awg: [], mounted: [] };
+  try { return JSON.parse(el.textContent || "{}"); }
+  catch (e) { return { awg: [], mounted: [] }; }
+}
+
+function knownProviders() {
+  const set = new Set();
+  const seed = readKnownProvidersSeed();
+  (seed.awg || []).forEach((n) => set.add(n));
+  (seed.mounted || []).forEach((n) => set.add(n));
+  // `envs` is the server-emitted snapshot of LINK*/SUB_LINK*/SOCKS*/DPI names
+  // (see groups_page in cgi-bin/index.sh). Without it the validator could only
+  // see ENV names that already had localStorage drafts — i.e. ones the user
+  // had visited at least once.
+  (seed.envs || []).forEach((n) => set.add(n));
+  // Dynamic providers derived from currently-set ENVs (LINK/SUB_LINK/SOCKS
+  // and DPI variants). Read from localStorage so this works cross-page.
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith("mihomo-env:")) continue;
+    const name = key.slice("mihomo-env:".length);
+    const val = (localStorage.getItem(key) || "").trim();
+    if (!val) continue;
+    let m;
+    if (/^LINK\d*$/.test(name) || /^SUB_LINK\d+$/.test(name) || /^SOCKS\d+$/.test(name)) {
+      set.add(name);
+    } else if ((m = name.match(/^BYEDPI_CMD(\d*)$/))) {
+      set.add(m[1] ? "BYEDPI_" + m[1] : "BYEDPI");
+    } else if ((m = name.match(/^ZAPRET_CMD(\d*)$/))) {
+      set.add(m[1] ? "ZAPRET_" + m[1] : "ZAPRET");
+    } else if ((m = name.match(/^ZAPRET2_CMD(\d*)$/))) {
+      set.add(m[1] ? "ZAPRET2_" + m[1] : "ZAPRET2");
+    }
+  }
+  return set;
+}
+
+function knownGroups() {
+  // Group names case-sensitive: validator matches exactly what user typed
+  // in GROUP env. Hard-coded system groups are uppercase by entrypoint
+  // contract — they're always referenced as DEFAULT/GLOBAL/DNS.
+  const set = new Set(["DEFAULT", "GLOBAL", "DNS"]);
+  const env = localStorage.getItem("mihomo-env:GROUP") || "";
+  env.split(",").forEach((g) => {
+    const t = g.trim();
+    if (t) set.add(t);
+  });
+  document.querySelectorAll('.group-pane[data-source="ruleset"]').forEach((p) => {
+    if (p.dataset.group) set.add(p.dataset.group);
+  });
+  return set;
+}
+
+const PROXIES_SPECIALS = new Set(["DIRECT", "REJECT", "REJECT-DROP", "PASS"]);
+
+function setFieldValidity(box, kind, message) {
+  box.classList.remove("field-invalid", "field-warn");
+  const input = box.querySelector("input, textarea");
+  if (kind === "ok") {
+    box.removeAttribute("data-tooltip");
+    if (input) input.removeAttribute("aria-invalid");
+    return;
+  }
+  box.setAttribute("data-tooltip", message || "");
+  box.classList.add(kind === "warn" ? "field-warn" : "field-invalid");
+  if (input) input.setAttribute("aria-invalid", kind === "invalid" ? "true" : "false");
+}
+
+// Returns { items, syntaxError } parsing a comma-separated list.
+// syntaxError fires on trailing comma, double comma, or leading/trailing
+// whitespace inside an element (e.g. "LINK1 ,LINK2" / " LINK1").
+function parseCsvField(raw) {
+  if (!raw) return { items: [], syntaxError: null };
+  // Strict: no leading/trailing whitespace in the raw value either.
+  if (/^\s|\s$/.test(raw)) {
+    return { items: [], syntaxError: "лишние пробелы по краям значения" };
+  }
+  const parts = raw.split(",");
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i] === "") {
+      return { items: [], syntaxError: i === parts.length - 1
+        ? "висячая запятая в конце"
+        : "пустой элемент между запятыми" };
+    }
+    if (/^\s|\s$/.test(parts[i])) {
+      return { items: [], syntaxError: 'лишний пробел вокруг "' + parts[i].trim() + '"' };
+    }
+  }
+  return { items: parts, syntaxError: null };
+}
+
+function validateUseInput(input) {
+  const box = input.closest(".field-validated");
+  if (!box) return;
+  const raw = input.value || "";
+  if (!raw) { setFieldValidity(box, "ok"); return; }
+  if (raw === "none") { setFieldValidity(box, "ok"); return; }
+  const parsed = parseCsvField(raw);
+  if (parsed.syntaxError) { setFieldValidity(box, "invalid", "Синтаксис: " + parsed.syntaxError); return; }
+  const providers = knownProviders();
+  const unknown = parsed.items.filter((it) => !providers.has(it));
+  if (unknown.length) {
+    setFieldValidity(box, "invalid", "Не найдены провайдеры (регистрозависимо): " + unknown.join(", "));
+  } else {
+    setFieldValidity(box, "ok");
+  }
+}
+
+function validateProxiesInput(input) {
+  const box = input.closest(".field-validated");
+  if (!box) return;
+  const raw = input.value || "";
+  if (!raw) { setFieldValidity(box, "ok"); return; }
+  const parsed = parseCsvField(raw);
+  if (parsed.syntaxError) { setFieldValidity(box, "invalid", "Синтаксис: " + parsed.syntaxError); return; }
+  const groups = knownGroups();
+  const unknown = parsed.items.filter((it) => {
+    if (PROXIES_SPECIALS.has(it)) return false;     // strict-case specials
+    if (groups.has(it)) return false;               // strict-case group name
+    return true;
+  });
+  if (unknown.length) {
+    setFieldValidity(box, "invalid", "Допустимы только имена прокси-групп (регистрозависимо) и DIRECT/REJECT/REJECT-DROP/PASS. Неизвестно: " + unknown.join(", "));
+  } else {
+    setFieldValidity(box, "ok");
+  }
+}
+
+function initFieldValidators() {
+  const validators = {
+    use: validateUseInput,
+    proxies: validateProxiesInput,
+  };
+  document.querySelectorAll(".field-validated").forEach((box) => {
+    const kind = box.dataset.validate;
+    const fn = validators[kind];
+    if (!fn) return;
+    const input = box.querySelector("input, textarea");
+    if (!input) return;
+    const run = () => fn(input);
+    input.addEventListener("input", run);
+    input.addEventListener("change", run);
+    run();
+  });
+  // Re-validate when other ENVs change (providers list might've grown).
+  window.addEventListener("storage", (e) => {
+    if (!e.key || !e.key.startsWith("mihomo-env:")) return;
+    document.querySelectorAll(".field-validated").forEach((box) => {
+      const kind = box.dataset.validate;
+      const fn = validators[kind];
+      if (!fn) return;
+      const input = box.querySelector("input, textarea");
+      if (input) fn(input);
+    });
+  });
+}
+
+// ===== Sticky page tabs + modified-count badges =====
+
+function activeTabKey() {
+  return "mihomo-tab:" + location.pathname;
+}
+
+function activatePageTab(tabId) {
+  const tabs = document.querySelectorAll(".page-tabs .page-tab");
+  const panels = document.querySelectorAll(".tab-panel");
+  if (!tabs.length || !panels.length) return;
+  let matched = false;
+  panels.forEach((p) => {
+    const on = p.dataset.tab === tabId;
+    p.hidden = !on;
+    if (on) matched = true;
+  });
+  if (!matched) {
+    const first = tabs[0] && tabs[0].dataset.tab;
+    if (first) {
+      panels.forEach((p) => { p.hidden = p.dataset.tab !== first; });
+      tabId = first;
+    }
+  }
+  tabs.forEach((btn) => {
+    const on = btn.dataset.tab === tabId;
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  try { localStorage.setItem(activeTabKey(), tabId); } catch (e) {}
+}
+
+function initPageTabs() {
+  const nav = document.querySelector(".page-tabs");
+  if (!nav) return;
+  nav.querySelectorAll(".page-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.tab;
+      activatePageTab(id);
+      // Update hash without scroll jump
+      if (history && history.replaceState) {
+        history.replaceState(null, "", "#" + encodeURIComponent(id));
+      } else {
+        location.hash = id;
+      }
+    });
+  });
+  window.addEventListener("hashchange", () => {
+    const id = decodeURIComponent(location.hash.slice(1));
+    if (id && nav.querySelector('.page-tab[data-tab="' + CSS.escape(id) + '"]')) {
+      activatePageTab(id);
+    }
+  });
+  // Pick initial tab: URL hash > localStorage > first
+  const fromHash = decodeURIComponent(location.hash.slice(1));
+  const fromLs = (() => { try { return localStorage.getItem(activeTabKey()) || ""; } catch (e) { return ""; } })();
+  const firstId = nav.querySelector(".page-tab") && nav.querySelector(".page-tab").dataset.tab;
+  const candidates = [fromHash, fromLs, firstId].filter(Boolean);
+  let initial = firstId;
+  for (const c of candidates) {
+    if (nav.querySelector('.page-tab[data-tab="' + CSS.escape(c) + '"]')) { initial = c; break; }
+  }
+  activatePageTab(initial);
+}
+
+// Walks every named form field, marks both the input and its nearest visual
+// container (.field / .toggle / .env-row) as modified. Updates the status <i>
+// indicator if present. Handles dynamic rows (LINK/SUB_LINK/SOCKS/etc) too.
+function refreshFieldMarkers() {
+  // Reset: drop all field-modified markers and restore server statuses.
+  document.querySelectorAll("#envForm .field-modified").forEach((el) => el.classList.remove("field-modified"));
+  document.querySelectorAll("#envForm i[data-server-status]").forEach((el) => {
+    el.textContent = el.dataset.serverStatus;
+    delete el.dataset.serverStatus;
+  });
+
+  document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]").forEach((input) => {
+    if (input.type === "submit" || input.type === "button") return;
+    if (!input.name) return;
+    const original = localStorage.getItem(originalKey(input.name));
+    if (original === null) return;
+    const current = fieldValue(input);
+    const modified = current !== original;
+    input.dataset.modified = modified ? "true" : "false";
+    if (!modified) return;
+
+    // Mark closest visual container: prefer .field / .toggle (server-rendered
+    // fields), fall back to .env-row (dynamic rows like LINK/SUB_LINK/SOCKS).
+    const box = input.closest(".field, .toggle") || input.closest(".env-row");
+    if (box) box.classList.add("field-modified");
+
+    const statusEl = box && box.querySelector(":scope > .field-meta > i, :scope > i");
+    if (statusEl) {
+      statusEl.dataset.serverStatus = statusEl.textContent;
+      statusEl.textContent = "modified";
+    }
+  });
+}
+
+// Count modified by inspecting actual inputs (works for dynamic rows where
+// .field-modified class might not be applied to a single anchor box).
+function countModifiedInScope(scope) {
+  if (!scope) return 0;
+  let n = 0;
+  scope.querySelectorAll("input[name], textarea[name], select[name]").forEach((input) => {
+    if (input.type === "submit" || input.type === "button") return;
+    if (!input.name) return;
+    const original = localStorage.getItem(originalKey(input.name));
+    if (original === null) return;
+    if (fieldValue(input) !== original) n += 1;
+  });
+  return n;
+}
+
+function countInvalidInScope(scope) {
+  if (!scope) return 0;
+  return scope.querySelectorAll(".field-invalid").length;
+}
+
+function setBadge(badgeEl, count) {
+  if (!badgeEl) return;
+  if (count > 0) {
+    badgeEl.textContent = String(count);
+    badgeEl.hidden = false;
+  } else {
+    badgeEl.hidden = true;
+    badgeEl.textContent = "";
+  }
+}
+
+function updateTabBadges() {
+  document.querySelectorAll(".page-tabs .page-tab").forEach((btn) => {
+    const panel = document.querySelector('.tab-panel[data-tab="' + CSS.escape(btn.dataset.tab) + '"]');
+    setBadge(btn.querySelector('.badge[data-kind="changed"]'), countModifiedInScope(panel));
+    setBadge(btn.querySelector('.badge[data-kind="error"]'),   countInvalidInScope(panel));
+  });
+}
+
+// Side-nav badges: changed-count is cross-page (computed from localStorage),
+// error-count is current-page only (validators only run for visible DOM).
+function updateNavBadges() {
+  const byPathChanged = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith("mihomo-env:")) continue;
+    const name = key.slice("mihomo-env:".length);
+    const cur = localStorage.getItem(key) || "";
+    const orig = localStorage.getItem(originalKey(name));
+    if (orig === null) continue;
+    if (cur === orig) continue;
+    const path = localStorage.getItem(pageKey(name));
+    if (!path) continue;
+    byPathChanged[path] = (byPathChanged[path] || 0) + 1;
+  }
+  const currentPath = location.pathname;
+  const errorsHere = document.querySelectorAll("#envForm .field-invalid").length;
+
+  document.querySelectorAll(".side nav a").forEach((a) => {
+    const href = a.getAttribute("href") || "";
+    const absPath = href.startsWith("/") ? href : "/" + href.replace(/^\.\//, "");
+    let changed = 0;
+    for (const p in byPathChanged) {
+      if (p === absPath || p.endsWith("/" + href) || p === href) changed += byPathChanged[p];
+    }
+    // Error badge is set only for the current page (no cross-page tracking).
+    const isCurrent = currentPath === absPath || currentPath.endsWith("/" + href);
+    const errors = isCurrent ? errorsHere : 0;
+
+    let changedBadge = a.querySelector('.nav-badge[data-kind="changed"]');
+    if (!changedBadge) {
+      changedBadge = document.createElement("span");
+      changedBadge.className = "nav-badge badge-changed";
+      changedBadge.dataset.kind = "changed";
+      changedBadge.hidden = true;
+      a.appendChild(changedBadge);
+    }
+    let errorBadge = a.querySelector('.nav-badge[data-kind="error"]');
+    if (!errorBadge) {
+      errorBadge = document.createElement("span");
+      errorBadge.className = "nav-badge badge-error";
+      errorBadge.dataset.kind = "error";
+      errorBadge.hidden = true;
+      a.appendChild(errorBadge);
+    }
+    setBadge(changedBadge, changed);
+    setBadge(errorBadge,   errors);
+  });
+}
+
+// Modified-count + error-count chips on the left-column group list
+// (proxy-groups page). Mirrors updateTabBadges but scopes to .group-pane.
+function updateGroupBadges() {
+  document.querySelectorAll(".group-list button[data-group]").forEach((btn) => {
+    const name = btn.dataset.group;
+    const pane = [...document.querySelectorAll(".group-pane")].find((p) => p.dataset.group === name);
+    // Right-side column wrapper so badges span the full button height
+    // instead of falling into a third row under the small/prefix label.
+    let holder = btn.querySelector(".group-badges");
+    if (!holder) {
+      holder = document.createElement("span");
+      holder.className = "group-badges";
+      btn.appendChild(holder);
+    }
+    let changedBadge = holder.querySelector('.nav-badge[data-kind="changed"]');
+    if (!changedBadge) {
+      changedBadge = document.createElement("span");
+      changedBadge.className = "nav-badge badge-changed";
+      changedBadge.dataset.kind = "changed";
+      changedBadge.hidden = true;
+      holder.appendChild(changedBadge);
+    }
+    let errorBadge = holder.querySelector('.nav-badge[data-kind="error"]');
+    if (!errorBadge) {
+      errorBadge = document.createElement("span");
+      errorBadge.className = "nav-badge badge-error";
+      errorBadge.dataset.kind = "error";
+      errorBadge.hidden = true;
+      holder.appendChild(errorBadge);
+    }
+    setBadge(changedBadge, countModifiedInScope(pane));
+    setBadge(errorBadge,   countInvalidInScope(pane));
+  });
+}
+
+// Walk localStorage for env names that *had* a server value but now have an
+// empty draft — these are the names that will turn into /container/envs/remove
+// commands. Without this panel a user shuffling indexed rows can't tell why
+// the command output also contains a remove (e.g. LINK10 → LINK11 leaves
+// LINK10 as a pending removal because LINK10 was the on-server slot).
+function collectPendingRemovals() {
+  const list = [];
+  const seen = new Set();
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith("mihomo-env:")) continue;
+    const name = key.slice("mihomo-env:".length);
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const cur = localStorage.getItem(key) || "";
+    if (cur !== "") continue;                            // still has a value
+    const orig = localStorage.getItem(originalKey(name));
+    if (!orig) continue;                                  // wasn't on server
+    const path = localStorage.getItem(pageKey(name)) || "";
+    list.push({name, orig, path});
+  }
+  // Also pick up originalKey entries with no corresponding envKey at all —
+  // happens when removeEnvRow ran on a server-backed row that was later
+  // deleted entirely from the draft envKey (purged by some operation).
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith("mihomo-original:")) continue;
+    const name = key.slice("mihomo-original:".length);
+    if (seen.has(name)) continue;
+    const orig = localStorage.getItem(key) || "";
+    if (!orig) continue;
+    if (localStorage.getItem(envKey(name)) !== null) continue;
+    seen.add(name);
+    list.push({name, orig, path: localStorage.getItem(pageKey(name)) || ""});
+  }
+  list.sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
+  return list;
+}
+
+function updatePendingRemovalsPanel() {
+  const form = document.getElementById("envForm");
+  if (!form) return;
+  let panel = document.getElementById("pendingRemovalsPanel");
+  const items = collectPendingRemovals();
+  if (!panel) {
+    panel = document.createElement("section");
+    panel.id = "pendingRemovalsPanel";
+    panel.className = "pending-removals panel";
+    panel.hidden = true;
+    form.insertBefore(panel, form.firstElementChild);
+  }
+  if (!items.length) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+  panel.hidden = false;
+  const intro = `<div class="pending-removals-head"><b>Будут удалены при применении (${items.length}):</b><span>значения были на сервере, но в черновике пусты. Откатить — «Сбросить страницу» или «Сбросить черновик».</span></div>`;
+  const chips = items.map((it) => {
+    const safeName = escapeAttr(it.name);
+    const tip = escapeAttr(it.orig.length > 80 ? it.orig.slice(0, 77) + "…" : it.orig);
+    return `<span class="pending-chip" title="Прежнее значение: ${tip}"><code>${safeName}</code></span>`;
+  }).join("");
+  panel.innerHTML = intro + '<div class="pending-removals-list">' + chips + '</div>';
+}
+
+function refreshAllBadges() {
+  refreshFieldMarkers();
+  updateTabBadges();
+  updateNavBadges();
+  updateGroupBadges();
+  updatePendingRemovalsPanel();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   applyTheme(localStorage.getItem("mihomo-theme") || "dark");
   const envListInput = document.getElementById("commandEnvList");
@@ -2014,13 +2947,33 @@ document.addEventListener("DOMContentLoaded", () => {
   initGroupEditor();
   initHeadersEditors(document);
   initWgEndpointEditors(document);
+  initPageTabs();
+  initSocksEditor();
+  initFieldValidators();
   renderRulesPreview();
+  refreshAllBadges();
   document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]").forEach((el) => {
     el.addEventListener("input", renderRulesPreview);
     el.addEventListener("change", renderRulesPreview);
+    el.addEventListener("input", refreshAllBadges);
+    el.addEventListener("change", refreshAllBadges);
   });
+  // Delegated catcher: any input bubbling up from dynamically-added rows
+  // (LINK/SUB_LINK/SOCKS/ZAPRET extra fields, group panes added at runtime,
+  // SOCKS sub-fields that write to hidden inputs, etc.) also triggers badge
+  // and field-marker refresh.
+  const envForm = document.getElementById("envForm");
+  if (envForm) {
+    envForm.addEventListener("input",  refreshAllBadges);
+    envForm.addEventListener("change", refreshAllBadges);
+    envForm.addEventListener("input",  renderRulesPreview);
+    envForm.addEventListener("change", renderRulesPreview);
+  }
   window.addEventListener("storage", (event) => {
-    if (event.key && event.key.startsWith("mihomo-env:")) renderRulesPreview();
+    if (event.key && event.key.startsWith("mihomo-env:")) {
+      renderRulesPreview();
+      refreshAllBadges();
+    }
   });
   document.querySelectorAll(".dns-policy-row input").forEach((input) => input.addEventListener("input", syncDnsPolicy));
   syncDnsPolicy();
