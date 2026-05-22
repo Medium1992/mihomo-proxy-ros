@@ -139,7 +139,7 @@ ARG TARGETVARIANT
 COPY --from=package /final /
 
 RUN if [ "$TARGETARCH" = "arm64" ] || [ "$TARGETARCH" = "amd64" ]; then \
-        apk add --no-cache ca-certificates busybox-extras openssl tzdata iproute2 nftables; \
+        apk add --no-cache ca-certificates busybox-extras openssl ngtcp2 nghttp3 tzdata iproute2 nftables; \
     elif [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v7" ]; then \
         apk add --no-cache ca-certificates busybox-extras openssl tzdata iproute2 iptables iptables-legacy; \
     fi && \
