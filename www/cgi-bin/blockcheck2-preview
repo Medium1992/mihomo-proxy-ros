@@ -1,0 +1,66 @@
+#!/bin/sh
+# GET /cgi-bin/blockcheck2-preview?level=basic|full&fakebin=0|1&include=http,tls,quic
+# Returns JSON {ok, total, list_b64} where list_b64 is base64 of the strategies.list
+# produced by blockcheck2 gen-strategies. Used by the UI to show what will be tested.
+
+echo "Content-Type: application/json; charset=utf-8"
+echo ""
+
+err() {
+  msg="$1"
+  printf '{"ok":false,"error_b64":"%s"}\n' \
+    "$(printf '%s' "$msg" | base64 -w0 2>/dev/null || printf '%s' "$msg" | base64 | tr -d '\n')"
+  exit 0
+}
+
+BC_DIR="${BC_DIR:-/www/blockcheck2}"
+[ -f "$BC_DIR/gen-strategies" ] || err "$BC_DIR/gen-strategies не найден"
+
+qs_get() {
+  printf '%s' "$QUERY_STRING" | tr '&' '\n' | awk -F= -v k="$1" '$1==k{print $2; exit}'
+}
+# URL-decode percent-escapes. Browsers always encode commas as %2C in
+# query strings, so without this `include=http,tls12,tls13` arrives as
+# `http%2Ctls12%2Ctls13` and the validator rightfully rejects %/2/C.
+urldec() {
+  printf '%b' "$(printf '%s' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
+}
+
+level=$(urldec   "$(qs_get level)");   [ -z "$level"   ] && level=basic
+include=$(urldec "$(qs_get include)"); [ -z "$include" ] && include="http,tls12,tls13"
+fakebin=$(qs_get fakebin);             [ "$fakebin" = "1" ] || fakebin=0
+
+case "$level" in
+  quick|basic|medium|extended|full) ;;
+  *[!0-9]*|'') err "level must be quick|basic|medium|extended|full or a positive integer" ;;
+  *) ;;
+esac
+case "$include" in *[!a-z0-9,]*) err "include contains invalid chars (allowed: a-z, 0-9, comma): '$include'" ;; esac
+
+args="--level=$level --include=$include"
+if [ "$fakebin" = "1" ] && [ -d /zapret-fakebin ]; then
+  args="$args --fakebin-dir=/zapret-fakebin"
+fi
+
+# Capture stderr too — if gen-strategies fails it's useful for the user
+# to see WHY rather than just an empty preview.
+tmp_err=$(mktemp 2>/dev/null || echo /tmp/bcprev_err.$$)
+out=$(sh "$BC_DIR/gen-strategies" $args 2>"$tmp_err")
+rc=$?
+errtail=$(tail -c 400 "$tmp_err" 2>/dev/null | tr '\n\r\t' '   ')
+rm -f "$tmp_err"
+
+# Non-empty output lines (already non-blank from generator).
+total=$(printf '%s' "$out" | awk 'NF' | wc -l | tr -d ' ')
+b64=$(printf '%s' "$out" | base64 -w0 2>/dev/null || printf '%s' "$out" | base64 | tr -d '\n')
+
+if [ "$rc" -ne 0 ] || [ "${total:-0}" -eq 0 ]; then
+  msg="gen-strategies rc=$rc total=$total args='$args'"
+  [ -n "$errtail" ] && msg="$msg | stderr: $errtail"
+  printf '{"ok":false,"level":"%s","total":0,"error_b64":"%s"}\n' \
+    "$level" \
+    "$(printf '%s' "$msg" | base64 -w0 2>/dev/null || printf '%s' "$msg" | base64 | tr -d '\n')"
+  exit 0
+fi
+
+printf '{"ok":true,"level":"%s","total":%s,"list_b64":"%s"}\n' "$level" "$total" "$b64"

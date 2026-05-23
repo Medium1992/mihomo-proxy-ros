@@ -1833,3 +1833,93 @@ nav a .nav-badge[data-kind="changed"] + .nav-badge[data-kind="error"] {
   line-height: 1;
 }
 .socks-toggle:has(input:checked) > span { color: var(--accent-strong); font-weight: 700; }
+
+/* ===== Blockcheck (DPI strategy scanner) ===== */
+.notice-warn {
+  border-left: 3px solid #d4a017;
+  background: rgba(212, 160, 23, 0.08);
+}
+.blockcheck-controls { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; }
+.blockcheck-controls textarea { font-family: monospace; min-height: 80px; }
+.bc-tests { display: flex; gap: 16px; flex-wrap: wrap; }
+.bc-tests label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.bc-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.bc-actions button { padding: 6px 14px; }
+.bc-actions .primary { background: var(--accent); color: #fff; border: none; border-radius: 4px; }
+.bc-table-box { margin: 10px 0; border: 1px solid var(--border, #333); border-radius: 6px; padding: 6px 10px; overflow: hidden; }
+.bc-table-box > summary { cursor: pointer; padding: 4px 0; font-weight: 600; }
+.bc-table-box > summary::marker { color: var(--muted, #888); }
+.bc-table-box[open] > summary { margin-bottom: 6px; }
+.bc-table-scroll { overflow-x: auto; max-width: 100%; }
+.bc-table-scroll .bc-table { min-width: 720px; }
+.bc-table td:nth-child(6) { word-break: break-all; max-width: 320px; }
+.bc-table td:first-child code { word-break: break-all; }
+#bcTableSummary { color: var(--muted, #888); font-weight: normal; font-size: 12px; margin-left: 8px; }
+.bc-filter-toggle { margin-left: auto; }
+.bc-combined { margin: 10px 0; border: 1px solid var(--accent, #4a8); border-radius: 6px; padding: 8px 12px; background: rgba(74, 168, 95, 0.04); }
+.bc-combined > summary { cursor: pointer; padding: 4px 0; }
+.bc-combined-hint { font-size: 12px; color: var(--muted, #888); margin: 6px 0; }
+.bc-combined-body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.bc-combined-list { display: flex; flex-direction: column; gap: 10px; max-height: 480px; overflow-y: auto; }
+.bc-combined-row { border: 1px solid var(--border, #333); border-radius: 4px; padding: 6px 8px; background: rgba(0,0,0,0.10); }
+.bc-combined-tag { font-size: 11px; color: var(--muted, #aaa); margin-bottom: 4px; font-family: monospace; }
+.bc-combined-args { width: 100%; box-sizing: border-box; font-family: monospace; font-size: 11px; resize: vertical; margin-bottom: 6px; }
+.bc-combined-row-actions { display: flex; gap: 6px; }
+.bc-combined-row-actions .primary { background: var(--accent); color: #fff; border: none; border-radius: 4px; padding: 4px 12px; font-size: 12px; }
+.bc-combined-row-actions button { padding: 4px 10px; font-size: 12px; }
+#bcCombinedSummary { color: var(--muted, #888); font-weight: normal; font-size: 13px; margin-left: 8px; }
+.bc-preview-inline { margin-top: 12px; border: 1px solid var(--border, #333); border-radius: 6px; padding: 6px 12px; background: rgba(0,0,0,0.10); }
+.bc-preview-inline > summary { cursor: pointer; padding: 4px 0; font-weight: 600; }
+.bc-preview-inline > summary::marker { color: var(--muted, #888); }
+.bc-preview-summary { color: var(--muted, #888); font-weight: normal; font-size: 12px; margin-left: 8px; }
+.bc-preview-body { max-height: 360px; overflow: auto; font-family: monospace; font-size: 11px; white-space: pre-wrap; word-break: break-all; margin: 6px 0; padding: 6px 8px; background: rgba(0,0,0,0.15); border-radius: 4px; }
+.bc-custom-result { font-family: monospace; font-size: 12px; padding: 2px 8px; border-radius: 4px; }
+.bc-custom-result.running { background: rgba(120,120,120,.2); color: var(--muted, #aaa); }
+.bc-custom-result.ok      { background: rgba(74,168,95,.2); color: var(--accent, #4a8); }
+.bc-custom-result.fail    { background: rgba(212,80,80,.2); color: #e87; }
+.bc-custom { margin-top: 12px; border: 1px solid var(--border, #333); border-radius: 6px; padding: 8px 12px; }
+.bc-custom > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.bc-custom-body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.bc-custom-body textarea { font-family: monospace; font-size: 12px; min-height: 50px; }
+.bc-custom-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.bc-custom-row .field { flex: 0 0 auto; min-width: 140px; }
+.bc-status {
+  margin-left: auto; font-family: monospace; font-size: 12px;
+  padding: 4px 8px; border-radius: 4px; background: var(--surface-2, rgba(255,255,255,0.04));
+}
+.bc-progress { display: flex; gap: 10px; align-items: center; margin: 10px 0; }
+.bc-progress progress { flex: 1; height: 8px; }
+.bc-progress span { font-family: monospace; min-width: 80px; text-align: right; }
+.bc-table {
+  width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px;
+}
+.bc-table th, .bc-table td {
+  text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border, rgba(255,255,255,0.08));
+  vertical-align: top;
+}
+.bc-table th { font-weight: 600; opacity: 0.8; }
+.bc-table code { font-size: 12px; }
+.bc-table td small { opacity: 0.7; word-break: break-all; }
+.bc-row-ok { background: rgba(80, 200, 120, 0.08); }
+.bc-row-fail { opacity: 0.55; }
+.bc-log { margin-top: 12px; }
+.bc-log pre {
+  max-height: 280px; overflow: auto;
+  font-size: 11px; line-height: 1.35;
+  background: var(--surface-2, rgba(0,0,0,0.2));
+  padding: 8px; border-radius: 4px;
+  white-space: pre-wrap; word-break: break-all;
+}
+
+/* Blockcheck additions */
+.bc-grid { gap: 12px; }
+.bc-tests { margin: 12px 0; }
+.bc-current { font-family: monospace; font-size: 12px; opacity: 0.8; margin-left: 12px; }
+.bc-counts { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0; font-size: 13px; }
+.bc-counts > span { padding: 2px 8px; border-radius: 3px; }
+.bc-count-ok   { background: rgba(80, 200, 120, 0.18); color: #6cd28c; font-weight: 600; }
+.bc-count-fail { background: rgba(220, 100, 100, 0.10); opacity: 0.8; }
+.bc-count-skip { opacity: 0.6; }
+.bc-filter { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+#bcPreviewModal .modal-window { max-width: 920px; width: 90vw; max-height: 80vh; }
+#bcPreviewBody { white-space: pre; overflow: auto; max-height: 60vh; font-size: 12px; line-height: 1.4; }

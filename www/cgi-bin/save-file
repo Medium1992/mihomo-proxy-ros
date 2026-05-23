@@ -9,6 +9,14 @@ if [ "$REQUEST_METHOD" != "POST" ]; then
   exit 1
 fi
 
+MAX_BODY=10485760
+case "$CONTENT_LENGTH" in
+  ''|*[!0-9]*) CONTENT_LENGTH=0 ;;
+esac
+if [ "$CONTENT_LENGTH" -gt "$MAX_BODY" ]; then
+  echo "Error: request body too large"
+  exit 1
+fi
 body=$(dd bs=1 count="$CONTENT_LENGTH" 2>/dev/null)
 
 urldecode() {

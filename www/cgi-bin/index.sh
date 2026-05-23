@@ -825,6 +825,7 @@ dpi_page() {
     zapret     "ZAPRET" \
     zapret2    "ZAPRET2" \
     zapret-wg  "ZAPRET2 WG" \
+    blockcheck2 "Подбор стратегий (zapret2)" \
     fakebin    "fakebin" \
     lists      "lists"
   section_start_tab byedpi "BYEDPI" "Команды BYEDPI_CMD* создают file provider и отдельные маршруты."
@@ -892,6 +893,115 @@ EOF
 add action=mark-routing chain=output dst-address=162.159.192.1 dst-port=2408 new-routing-mark=MihomoProxyRoS packet-size=176 passthrough=no protocol=udp</code></pre>
   </div>
 </div>
+EOF
+  section_end
+
+  section_start_tab blockcheck2 "Подбор стратегий (blockcheck2 — для второго zapret)" "Параллельный перебор стратегий nfqws2 против заданных доменов. Использует DoH (через openssl) для резолва, изолированную nft-таблицу и пул воркеров. Требует nft-поддержки ядра — на RouterOS это arm64/amd64 версии 7.21 и выше."
+  cat <<'EOF'
+<div class="notice notice-warn"><b>Результаты в RAM</b><span>Логи и отчёты хранятся в <code>/dev/shm/mihomo-blockcheck2/</code> и пропадают после перезагрузки контейнера. Скачайте отчёт или примените стратегию в <code>ZAPRET2_CMD</code>, если нужно надолго.</span></div>
+<div class="blockcheck-controls">
+  <label class="field" title="Форматы строк:&#10; • host                              — handshake-only тест (быстро)&#10; • host/path                          — handshake + скачивание body, должно прийти ≥ N КБ&#10; • @full https://host/path?query     — throughput-тест: тянем 256 КБ за ≤5 с (≈410 kbps min). Для googlevideo /videoplayback URL такой режим включается автоматически.&#10;&#10;Для проверки именно потока YouTube-видео нужен прямой googlevideo URL. Браузерные ссылки из DevTools обычно бесполезны — YouTube отдаёт их в новом UMP/SABR-формате (нужен POST-запрос с protobuf, простой GET вернёт ~30 КБ). Рабочую ссылку даёт yt-dlp: https://github.com/yt-dlp/yt-dlp (требует cookies из залогиненного YouTube). Если не хочется возиться — просто кинь watch-URL и поставь Мин. размер 500 КБ, тогда throughput протестируется на самой watch-странице (≈1.5 МБ HTML+JS)."><span><b>Домены</b><em>по одному в строке. <code>host</code> = handshake-only, <code>host/path</code> = + скачать body ≥ N КБ, <code>@full https://...</code> = throughput-тест 256 КБ за ≤5 с (для googlevideo автоматически). Прямой googlevideo URL добывается через <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp</a> — браузерные DevTools-ссылки в SABR-формате не подойдут.</em></span>
+    <textarea id="bcDomains" rows="4" placeholder="rutracker.org
+discord.com
+https://youtube.com/watch?v=jNQXAC9IVRw
+google.com/search?q=test
+@full https://rr5---sn-xxx.googlevideo.com/videoplayback?expire=...&signature=..."></textarea>
+  </label>
+  <div class="grid bc-grid">
+    <label class="field"><span><b>Воркеров</b><em>1-32, параллелизм. Каждый воркер ≈ 5 МБ RAM</em></span>
+      <input id="bcWorkers" type="number" min="1" max="32" value="4">
+    </label>
+    <label class="field"><span><b>Уровень</b><em>сколько стратегий перебрать</em></span>
+      <select id="bcLevel">
+        <option value="quick">quick (~25, минута)</option>
+        <option value="basic" selected>basic (~100, 3–5 минут)</option>
+        <option value="medium">medium (~300, ~15 минут)</option>
+        <option value="extended">extended (~700, ~30 минут)</option>
+        <option value="full">full (~1100+, ~1 час)</option>
+      </select>
+    </label>
+  </div>
+  <div class="socks-toggles bc-tests" aria-label="Типы тестов">
+    <label class="socks-toggle" title="GET / по TCP/80 (handshake = есть HTTP-ответ; hard-body режим — что в теле есть HTTP/ и размер ≥ N КБ)"><input type="checkbox" id="bcTestHttp"  checked><span>HTTP/80</span></label>
+    <label class="socks-toggle" title="TLS 1.2 handshake к TCP/443 через openssl s_client -tls1_2 -bind … -servername host (handshake = есть Cipher/Verify)"><input type="checkbox" id="bcTestTls12" checked><span>TLS 1.2</span></label>
+    <label class="socks-toggle" title="TLS 1.3 handshake к TCP/443 через openssl s_client -tls1_3 -bind … -servername host"><input type="checkbox" id="bcTestTls13" checked><span>TLS 1.3</span></label>
+    <label class="socks-toggle" title="QUIC v1 handshake к UDP/443 через openssl s_client -quic -alpn h3 -servername host (handshake = пришёл Server certificate). Нужен OpenSSL ≥3.5 в контейнере."><input type="checkbox" id="bcTestQuic" checked><span>QUIC/443</span></label>
+    <label class="socks-toggle" title="Дополнительно перебрать каждый .bin-файл из /zapret-fakebin в качестве fake-payload (заменяет fake_default_tls на --blob=fb:@…). Заметно увеличивает число стратегий (×N_blobs), но именно среди них чаще всего и находятся рабочие комбинации."><input type="checkbox" id="bcUseFakebin"><span>×fakebin</span></label>
+  </div>
+  <div class="grid bc-grid">
+    <label class="field"><span><b>Мин. размер ответа для 16-20KB теста, КБ</b><em>Применяется к доменам, для которых указан <em>путь</em> в поле выше (например <code>rutracker.org/forum/index.php</code>). Если в строке только хост — теста скачивания не будет, останется handshake-only.</em></span>
+      <input id="bcHardMinKb" type="number" min="4" max="256" value="16">
+    </label>
+    <label class="field" title="Стратегии с tls_mod=rnd рандомят ClientHello — один probe может случайно проскочить DPI, а следующий нет. Probe засчитывается «ok» только если ВСЕ N попыток прошли подряд. 1 = без повторов (быстро, много ложных «работающих»), 2 — рекомендовано, 3 — для финального отбора. Применяется только к rnd-стратегиям, остальные тестируются по одной попытке."><span><b>Повторов на rnd-стратегию</b><em>Probe считается «ok» только если все N попыток подряд прошли — отсеивает стратегии, которые случайно проскочили DPI один раз. Применяется только к <code>rnd</code>-стратегиям. 2 — рекомендовано.</em></span>
+      <input id="bcRndRepeats" type="number" min="1" max="5" value="2">
+    </label>
+  </div>
+  <div class="bc-actions">
+    <button type="button" class="primary" onclick="blockcheck2Start()" id="bcStartBtn">Запустить</button>
+    <button type="button" onclick="blockcheck2Cancel()" id="bcCancelBtn" disabled>Остановить</button>
+    <button type="button" onclick="blockcheck2Download()" id="bcDownloadBtn" disabled>Скачать отчёт</button>
+    <span class="bc-status" id="bcStatus">готов</span>
+  </div>
+  <details class="bc-custom" id="bcCustomBox">
+    <summary>Тест произвольной стратегии</summary>
+    <div class="bc-custom-body">
+      <label class="field"><span><b>Аргументы nfqws2</b><em>полная строка (включая <code>--filter-tcp=…</code> и <code>--payload=…</code>). Можно несколько профилей через <code>--new</code> — будут тестироваться все выбранные ниже типы.</em></span>
+        <textarea id="bcCustomArgs" rows="3" spellcheck="false" placeholder="--filter-tcp=80 --payload=http_req --lua-desync=multidisorder:pos=host+1:badsum --new --filter-tcp=443 --payload=tls_client_hello --lua-desync=multidisorder:pos=1:badsum --new --filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=20"></textarea>
+      </label>
+      <div class="bc-custom-row">
+        <div class="socks-toggles" aria-label="Протоколы для custom-теста" title="По каким протоколам гонять стратегию">
+          <label class="socks-toggle" title="GET / по TCP/80"><input type="checkbox" id="bcCustomHttp"  checked><span>HTTP</span></label>
+          <label class="socks-toggle" title="TLS 1.2 handshake к TCP/443"><input type="checkbox" id="bcCustomTls12" checked><span>TLS 1.2</span></label>
+          <label class="socks-toggle" title="TLS 1.3 handshake к TCP/443"><input type="checkbox" id="bcCustomTls13" checked><span>TLS 1.3</span></label>
+          <label class="socks-toggle" title="QUIC v1 handshake к UDP/443 (openssl s_client -quic -alpn h3)"><input type="checkbox" id="bcCustomQuic"  checked><span>QUIC</span></label>
+        </div>
+        <button type="button" onclick="blockcheck2Custom()" id="bcCustomBtn">Запустить только эту</button>
+        <span id="bcCustomResult" class="bc-custom-result" aria-live="polite"></span>
+      </div>
+    </div>
+  </details>
+</div>
+<div class="bc-results">
+  <div class="bc-progress" id="bcProgress" hidden>
+    <progress id="bcProgressBar" value="0" max="100"></progress>
+    <span id="bcProgressText">0 / 0</span>
+    <span class="bc-current" id="bcCurrent"></span>
+  </div>
+  <div class="bc-counts" id="bcCounts" hidden>
+    <span class="bc-count-ok"   id="bcCountOk">0 рабочих</span>
+    <span class="bc-count-fail" id="bcCountFail">0 не сработали</span>
+    <span class="bc-count-skip" id="bcCountSkip">0 пропущено</span>
+    <label class="socks-toggle bc-filter-toggle" title="Скрыть строки которые не пробили DPI"><input type="checkbox" id="bcFilterOk" checked><span>только рабочие</span></label>
+  </div>
+  <details class="bc-combined" id="bcCombinedBox" hidden>
+    <summary><b>Сборные стратегии из рабочих</b> <span id="bcCombinedSummary"></span></summary>
+    <div class="bc-combined-body">
+      <p class="bc-combined-hint">Кросс-произведение всех рабочих <code>http</code> × <code>tls</code> × <code>quic</code> стратегий, склеенных через <code>--new</code>. Каждый вариант можно скопировать или применить в <code>ZAPRET2_CMD</code>.</p>
+      <div id="bcCombinedList" class="bc-combined-list"></div>
+    </div>
+  </details>
+  <details class="bc-table-box" id="bcTableBox" hidden>
+    <summary>Подробная таблица найденных стратегий <span id="bcTableSummary"></span></summary>
+    <div class="bc-table-scroll">
+      <table class="bc-table" id="bcTable">
+        <thead><tr>
+          <th title="Имя стратегии. Наведи курсор на код — увидишь полные аргументы nfqws2">Стратегия</th>
+          <th title="Тип теста: http (порт 80), tls12 / tls13 (TLS 1.2 / 1.3)">Proto</th>
+          <th title="Сколько комбинаций (домен × тип) пробились наружу">Pass</th>
+          <th title="Сколько не пробились (timeout, RST, или сервер просто ничего не вернул)">Fail</th>
+          <th title="Сколько пар не тестировались, потому что proto стратегии не совпадает с типом теста">Skip ⓘ</th>
+          <th>Детали</th>
+          <th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </details>
+  <details class="bc-log" id="bcLogBox"><summary>Лог событий runner'a</summary>
+    <pre id="bcLog">(пусто — лог появится после запуска)</pre>
+  </details>
+</div>
+
 EOF
   section_end
 

@@ -1,0 +1,156 @@
+#!/bin/sh
+# POST /cgi-bin/blockcheck2 → {ok, job_id} | {ok:false, error_b64}
+# Body (urlencoded): domains_b64, workers, tests, strategies_b64, level,
+# fakebin, hard_min_kb, rnd_repeats.
+
+echo "Content-Type: application/json; charset=utf-8"
+echo ""
+
+err() {
+  msg="$1"
+  printf '{"ok":false,"error_b64":"%s"}\n' \
+    "$(printf '%s' "$msg" | base64 -w0 2>/dev/null || printf '%s' "$msg" | base64 | tr -d '\n')"
+  exit 0
+}
+
+[ "$REQUEST_METHOD" = "POST" ] || err "POST required"
+
+MAX_BODY=1048576
+case "$CONTENT_LENGTH" in
+  ''|*[!0-9]*) CONTENT_LENGTH=0 ;;
+esac
+[ "$CONTENT_LENGTH" -gt "$MAX_BODY" ] && err "request body too large"
+
+body=$(dd bs=1 count="$CONTENT_LENGTH" 2>/dev/null)
+
+extract_field() {
+  printf '%s' "$body" | awk -F'&' -v key="$1" '{
+    for(i=1;i<=NF;i++) {
+      n=length(key)+1
+      if (substr($i,1,n) == key"=") { print substr($i,n+1); exit }
+    }
+  }'
+}
+urldecode() {
+  printf '%s\n' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\\x\1/g' | \
+    while IFS= read -r line; do printf '%b' "$line"; done
+}
+
+domains_b64=$(urldecode "$(extract_field domains_b64)")
+workers=$(extract_field workers)
+tests=$(urldecode "$(extract_field tests)")
+strats_b64=$(urldecode "$(extract_field strategies_b64)")
+level=$(extract_field level)
+fakebin=$(extract_field fakebin)
+hard_min_kb=$(extract_field hard_min_kb)
+rnd_repeats=$(extract_field rnd_repeats)
+
+[ -z "$domains_b64" ] && err "domains_b64 required"
+case "$workers" in
+  ''|*[!0-9]*) workers=8 ;;
+esac
+[ "$workers" -lt 1 ]  && workers=1
+[ "$workers" -gt 32 ] && workers=32
+[ -z "$tests" ] && tests="http,tls12,tls13"
+# tests sanity: only alphanumerics and commas
+case "$tests" in
+  *[!a-z0-9,]*) err "tests contains invalid chars" ;;
+esac
+
+STATE_DIR=/dev/shm/mihomo-blockcheck2
+mkdir -p "$STATE_DIR" || err "cannot mkdir $STATE_DIR"
+
+BC_DIR="${BC_DIR:-/www/blockcheck2}"
+[ -f "$BC_DIR/run" ]              || err "$BC_DIR/run not found — обновите файлы www/blockcheck2/ и перезапустите контейнер"
+[ -r "$BC_DIR/lib.sh" ]           || err "$BC_DIR/lib.sh not found"
+[ -f "$BC_DIR/strategies.list" ]  || err "$BC_DIR/strategies.list not found"
+command -v nft     >/dev/null 2>&1 || err "nft не найден — фича работает только на RouterOS arm64/amd64 7.21+"
+command -v openssl >/dev/null 2>&1 || err "openssl не найден"
+command -v nfqws2  >/dev/null 2>&1 || err "nfqws2 не найден"
+
+# Reject if another job is active.
+if [ -f "$STATE_DIR/.lock" ]; then
+  other=$(cat "$STATE_DIR/.lock" 2>/dev/null)
+  if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
+    err "another blockcheck2 job is already running (pid=$other)"
+  fi
+fi
+
+job_id="$(date +%s)-$$"
+job_dir="$STATE_DIR/$job_id"
+mkdir -p "$job_dir" || err "cannot mkdir job dir"
+
+dom_file="$job_dir/domains.txt"
+printf '%s' "$domains_b64" | base64 -d > "$dom_file" 2>/dev/null
+[ -s "$dom_file" ] || err "failed to decode domains_b64 or it is empty"
+
+strat_arg=""
+strat_file="$job_dir/strategies.list"
+
+if [ -n "$strats_b64" ]; then
+  printf '%s' "$strats_b64" | base64 -d > "$strat_file" 2>/dev/null
+  [ -s "$strat_file" ] || err "failed to decode strategies_b64"
+else
+  case "$level" in
+    quick|basic|medium|extended|full) ;;
+    *[!0-9]*|'') level=basic ;;
+  esac
+  gen_args="--level=$level"
+  [ "$fakebin" = "1" ] || fakebin=0
+  if [ "$fakebin" = "1" ] && [ -d /zapret-fakebin ]; then
+    gen_args="$gen_args --fakebin-dir=/zapret-fakebin"
+  fi
+  include=""
+  case ",$tests," in *,http,*)  include="${include:+$include,}http"  ;; esac
+  case ",$tests," in *,tls12,*) include="${include:+$include,}tls12" ;; esac
+  case ",$tests," in *,tls13,*) include="${include:+$include,}tls13" ;; esac
+  case ",$tests," in *,quic,*)  include="${include:+$include,}quic"  ;; esac
+  [ -n "$include" ] && gen_args="$gen_args --include=$include"
+
+  if [ -f "$BC_DIR/gen-strategies" ]; then
+    sh "$BC_DIR/gen-strategies" $gen_args > "$strat_file" 2>/dev/null
+  fi
+  if [ ! -s "$strat_file" ] && [ -s "$BC_DIR/strategies.list" ]; then
+    cp "$BC_DIR/strategies.list" "$strat_file"
+  fi
+fi
+
+[ -s "$strat_file" ] || err "не удалось получить список стратегий"
+strat_arg="--strategies=$strat_file"
+
+SETSID=$(command -v setsid 2>/dev/null)
+[ -n "$SETSID" ] || err "setsid не найден (util-linux отсутствует)"
+
+case "$hard_min_kb" in ''|*[!0-9]*) hard_min_kb=16 ;; esac
+[ "$hard_min_kb" -lt 4   ] && hard_min_kb=4
+[ "$hard_min_kb" -gt 256 ] && hard_min_kb=256
+hard_min_bytes=$((hard_min_kb * 1024))
+
+case "$rnd_repeats" in ''|*[!0-9]*) rnd_repeats=2 ;; esac
+[ "$rnd_repeats" -lt 1 ] && rnd_repeats=1
+[ "$rnd_repeats" -gt 5 ] && rnd_repeats=5
+
+nohup "$SETSID" env \
+  BC_HARD_MIN_BYTES="$hard_min_bytes" \
+  BC_PROBE_RND_REPEATS="$rnd_repeats" \
+  sh "$BC_DIR/run" \
+    --job="$job_id" \
+    --workers="$workers" \
+    --domains="$dom_file" \
+    --tests="$tests" \
+    $strat_arg \
+  >>"$job_dir/runner.log" 2>&1 </dev/null &
+
+i=0
+while [ "$i" -lt 30 ]; do
+  if [ -f "$job_dir/status" ]; then break; fi
+  i=$((i + 1))
+  sleep 0.1 2>/dev/null || sleep 1
+done
+if [ ! -f "$job_dir/status" ]; then
+  runner_tail=$(tail -c 1024 "$job_dir/runner.log" 2>/dev/null | tr -d '\r')
+  msg="runner did not start within 3s; runner.log tail: $runner_tail"
+  err "$msg"
+fi
+
+printf '{"ok":true,"job_id":"%s"}\n' "$job_id"

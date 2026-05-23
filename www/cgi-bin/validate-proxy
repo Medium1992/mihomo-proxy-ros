@@ -9,6 +9,15 @@ if [ "$REQUEST_METHOD" != "POST" ]; then
   exit 0
 fi
 
+MAX_BODY=10485760
+case "$CONTENT_LENGTH" in
+  ''|*[!0-9]*) CONTENT_LENGTH=0 ;;
+esac
+if [ "$CONTENT_LENGTH" -gt "$MAX_BODY" ]; then
+  msg="request body too large"
+  printf '{"ok":false,"error_b64":"%s"}\n' "$(printf '%s' "$msg" | base64 -w0 2>/dev/null || printf '%s' "$msg" | base64)"
+  exit 0
+fi
 body=$(dd bs=1 count="$CONTENT_LENGTH" 2>/dev/null)
 
 b64=$(printf '%s' "$body" | awk -F'&' '{
@@ -32,39 +41,60 @@ fi
 tmpdir=$(mktemp -d /dev/shm/mihomo-validate.XXXXXX 2>/dev/null) || tmpdir="/dev/shm/mihomo-validate.$$"
 mkdir -p "$tmpdir" 2>/dev/null
 if [ ! -d "$tmpdir" ]; then
-  # Fallback if /dev/shm unavailable
-  tmpdir=$(mktemp -d /tmp/mihomo-validate.XXXXXX 2>/dev/null) || tmpdir="/tmp/mihomo-validate.$$"
+  msg="cannot create tmpdir in /dev/shm"
+  printf '{"ok":false,"error_b64":"%s"}\n' "$(printf '%s' "$msg" | base64 -w0 2>/dev/null || printf '%s' "$msg" | base64)"
+  exit 0
 fi
-mkdir -p "$tmpdir" 2>/dev/null
 trap 'rm -rf "$tmpdir"' EXIT
 
 proxy_file="$tmpdir/proxy.yaml"
 printf '%s' "$b64" | base64 -d > "$proxy_file" 2>/dev/null
 if [ ! -s "$proxy_file" ]; then
   msg="failed to decode base64 body"
+  printf '{"ok":false,"error_b64":"%s"}\n' "$(printf 'failed to decode base64 body' | base64 -w0 2>/dev/null || printf 'failed to decode base64 body' | base64)"
+  exit 0
+fi
+
+# Inline the user's proxies into the test config so `mihomo -t` parses them strictly.
+# proxy-providers type:file are loaded lazily and often pass -t with only warnings.
+inline_file="$tmpdir/inline.yaml"
+first_real=$(awk '!/^[[:space:]]*$/ && !/^[[:space:]]*#/ {print; exit}' "$proxy_file")
+case "$first_real" in
+  proxies:*)
+    cp "$proxy_file" "$inline_file"
+    ;;
+  *)
+    {
+      printf 'proxies:\n'
+      sed 's/^/  /' "$proxy_file"
+    } > "$inline_file"
+    ;;
+esac
+
+# Reject empty proxy lists (mihomo -t may otherwise pass them silently).
+if ! grep -Eq '^[[:space:]]*-[[:space:]]' "$inline_file"; then
+  msg="no proxies parsed from input"
   printf '{"ok":false,"error_b64":"%s"}\n' "$(printf '%s' "$msg" | base64 -w0 2>/dev/null || printf '%s' "$msg" | base64)"
   exit 0
 fi
 
-# Minimal mihomo config referencing the file as a proxy-provider.
-cat > "$tmpdir/config.yaml" <<EOF
+{
+  cat <<'HEAD'
 mixed-port: 17891
 mode: rule
 log-level: silent
-proxy-providers:
-  validate:
-    type: file
-    path: ./proxy.yaml
-    health-check:
-      enable: false
+HEAD
+  cat "$inline_file"
+  cat <<'TAIL'
 proxy-groups:
   - name: VALIDATE
     type: select
-    use:
-      - validate
+    proxies:
+      - DIRECT
 rules:
   - MATCH,VALIDATE
-EOF
+TAIL
+} > "$tmpdir/config.yaml"
 
 out=$("$MIHOMO_BIN" -t -d "$tmpdir" 2>&1)
 rc=$?

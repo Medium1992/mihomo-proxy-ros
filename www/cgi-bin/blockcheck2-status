@@ -1,0 +1,68 @@
+#!/bin/sh
+# GET /cgi-bin/blockcheck2-status?job=ID[&offset=N][&download=1]
+#   offset    — byte offset into log.ndjson; returns only bytes >= offset
+#   download  — instead of JSON, stream result.txt with attachment headers
+
+STATE_DIR=/dev/shm/mihomo-blockcheck2
+
+qs_get() {
+  printf '%s' "$QUERY_STRING" | tr '&' '\n' | awk -F= -v k="$1" '$1==k{print $2; exit}'
+}
+
+job=$(qs_get job)
+offset=$(qs_get offset)
+download=$(qs_get download)
+
+# basename sanity: prevent path traversal
+case "$job" in
+  ''|*/*|*..*) job="" ;;
+esac
+if [ -z "$job" ]; then
+  echo "Content-Type: application/json; charset=utf-8"; echo ""
+  printf '{"ok":false,"error":"invalid job id"}\n'; exit 0
+fi
+job_dir="$STATE_DIR/$job"
+if [ ! -d "$job_dir" ]; then
+  echo "Content-Type: application/json; charset=utf-8"; echo ""
+  printf '{"ok":false,"error":"job not found"}\n'; exit 0
+fi
+
+if [ "$download" = "1" ]; then
+  echo "Content-Type: text/plain; charset=utf-8"
+  echo "Content-Disposition: attachment; filename=\"blockcheck2-${job}.txt\""
+  echo ""
+  if [ -s "$job_dir/result.txt" ]; then
+    cat "$job_dir/result.txt"
+  else
+    echo "(report not ready yet; status: $(cat "$job_dir/status" 2>/dev/null || echo unknown))"
+    [ -s "$job_dir/log.ndjson" ] && { echo; echo "--- log ---"; cat "$job_dir/log.ndjson"; }
+  fi
+  exit 0
+fi
+
+case "$offset" in
+  ''|*[!0-9]*) offset=0 ;;
+esac
+
+status=$(cat "$job_dir/status" 2>/dev/null || echo unknown)
+log="$job_dir/log.ndjson"
+size=0
+[ -f "$log" ] && size=$(wc -c < "$log" 2>/dev/null | tr -d ' ')
+new_offset="$size"
+
+echo "Content-Type: application/json; charset=utf-8"
+echo ""
+
+# Stream only the bytes between offset and size we observed. dd MUST be
+# capped by count, otherwise it reads to current EOF — which can be larger
+# than `size` if the runner appended more between `wc -c` and `dd`, causing
+# the client to see the same events twice on the next poll (the client's
+# next offset is `new_offset == size` but those extra bytes already shipped).
+tail_b64=""
+count=$((size - offset))
+if [ "$count" -gt 0 ]; then
+  tail_b64=$(dd if="$log" bs=1 skip="$offset" count="$count" 2>/dev/null | base64 -w0 2>/dev/null \
+             || dd if="$log" bs=1 skip="$offset" count="$count" 2>/dev/null | base64 | tr -d '\n')
+fi
+printf '{"ok":true,"job_id":"%s","status":"%s","offset":%s,"log_b64":"%s"}\n' \
+  "$job" "$status" "$new_offset" "$tail_b64"

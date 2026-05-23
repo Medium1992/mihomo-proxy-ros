@@ -1,0 +1,239 @@
+#!/bin/sh
+# gen-strategies — emits per-protocol nfqws2 strategies.
+#
+# Each strategy is a single nfqws2 profile (no --new chaining). Two protos
+# are emitted: `http` (filter-tcp=80, payload=http_req) and `tls` (filter-
+# tcp=443, payload=tls_client_hello). The TLS protos are tested by the
+# runner against both TLS 1.2 and TLS 1.3 probes (`tls/tls12` and
+# `tls/tls13` cases in run.sh). QUIC isn't probed yet — strategies of that
+# shape are emitted by the user-facing "combine" step (UI), not here.
+#
+# Strategy body matches the user-validated combined-form, minus the --new
+# chaining:
+#
+#   --filter-tcp=<port>
+#   --payload=<http_req|tls_client_hello>
+#   --lua-desync=fake:blob=0x00000000:<FOOLING>:repeats=1       # if prefake
+#   --lua-desync=fake:blob=<fakedef>:<FOOLING>:[tls_mod=…:]repeats=1  # if prefake
+#   --lua-desync=<SPLITTER>:pos=<POS>:<FOOLING>
+#
+# Probe-time, the runner takes the best-scoring HTTP and best-scoring TLS
+# rows and assembles a combined `--new`-chained line for ZAPRET2_CMD. So
+# gen here stays simple and per-protocol; combining is the UI's job.
+#
+# Options:
+#   --level=NAME             quick|basic|medium|extended|full
+#   --include=PROTO,...      http,tls,tls12,tls13  (default: all)
+#   --fakebin-dir=PATH       per-blob fan-out for fake-payload variants
+
+BC_SCRIPT_DIR="${BC_SCRIPT_DIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}"
+
+LEVEL=basic
+INCLUDE="http,tls12,tls13"
+FAKEBIN_DIR=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --level=*)        LEVEL="${arg#*=}" ;;
+    --include=*)      INCLUDE="${arg#*=}" ;;
+    --fakebin-dir=*)  FAKEBIN_DIR="${arg#*=}" ;;
+    --src-dir=*)      : ;;     # legacy/no-op
+    -h|--help)        sed -n '2,40p' "$0"; exit 0 ;;
+    *) echo "unknown arg: $arg" >&2; exit 1 ;;
+  esac
+done
+
+case "$LEVEL" in
+  quick)    TIER=1 ;;
+  basic)    TIER=2 ;;
+  medium)   TIER=3 ;;
+  extended) TIER=4 ;;
+  full)     TIER=5 ;;
+  *) echo "level must be quick|basic|medium|extended|full" >&2; exit 1 ;;
+esac
+
+want_http=0; want_tls=0
+case ",$INCLUDE," in *,http,*)  want_http=1 ;; esac
+case ",$INCLUDE," in *,tls,*|*,tls12,*|*,tls13,*) want_tls=1 ;; esac
+
+# ---- axes per tier ------------------------------------------------------
+case $TIER in
+  1) FOOLINGS="badsum tcp_ts=-1000"
+     POS_SETS_TLS="1 1,midsld"
+     POS_SETS_HTTP="host+1"
+     SPLITTERS="multidisorder"
+     PRE_FAKE_VARIANTS="off"
+     ;;
+  2) FOOLINGS="badsum tcp_ts=-1000 tcp_ack=-66000:tcp_ts_up"
+     POS_SETS_TLS="1 1,midsld 1,midsld,1220"
+     POS_SETS_HTTP="host+1 method+2"
+     SPLITTERS="multidisorder multisplit fakedsplit fakeddisorder"
+     PRE_FAKE_VARIANTS="off on"
+     ;;
+  3) FOOLINGS="badsum tcp_ts=-1000 tcp_ack=-66000:tcp_ts_up tcp_seq=-3000"
+     POS_SETS_TLS="1 1,midsld 1,midsld,1220 1,sniext+1,host+1,midsld-2,midsld,midsld+2,endhost-1"
+     POS_SETS_HTTP="host+1 method+2 method+4 host+5"
+     SPLITTERS="multidisorder multisplit fakedsplit fakeddisorder"
+     PRE_FAKE_VARIANTS="off on"
+     ;;
+  4) FOOLINGS="badsum tcp_ts=-1000 tcp_ack=-66000:tcp_ts_up tcp_seq=-3000 tcp_md5"
+     POS_SETS_TLS="1 1,midsld 1,midsld,1220 1,sniext+1 1,sniext+1,host+1,midsld-2,midsld,midsld+2,endhost-1"
+     POS_SETS_HTTP="host+1 host+5 method+2 method+4 endhost-1"
+     SPLITTERS="multidisorder multisplit fakedsplit fakeddisorder"
+     PRE_FAKE_VARIANTS="off on"
+     ;;
+  5) FOOLINGS="badsum tcp_ts=-1000 tcp_ack=-66000:tcp_ts_up tcp_seq=-3000 tcp_md5"
+     POS_SETS_TLS="1 1,midsld 1,midsld,1220 1,sniext+1 sniext+1,midsld 1,sniext+1,host+1,midsld-2,midsld,midsld+2,endhost-1 midsld sniext+1"
+     POS_SETS_HTTP="host+1 host+5 method+2 method+4 endhost-1 endhost+1"
+     SPLITTERS="multidisorder multisplit fakedsplit fakeddisorder"
+     PRE_FAKE_VARIANTS="off on"
+     ;;
+esac
+
+# Default fake-payload aliases (built-in nfqws2 names).
+TLS_FAKE_DEFAULT="fake_default_tls"
+HTTP_FAKE_DEFAULT="fake_http"
+QUIC_FAKE_DEFAULT="fake_default_quic"
+
+# Per-blob variants
+TLS_BLOBS=""
+HTTP_BLOBS=""
+QUIC_BLOBS=""
+if [ -n "$FAKEBIN_DIR" ] && [ -d "$FAKEBIN_DIR" ]; then
+  for f in "$FAKEBIN_DIR"/*; do
+    [ -f "$f" ] || continue
+    bn=$(basename "$f")
+    case "$bn" in
+      *quic*|*dtls*)                                   QUIC_BLOBS="$QUIC_BLOBS $f" ;;
+      *tls*|*clienthello*|*serverhello*|*tls_alert*)   TLS_BLOBS="$TLS_BLOBS $f" ;;
+      *http*)                                          HTTP_BLOBS="$HTTP_BLOBS $f" ;;
+    esac
+  done
+fi
+
+safe() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/_/g; s/__*/_/g; s/^_//; s/_$//'; }
+emit() { printf '%s|%s|%s\n' "$1" "$2" "$3"; }
+
+# Compose a single-profile strategy.
+# Args: $1=name, $2=proto(http|tls), $3=splitter, $4=pos, $5=fooling,
+#       $6=pre_fake(on|off), $7=blob_token (builtin name OR fb:@/path)
+compose_one() {
+  local name="$1" proto="$2" sf="$3" pos="$4" fl="$5" pref="$6" blobtok="$7"
+  local blob_decl="" alias_tok payload port suffix=""
+  # Alias path-form blobs
+  local filter
+  case "$proto" in
+    http) alias_tok="fhttp"; payload=http_req;        filter="--filter-tcp=80"        ;;
+    tls)  alias_tok="ftls";  payload=tls_client_hello; filter="--filter-tcp=0-65535"
+          suffix=":tls_mod=rnd,dupsid" ;;
+  esac
+  case "$blobtok" in
+    fb:@*) blob_decl="--blob=${alias_tok}:@${blobtok#fb:@} "; b="$alias_tok" ;;
+    *)     b="$blobtok" ;;
+  esac
+  local args="${blob_decl}${filter} --payload=${payload}"
+  if [ "$pref" = "on" ]; then
+    args="$args --lua-desync=fake:blob=0x00000000:${fl}:repeats=1"
+    args="$args --lua-desync=fake:blob=${b}:${fl}${suffix}:repeats=1"
+  fi
+  args="$args --lua-desync=${sf}:pos=${pos}:${fl}"
+  emit "$name" "$proto" "$args"
+}
+
+# ---- Simple HTTP-only payload mutations (no splitter) -------------------
+if [ "$want_http" = 1 ]; then
+  emit http_hostcase       http "--filter-tcp=80 --payload=http_req --lua-desync=http_hostcase"
+  emit http_hostcase_hoSt  http "--filter-tcp=80 --payload=http_req --lua-desync=http_hostcase:spell=hoSt"
+  emit http_domcase        http "--filter-tcp=80 --payload=http_req --lua-desync=http_domcase"
+  emit http_methodeol      http "--filter-tcp=80 --payload=http_req --lua-desync=http_methodeol"
+  emit http_unixeol        http "--filter-tcp=80 --payload=http_req --lua-desync=http_unixeol"
+  emit http_oob            http "--filter-tcp=80 --payload=http_req --lua-desync=oob"
+  emit http_syndata        http "--filter-tcp=80 --payload=http_req --lua-desync=syndata"
+fi
+
+# ---- HTTP splitter strategies -------------------------------------------
+if [ "$want_http" = 1 ]; then
+  for fl in $FOOLINGS; do
+    fls=$(safe "$fl")
+    for pos in $POS_SETS_HTTP; do
+      poss=$(safe "$pos")
+      for sf in $SPLITTERS; do
+        for pref in $PRE_FAKE_VARIANTS; do
+          tag="${fls}_${poss}_${sf}"
+          [ "$pref" = "on" ] && tag="prefake_${tag}"
+          compose_one "http_${tag}" http "$sf" "$pos" "$fl" "$pref" "$HTTP_FAKE_DEFAULT"
+          if [ "$pref" = "on" ] && [ -n "$HTTP_BLOBS" ]; then
+            for b in $HTTP_BLOBS; do
+              bs=$(safe "$(basename "${b%.bin}")")
+              compose_one "http_${tag}_fhttp_${bs}" http "$sf" "$pos" "$fl" "$pref" "fb:@${b}"
+            done
+          fi
+        done
+      done
+    done
+  done
+fi
+
+# ---- TLS splitter strategies --------------------------------------------
+# Proto = "tls" (legacy "both 1.2 and 1.3"). Each strategy is exercised by
+# the runner against tls12 and tls13 probes per the case in run.sh.
+if [ "$want_tls" = 1 ]; then
+  for fl in $FOOLINGS; do
+    fls=$(safe "$fl")
+    for pos in $POS_SETS_TLS; do
+      poss=$(safe "$pos")
+      for sf in $SPLITTERS; do
+        for pref in $PRE_FAKE_VARIANTS; do
+          tag="${fls}_${poss}_${sf}"
+          [ "$pref" = "on" ] && tag="prefake_${tag}"
+          compose_one "tls_${tag}" tls "$sf" "$pos" "$fl" "$pref" "$TLS_FAKE_DEFAULT"
+          if [ "$pref" = "on" ] && [ -n "$TLS_BLOBS" ]; then
+            for b in $TLS_BLOBS; do
+              bs=$(safe "$(basename "${b%.bin}")")
+              compose_one "tls_${tag}_ftls_${bs}" tls "$sf" "$pos" "$fl" "$pref" "fb:@${b}"
+            done
+          fi
+        done
+      done
+    done
+  done
+
+  # Special: seqovl on multisplit (no fooling, no prefake)
+  if [ "$TIER" -ge 3 ]; then
+    for so in 1 -1; do
+      sos=$(safe "$so")
+      for p in 1 10 midsld; do
+        ps=$(safe "$p")
+        emit "tls_multisplit_seqovl_${sos}_${ps}" tls \
+          "--filter-tcp=0-65535 --payload=tls_client_hello --lua-desync=multisplit:pos=${p}:seqovl=${so}"
+      done
+    done
+  fi
+fi
+
+# ---- QUIC strategies ----------------------------------------------------
+# These are emitted as proto=quic so they show up in the UI (and feed the
+# combined-from-best section). bc_probe_quic does a real QUIC handshake via
+# `openssl s_client -quic` (OpenSSL ≥3.5), with UDP source-port marking
+# wired into nft → same per-worker queue/strategy fan-out as TCP probes.
+case ",$INCLUDE," in *,quic,*|*,udp,*) want_quic=1 ;; *) want_quic=0 ;; esac
+if [ "$want_quic" = 1 ]; then
+  emit "quic_default_r20" quic \
+    "--filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=${QUIC_FAKE_DEFAULT}:repeats=20"
+  if [ "$TIER" -ge 2 ]; then
+    for r in 6 11 20 30; do
+      emit "quic_default_r${r}" quic \
+        "--filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=${QUIC_FAKE_DEFAULT}:repeats=${r}"
+    done
+  fi
+  # Per-blob QUIC fan-out (parity with TLS blob fan-out, which runs at TIER≥2).
+  if [ "$TIER" -ge 2 ] && [ -n "$QUIC_BLOBS" ]; then
+    for q in $QUIC_BLOBS; do
+      qs=$(safe "$(basename "${q%.bin}")")
+      for r in 11 20; do
+        emit "quic_fb_${qs}_r${r}" quic \
+          "--blob=fquic:@${q} --filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=fquic:repeats=${r}"
+      done
+    done
+  fi
+fi

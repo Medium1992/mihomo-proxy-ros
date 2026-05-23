@@ -1,0 +1,452 @@
+#!/bin/sh
+# blockcheck2-run — orchestrates parallel DPI strategy testing.
+# Usage:
+#   blockcheck2-run --job=ID --workers=N --strategies=FILE --domains=FILE --tests=http,tls12,tls13,quic
+#
+# Writes to:
+#   $BC_STATE_DIR/$JOB/log.ndjson   — append-only event stream
+#   $BC_STATE_DIR/$JOB/result.txt   — final human-readable report
+#   $BC_STATE_DIR/$JOB/status       — running|done|error|cancelled
+#   $BC_STATE_DIR/$JOB/.pid         — runner pid (for cancel)
+#
+# All temp files in /dev/shm to spare flash on RouterOS.
+
+# Sourced lib lives next to the runner. Resolve script dir robustly so it
+# works whether invoked as `sh /www/blockcheck2/run …` or via a symlink.
+BC_SCRIPT_DIR="${BC_SCRIPT_DIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}"
+. "$BC_SCRIPT_DIR/lib.sh"
+
+JOB=""
+WORKERS=8
+STRAT_FILE="$BC_SCRIPT_DIR/strategies.list"
+DOM_FILE=""
+TESTS="http,tls12,tls13"
+
+for arg in "$@"; do
+  case "$arg" in
+    --job=*)        JOB="${arg#*=}" ;;
+    --workers=*)    WORKERS="${arg#*=}" ;;
+    --strategies=*) STRAT_FILE="${arg#*=}" ;;
+    --domains=*)    DOM_FILE="${arg#*=}" ;;
+    --tests=*)      TESTS="${arg#*=}" ;;
+    *) echo "unknown arg: $arg" >&2; exit 1 ;;
+  esac
+done
+
+[ -z "$JOB" ] && { echo "--job required" >&2; exit 1; }
+[ -z "$DOM_FILE" ] || [ ! -s "$DOM_FILE" ] && { echo "--domains file missing/empty" >&2; exit 1; }
+[ ! -s "$STRAT_FILE" ] && { echo "--strategies file missing/empty" >&2; exit 1; }
+case "$WORKERS" in
+  ''|*[!0-9]*) echo "--workers must be integer" >&2; exit 1 ;;
+esac
+[ "$WORKERS" -lt 1 ] && WORKERS=1
+[ "$WORKERS" -gt "$BC_WORKER_MAX" ] && WORKERS="$BC_WORKER_MAX"
+
+JOB_DIR="$BC_STATE_DIR/$JOB"
+mkdir -p "$JOB_DIR" || { echo "mkdir $JOB_DIR failed" >&2; exit 1; }
+LOG="$JOB_DIR/log.ndjson"
+RESULT="$JOB_DIR/result.txt"
+STATUS="$JOB_DIR/status"
+PIDF="$JOB_DIR/.pid"
+NFQWS_LOG="$JOB_DIR/nfqws.log"
+
+printf '%s\n' "$$" > "$PIDF"
+printf 'running\n' > "$STATUS"
+
+# Strict global lock — only one blockcheck2 job at a time (nfqws+nft are global).
+LOCK="$BC_STATE_DIR/.lock"
+mkdir -p "$BC_STATE_DIR"
+if ! ( set -C; printf '%s\n' "$$" > "$LOCK" ) 2>/dev/null; then
+  other=$(cat "$LOCK" 2>/dev/null)
+  if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
+    bc_event error "msg=another blockcheck2 job is running" "pid=$other"
+    printf 'error\n' > "$STATUS"
+    exit 1
+  fi
+  # stale lock
+  rm -f "$LOCK"
+  printf '%s\n' "$$" > "$LOCK"
+fi
+
+# ---- JSON event helpers (no jq; manual escaping for strings we generate) -
+json_esc() {
+  # escape \ and " for JSON string content. control chars unlikely in our values.
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+bc_event() {
+  # bc_event TYPE [k=v ...]  — caller must quote each "k=v" if v has spaces.
+  local t="$1"; shift
+  local ts kv k v extra=""
+  ts=$(date +%s)
+  for kv in "$@"; do
+    case "$kv" in
+      *=*) k="${kv%%=*}"; v="${kv#*=}" ;;
+      *)   k="$kv"; v="" ;;
+    esac
+    extra="$extra,\"$k\":\"$(json_esc "$v")\""
+  done
+  printf '{"ts":%s,"type":"%s"%s}\n' "$ts" "$t" "$extra" >> "$LOG"
+}
+
+# ---- Cleanup ------------------------------------------------------------
+cleanup() {
+  local i pidf
+  bc_event teardown
+  i=0
+  while [ "$i" -lt "$WORKERS" ]; do
+    pidf="$JOB_DIR/nfqws_$i.pid"
+    [ -f "$pidf" ] && bc_nfqws_stop "$pidf"
+    i=$((i + 1))
+  done
+  bc_nft_teardown
+  rm -f "$LOCK"
+}
+trap 'cleanup; printf "%s\n" "${BC_FINAL_STATUS:-cancelled}" > "$STATUS"; exit' INT TERM
+trap 'cleanup' EXIT
+
+# ---- Preflight ----------------------------------------------------------
+if ! bc_preflight 2>>"$LOG"; then
+  bc_event error "msg=preflight failed (see nfqws.log / log.ndjson stderr lines)"
+  BC_FINAL_STATUS=error
+  exit 1
+fi
+bc_event start "workers=$WORKERS" "tests=$TESTS"
+
+# ---- Provision workers + nft -------------------------------------------
+if ! bc_ensure_users "$WORKERS" 2>>"$LOG"; then
+  bc_event error "msg=could not create worker users"
+  BC_FINAL_STATUS=error
+  exit 1
+fi
+# Defense-in-depth: a previous crash may have left our nft table + nfqws
+# processes around. bc_nft_setup teardowns first, but kill stale nfqws too,
+# otherwise they'll fight for queue numbers we're about to bind.
+bc_kill_stale_nfqws 2>>"$LOG" || true
+
+if ! bc_nft_setup "$WORKERS" 2>>"$LOG"; then
+  bc_event error "msg=nft setup failed — kernel may lack nftables. Этот функционал работает только на RouterOS arm64/amd64 версии 7.21 и выше."
+  BC_FINAL_STATUS=error
+  exit 1
+fi
+# bc_probe_* needs to know how many workers exist to compute its per-worker
+# sub-range of source ports (matched by nft).
+export BC_TOTAL_WORKERS="$WORKERS"
+# Reset port counters from any prior job — busybox nc has no SO_REUSEADDR,
+# so a counter value that landed in TIME_WAIT from the previous run will
+# break the first probes of this run with `Address in use`.
+rm -f "$BC_STATE_DIR"/.portctr_w* 2>/dev/null
+bc_event nft_ready
+
+# ---- Resolve domains via DoH -------------------------------------------
+RESOLVED="$JOB_DIR/resolved.txt"
+DIAG="$JOB_DIR/doh.diag"
+: > "$RESOLVED"
+: > "$DIAG"
+export BC_DOH_DIAG="$DIAG"
+# Форматы: `host[/path]`, `scheme://host[/path]`, `@full <URL>` (throughput-режим).
+# Авто-throughput: `*.googlevideo.com/videoplayback*`.
+while IFS= read -r raw || [ -n "$raw" ]; do
+  raw=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/\r$//')
+  [ -z "$raw" ] && continue
+  case "$raw" in \#*) continue ;; esac
+  mode=""
+  case "$raw" in
+    '@full '*|'@full	'*)
+      rest=$(printf '%s' "$raw" | sed 's/^@full[[:space:]]*//')
+      case "$rest" in
+        https://*) rest="${rest#https://}" ;;
+        http://*)  rest="${rest#http://}"  ;;
+      esac
+      case "$rest" in
+        */*) host="${rest%%/*}"; path="/${rest#*/}" ;;
+        *)   host="$rest";       path="/"           ;;
+      esac
+      mode="throughput"
+      ;;
+    *)
+      case "$raw" in
+        https://*) raw="${raw#https://}" ;;
+        http://*)  raw="${raw#http://}"  ;;
+      esac
+      case "$raw" in
+        */*) host="${raw%%/*}"; path="/${raw#*/}" ;;
+        *)   host="$raw";       path=""           ;;
+      esac
+      case "$host" in
+        *.googlevideo.com)
+          case "$path" in */videoplayback*) mode="throughput" ;; esac
+          ;;
+      esac
+      ;;
+  esac
+  [ -z "$host" ] && continue
+  ip=$(bc_doh_resolve "$host" | head -n1)
+  if [ -z "$ip" ]; then
+    diag_tail=$(tail -c 300 "$DIAG" 2>/dev/null | tr '\n\r\t' '   ')
+    bc_event resolve_fail "host=$host" "diag=$diag_tail"
+    continue
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$host" "$ip" "$path" "$mode" >> "$RESOLVED"
+  bc_nft_add_target "$ip" 2>>"$LOG"
+  if [ -n "$mode" ]; then
+    bc_event resolve "host=$host" "ip=$ip" "path=$path" "mode=$mode"
+  elif [ -n "$path" ]; then
+    bc_event resolve "host=$host" "ip=$ip" "path=$path"
+  else
+    bc_event resolve "host=$host" "ip=$ip"
+  fi
+done < "$DOM_FILE"
+if [ ! -s "$RESOLVED" ]; then
+  diag_full=$(tail -c 500 "$DIAG" 2>/dev/null | tr '\n\r\t' '   ')
+  bc_event error "msg=no domains resolved via DoH" "diag=$diag_full"
+  BC_FINAL_STATUS=error
+  exit 1
+fi
+
+# ---- Baseline sanity check ---------------------------------------------
+# Test that an unblocked control host works WITHOUT any DPI strategy.
+# If this fails, our infra is broken (worker UID/nft/skuid setup, mihomo
+# TPROXY collision, etc.) — and reporting "0 working strategies" would be
+# misleading. We use iana.org (same control as blockcheck2.sh).
+BC_BASELINE_HOST="${BC_BASELINE_HOST:-iana.org}"
+baseline_ip=$(bc_doh_resolve "$BC_BASELINE_HOST" | head -n1)
+if [ -n "$baseline_ip" ]; then
+  # Use worker 0 (already provisioned), no nfqws — pure direct path.
+  # Baseline always runs handshake-only — iana.org doesn't host the
+  # user-supplied probe path (e.g. /1MB.bin), so a size-gated baseline
+  # would always fail and falsely flag "infra broken".
+  if BC_HARD_BODY=0 bc_probe_tls 0 "$BC_BASELINE_HOST" "$baseline_ip" tls1_2; then
+    bc_event baseline "host=$BC_BASELINE_HOST" "ip=$baseline_ip" "result=ok"
+  else
+    bc_event baseline "host=$BC_BASELINE_HOST" "ip=$baseline_ip" "result=fail" \
+      "warn=control host TLS unreachable from worker UID — strategies WILL likely all fail. Probable cause: mihomo TPROXY catches worker traffic before nfqws. Check nft list ruleset."
+  fi
+else
+  bc_event baseline "host=$BC_BASELINE_HOST" "result=unresolved"
+fi
+
+# ---- Build expanded strategy queue --------------------------------------
+# Each line: NAME|PROTO|ARGS
+STRAT_Q="$JOB_DIR/queue.txt"
+grep -vE '^[[:space:]]*(#|$)' "$STRAT_FILE" > "$STRAT_Q"
+TOTAL=$(wc -l < "$STRAT_Q")
+bc_event queue "total=$TOTAL"
+
+# Worker state: $JOB_DIR/w<K>.free  (file exists ⇒ worker idle)
+i=0
+while [ "$i" -lt "$WORKERS" ]; do
+  touch "$JOB_DIR/w${i}.free"
+  i=$((i + 1))
+done
+
+# ---- Test types map -----------------------------------------------------
+want_http=0; want_tls12=0; want_tls13=0; want_quic=0
+case ",$TESTS," in *,http,*)  want_http=1  ;; esac
+case ",$TESTS," in *,tls12,*) want_tls12=1 ;; esac
+case ",$TESTS," in *,tls13,*) want_tls13=1 ;; esac
+case ",$TESTS," in *,quic,*)  want_quic=1  ;; esac
+
+# ---- Per-strategy probe function (runs in subshell of dispatcher) -------
+# Args: $1=worker_idx  $2=strategy_line  → writes events, never fails the caller.
+run_strategy() {
+  local k="$1" line="$2"
+  local name proto args
+  name="${line%%|*}";  line="${line#*|}"
+  proto="${line%%|*}"; args="${line#*|}"
+
+  local pidf="$JOB_DIR/nfqws_${k}.pid"
+  rm -f "$pidf"
+
+  # Skip whole strategy if its proto matches no enabled test (no point
+  # spawning nfqws just to skip every per-tt probe inside).
+  local relevant=0
+  case "$proto" in
+    http)          [ "$want_http" = 1 ]  && relevant=1 ;;
+    tls)           { [ "$want_tls12" = 1 ] || [ "$want_tls13" = 1 ]; } && relevant=1 ;;
+    tls12)         [ "$want_tls12" = 1 ] && relevant=1 ;;
+    tls13)         [ "$want_tls13" = 1 ] && relevant=1 ;;
+    quic)          [ "$want_quic" = 1 ]  && relevant=1 ;;
+    combined)      relevant=1 ;;
+  esac
+  if [ "$relevant" = 0 ]; then
+    bc_event strategy_skip "name=$name" "proto=$proto" "reason=proto_not_in_tests"
+    return 0
+  fi
+
+  bc_event strategy_start "name=$name" "proto=$proto" "worker=$k"
+
+  if ! bc_nfqws_start "$k" "$proto" "$args" "$pidf" "$NFQWS_LOG"; then
+    local nf_tail
+    nf_tail=$(tail -c 400 "$NFQWS_LOG" 2>/dev/null | tr '\n\r\t' '   ')
+    bc_event strategy_skip "name=$name" "reason=nfqws_start_failed" "nfqws_tail=$nf_tail"
+    return 0
+  fi
+  # Brief settle (nfqws hooks into queue).
+  sleep 0.05 2>/dev/null || sleep 1
+
+  local pass=0 fail=0 skip=0 detail="" host ip path mode tt want ok reps
+  # Стратегии с rnd-элементами (tls_mod=rnd и т.п.) тестируем N раз —
+  # рандомный ClientHello может проскочить DPI один раз случайно.
+  reps=1
+  case "$args" in *rnd*) reps="${BC_PROBE_RND_REPEATS:-2}" ;; esac
+  while IFS=$(printf '\t') read -r host ip path mode; do
+    [ -z "$host" ] && continue
+    if [ "$mode" = "throughput" ]; then
+      bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
+      case "$ok" in
+        1) pass=$((pass + 1)); detail="${detail:+$detail,}$host/throughput=ok" ;;
+        0) fail=$((fail + 1)); detail="${detail:+$detail,}$host/throughput=fail" ;;
+      esac
+      continue
+    fi
+    if [ -n "$path" ]; then
+      export BC_HARD_BODY=1 BC_HARD_PATH="$path"
+    else
+      export BC_HARD_BODY=0
+    fi
+    for tt in http tls12 tls13 quic; do
+      eval "want=\$want_$tt"
+      [ "$want" = 1 ] || continue
+      case "$proto/$tt" in
+        http/http)         bc_repeat_probe "$reps" bc_probe_http "$k" "$host" "$ip"        && ok=1 || ok=0 ;;
+        tls/tls12)         bc_repeat_probe "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_2 && ok=1 || ok=0 ;;
+        tls/tls13)         bc_repeat_probe "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_3 && ok=1 || ok=0 ;;
+        tls12/tls12)       bc_repeat_probe "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_2 && ok=1 || ok=0 ;;
+        tls13/tls13)       bc_repeat_probe "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_3 && ok=1 || ok=0 ;;
+        combined/http)     bc_repeat_probe "$reps" bc_probe_http "$k" "$host" "$ip"        && ok=1 || ok=0 ;;
+        combined/tls12)    bc_repeat_probe "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_2 && ok=1 || ok=0 ;;
+        combined/tls13)    bc_repeat_probe "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_3 && ok=1 || ok=0 ;;
+        combined/quic)     bc_repeat_probe "$reps" bc_probe_quic "$k" "$host" "$ip"        && ok=1 || ok=0 ;;
+        quic/quic)         bc_repeat_probe "$reps" bc_probe_quic "$k" "$host" "$ip"        && ok=1 || ok=0 ;;
+        *)                 ok=skip ;;
+      esac
+      # detail items joined by ',' (no spaces) so we can pass it as a single quoted arg.
+      case "$ok" in
+        1)    pass=$((pass + 1)); detail="${detail:+$detail,}$host/$tt=ok" ;;
+        0)    fail=$((fail + 1)); detail="${detail:+$detail,}$host/$tt=fail" ;;
+        skip) skip=$((skip + 1)) ;;
+      esac
+    done
+  done < "$RESOLVED"
+
+  bc_nfqws_stop "$pidf"
+  bc_event strategy "name=$name" "proto=$proto" "pass=$pass" "fail=$fail" "skip=$skip" "detail=$detail" "args=$args"
+}
+
+# ---- Dispatcher (simple polling) ---------------------------------------
+DONE=0
+while IFS= read -r strat_line; do
+  [ -z "$strat_line" ] && continue
+  # Pick a free worker.
+  while :; do
+    k=0
+    chosen=""
+    while [ "$k" -lt "$WORKERS" ]; do
+      if [ -f "$JOB_DIR/w${k}.free" ]; then
+        chosen="$k"
+        break
+      fi
+      k=$((k + 1))
+    done
+    if [ -n "$chosen" ]; then
+      rm -f "$JOB_DIR/w${chosen}.free"
+      (
+        run_strategy "$chosen" "$strat_line"
+        touch "$JOB_DIR/w${chosen}.free"
+      ) &
+      DONE=$((DONE + 1))
+      bc_event progress "done=$DONE" "total=$TOTAL"
+      break
+    fi
+    # all busy — wait a bit
+    sleep 0.1 2>/dev/null || sleep 1
+  done
+done < "$STRAT_Q"
+
+# Wait for outstanding subshells.
+wait
+bc_event progress "done=$DONE" "total=$TOTAL"
+
+# ---- Final report -------------------------------------------------------
+# Two-section text report:
+#   1) READY-TO-USE combined line at the very top — first working HTTP +
+#      first working TLS + QUIC fallback, glued by --new. This is what
+#      goes verbatim into ZAPRET2_CMD0 (or N).
+#   2) Full per-strategy table with name | proto | pass/fail/skip | detail
+#      AND the full nfqws args on a continuation line. Без args отчёт
+#      бесполезен — пользователь не может ни скопировать стратегию из
+#      файла, ни понять что именно сработало.
+#
+# We extract working strategies as TSV lines (name <tab> proto <tab> args)
+# via a sed/awk pass against the ndjson log, which is far more robust on
+# busybox than awk-FS-quotes-magic.
+WORK_TSV="$JOB_DIR/.working.tsv"
+# JSON keys we want: name, proto, pass, fail, skip, detail, args. We use a
+# tiny shell loop with sed to pull each field. Strategy events look like
+#   {"ts":…,"type":"strategy","name":"…","proto":"…","pass":"…",…,"args":"…"}
+grep '"type":"strategy"' "$LOG" 2>/dev/null | while IFS= read -r line; do
+  pass=$(printf '%s' "$line" | sed -n 's/.*"pass":"\([^"]*\)".*/\1/p')
+  case "$pass" in 0|''|*[!0-9]*) continue ;; esac
+  name=$(printf '%s' "$line"   | sed -n 's/.*"name":"\([^"]*\)".*/\1/p')
+  proto=$(printf '%s' "$line"  | sed -n 's/.*"proto":"\([^"]*\)".*/\1/p')
+  fail=$(printf '%s' "$line"   | sed -n 's/.*"fail":"\([^"]*\)".*/\1/p')
+  skip=$(printf '%s' "$line"   | sed -n 's/.*"skip":"\([^"]*\)".*/\1/p')
+  detail=$(printf '%s' "$line" | sed -n 's/.*"detail":"\([^"]*\)".*/\1/p')
+  args=$(printf '%s' "$line"   | sed -n 's/.*"args":"\([^"]*\)".*/\1/p')
+  # ndjson serialisation escapes \ and ", but our args don't contain those —
+  # nfqws keys/values are [A-Za-z0-9_=,:./@+-]. So no unescaping needed.
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$name" "$proto" "$pass" "$fail" "$skip" "$detail" "$args" >> "$WORK_TSV"
+done
+
+# Pick first HTTP and first TLS working strategies for the combined block.
+FIRST_HTTP_ARGS=$(awk -F'\t' '$2=="http" {print $7; exit}'  "$WORK_TSV" 2>/dev/null)
+FIRST_TLS_ARGS=$(awk -F'\t'  '$2=="tls" || $2=="tls12" || $2=="tls13" {print $7; exit}' "$WORK_TSV" 2>/dev/null)
+QUIC_DEFAULT='--filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=20'
+
+build_combined() {
+  out=""
+  [ -n "$FIRST_HTTP_ARGS" ] && out="$FIRST_HTTP_ARGS"
+  if [ -n "$FIRST_TLS_ARGS" ]; then
+    [ -n "$out" ] && out="$out --new "
+    out="${out}${FIRST_TLS_ARGS}"
+  fi
+  [ -n "$out" ] && out="$out --new $QUIC_DEFAULT"
+  printf '%s' "$out"
+}
+COMBINED=$(build_combined)
+
+{
+  echo "blockcheck2 job: $JOB"
+  echo "workers: $WORKERS  tests: $TESTS"
+  echo "domains:"
+  awk -F'\t' '{ printf "  %s -> %s\n", $1, $2 }' "$RESOLVED"
+  echo
+  echo "================================================================"
+  echo "READY-TO-USE  (paste into ZAPRET2_CMD0):"
+  echo "================================================================"
+  if [ -n "$COMBINED" ]; then
+    printf '%s\n' "$COMBINED"
+  else
+    echo "(no working strategies found — DPI блокирует все варианты, либо стоит увеличить уровень / включить fakebin)"
+  fi
+  echo
+  echo "================================================================"
+  echo "Working strategies (with full nfqws args):"
+  echo "================================================================"
+  if [ -s "$WORK_TSV" ]; then
+    awk -F'\t' '{
+      printf "[%s] %s  pass=%s fail=%s skip=%s\n  detail: %s\n  args:   %s\n\n",
+        $2, $1, $3, $4, $5, $6, $7
+    }' "$WORK_TSV"
+  else
+    echo "(пусто)"
+  fi
+  echo "================================================================"
+  echo "Full event log: $LOG"
+} > "$RESULT"
+rm -f "$WORK_TSV"
+
+BC_FINAL_STATUS=done
+printf 'done\n' > "$STATUS"
+bc_event end

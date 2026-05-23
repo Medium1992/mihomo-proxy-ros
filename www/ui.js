@@ -4,15 +4,16 @@ const defaultEnvListName = "MihomoProxyRoS";
 function mtEscape(value) {
   let s = String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   // Winbox/SSH-терминал MikroTik режет не-ASCII (особенно supplementary-plane:
-  // флаги 🇷🇺 = два U+1F1xx). RouterOS строки поддерживают \xHH в кавычках,
-  // поэтому каждый не-ASCII символ кодируем как набор \xHH по байтам UTF-8.
-  // После парсинга RouterOS в env уходят исходные байты, mihomo regex
+  // флаги 🇷🇺 = два U+1F1xx). RouterOS строки поддерживают hex-escape \HH
+  // (без `x`, в отличие от C/Python — `\xHH` парсер отвергает как "expected
+  // value"). Каждый не-ASCII символ кодируем как набор \HH по байтам UTF-8;
+  // после RouterOS-парсинга в env уходят исходные байты, mihomo regex
   // матчит их 1:1. Флаг /u нужен чтобы regex обходил code points, а не
   // 16-битные code units (иначе суррогатные пары ломаются на TextEncoder).
   return s.replace(/[^\x00-\x7F]/gu, (ch) => {
     let out = "";
     for (const b of new TextEncoder().encode(ch)) {
-      out += "\\x" + b.toString(16).toUpperCase().padStart(2, "0");
+      out += "\\" + b.toString(16).toUpperCase().padStart(2, "0");
     }
     return out;
   });
@@ -2634,17 +2635,39 @@ const EXCLUDE_TYPE_VALUES = new Set([
   "wireguard", "tuic", "ssh",
 ]);
 
+function invalidKey(name) { return "mihomo-invalid:" + name; }
+
 function setFieldValidity(box, kind, message) {
   box.classList.remove("field-invalid", "field-warn");
   const input = box.querySelector("input, textarea");
+  const name = input && input.name;
   if (kind === "ok") {
     box.removeAttribute("data-tooltip");
     if (input) input.removeAttribute("aria-invalid");
+    if (name) {
+      try { localStorage.removeItem(invalidKey(name)); } catch (e) {}
+    }
     return;
   }
   box.setAttribute("data-tooltip", message || "");
   box.classList.add(kind === "warn" ? "field-warn" : "field-invalid");
   if (input) input.setAttribute("aria-invalid", kind === "invalid" ? "true" : "false");
+  // Persist invalid status so other pages can count it in the nav badge.
+  // 'warn' is informational only and does not count toward the error badge.
+  if (name) {
+    try {
+      if (kind === "invalid") {
+        localStorage.setItem(invalidKey(name), "1");
+        // Ensure we know what page this field belongs to (validators may
+        // run before the field has ever been modified, so pageKey may be unset).
+        if (!localStorage.getItem(pageKey(name))) {
+          localStorage.setItem(pageKey(name), location.pathname);
+        }
+      } else {
+        localStorage.removeItem(invalidKey(name));
+      }
+    } catch (e) {}
+  }
 }
 
 // Returns { items, syntaxError } parsing a comma-separated list.
@@ -2930,35 +2953,48 @@ function updateTabBadges() {
   });
 }
 
-// Side-nav badges: changed-count is cross-page (computed from localStorage),
-// error-count is current-page only (validators only run for visible DOM).
+// Side-nav badges: both changed-count and error-count are cross-page,
+// computed from localStorage. Invalid status is persisted by setFieldValidity
+// under mihomo-invalid:<name>, paired with mihomo-page:<name>.
 function updateNavBadges() {
   const byPathChanged = {};
+  const byPathErrors = {};
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
-    if (!key || !key.startsWith("mihomo-env:")) continue;
-    const name = key.slice("mihomo-env:".length);
-    const cur = localStorage.getItem(key) || "";
-    const orig = localStorage.getItem(originalKey(name));
-    if (orig === null) continue;
-    if (cur === orig) continue;
-    const path = localStorage.getItem(pageKey(name));
-    if (!path) continue;
-    byPathChanged[path] = (byPathChanged[path] || 0) + 1;
+    if (!key) continue;
+    if (key.startsWith("mihomo-env:")) {
+      const name = key.slice("mihomo-env:".length);
+      const cur = localStorage.getItem(key) || "";
+      const orig = localStorage.getItem(originalKey(name));
+      if (orig === null) continue;
+      if (cur === orig) continue;
+      const path = localStorage.getItem(pageKey(name));
+      if (!path) continue;
+      byPathChanged[path] = (byPathChanged[path] || 0) + 1;
+    } else if (key.startsWith("mihomo-invalid:")) {
+      const name = key.slice("mihomo-invalid:".length);
+      const path = localStorage.getItem(pageKey(name));
+      if (!path) continue;
+      byPathErrors[path] = (byPathErrors[path] || 0) + 1;
+    }
   }
+  // For the current page, prefer the live DOM count — it reflects the most
+  // recent validator pass before persistence has caught up.
   const currentPath = location.pathname;
   const errorsHere = document.querySelectorAll("#envForm .field-invalid").length;
+  byPathErrors[currentPath] = errorsHere;
 
   document.querySelectorAll(".side nav a").forEach((a) => {
     const href = a.getAttribute("href") || "";
     const absPath = href.startsWith("/") ? href : "/" + href.replace(/^\.\//, "");
     let changed = 0;
+    let errors = 0;
     for (const p in byPathChanged) {
       if (p === absPath || p.endsWith("/" + href) || p === href) changed += byPathChanged[p];
     }
-    // Error badge is set only for the current page (no cross-page tracking).
-    const isCurrent = currentPath === absPath || currentPath.endsWith("/" + href);
-    const errors = isCurrent ? errorsHere : 0;
+    for (const p in byPathErrors) {
+      if (p === absPath || p.endsWith("/" + href) || p === href) errors += byPathErrors[p];
+    }
 
     let changedBadge = a.querySelector('.nav-badge[data-kind="changed"]');
     if (!changedBadge) {
@@ -3107,6 +3143,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initPageTabs();
   initSocksEditor();
   initFieldValidators();
+  initBlockcheck();
   renderRulesPreview();
   refreshAllBadges();
   document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]").forEach((el) => {
@@ -3139,3 +3176,686 @@ document.addEventListener("DOMContentLoaded", () => {
   const first = requestedButton || document.querySelector(".file-list button");
   if (first) switchYaml(first.dataset.name);
 });
+
+// ===== Blockcheck (DPI strategy scanner) =====
+
+const BC = {
+  jobId: null,
+  pollTimer: null,
+  offset: 0,
+  results: [],
+  counts: { ok: 0, fail: 0, skip: 0 },
+};
+const BC_JOB_KEY = "mihomo-bc-job";
+
+function initBlockcheck() {
+  if (!document.getElementById("bcDomains")) return;
+  try {
+    const saved = localStorage.getItem("mihomo-bc-domains");
+    if (saved) document.getElementById("bcDomains").value = saved;
+  } catch (e) {}
+  document.getElementById("bcDomains").addEventListener("input", (e) => {
+    try { localStorage.setItem("mihomo-bc-domains", e.target.value); } catch (e2) {}
+  });
+  const filter = document.getElementById("bcFilterOk");
+  if (filter) filter.addEventListener("change", bcApplyFilter);
+
+  // Recover an in-flight or recently-finished job after page reload.
+  let savedJob = null;
+  try { savedJob = localStorage.getItem(BC_JOB_KEY); } catch (e) {}
+  if (savedJob) {
+    BC.jobId = savedJob;
+    bcSetStatus("проверка job " + savedJob + "…", true);
+    BC.pollTimer = setInterval(blockcheck2Poll, 1000);
+    blockcheck2Poll();
+  }
+}
+
+function bcSetStatus(text, busy) {
+  const el = document.getElementById("bcStatus");
+  if (el) el.textContent = text;
+  document.getElementById("bcCancelBtn").disabled = !busy;
+  document.getElementById("bcStartBtn").disabled  = busy;
+}
+
+function bcAppendLog(text) {
+  if (!text) return;
+  const pre = document.getElementById("bcLog");
+  if (!pre) return;
+  if (pre.textContent.indexOf("(пусто") === 0) pre.textContent = "";
+  pre.textContent += text;
+  pre.scrollTop = pre.scrollHeight;
+}
+
+function bcUpdateCounts() {
+  document.getElementById("bcCounts").hidden = false;
+  document.getElementById("bcCountOk").textContent   = BC.counts.ok   + " рабочих";
+  document.getElementById("bcCountFail").textContent = BC.counts.fail + " не сработали";
+  document.getElementById("bcCountSkip").textContent = BC.counts.skip + " пропущено";
+}
+
+function bcApplyFilter() {
+  const onlyOk = document.getElementById("bcFilterOk").checked;
+  document.querySelectorAll("#bcTable tbody tr").forEach((tr) => {
+    if (onlyOk && !tr.classList.contains("bc-row-ok")) tr.hidden = true;
+    else tr.hidden = false;
+  });
+}
+
+// Apply the filter every time we add a new row, otherwise newly-arrived
+// `fail` rows would appear even when "only working" is checked.
+function bcApplyFilterToRow(tr) {
+  const onlyOk = document.getElementById("bcFilterOk").checked;
+  if (onlyOk && !tr.classList.contains("bc-row-ok")) tr.hidden = true;
+}
+
+function bcHandleEvent(ev) {
+  if (!ev || !ev.type) return;
+  switch (ev.type) {
+    case "start": {
+      bcSetStatus("инициализация (workers=" + (ev.workers || "?") + ")", true);
+      break;
+    }
+    case "resolve": {
+      bcSetStatus("резолв " + (ev.host || "") + " → " + (ev.ip || ""), true);
+      break;
+    }
+    case "resolve_fail": {
+      bcAppendLog("[resolve_fail] " + (ev.host || "") + "\n");
+      break;
+    }
+    case "nft_ready": {
+      bcSetStatus("nft готов, начинаю перебор", true);
+      break;
+    }
+    case "queue": {
+      const total = parseInt(ev.total, 10) || 0;
+      const bar = document.getElementById("bcProgressBar");
+      const txt = document.getElementById("bcProgressText");
+      document.getElementById("bcProgress").hidden = false;
+      bar.max = total;
+      bar.value = 0;
+      txt.textContent = "0 / " + total;
+      bcSetStatus("тестирую " + total + " стратегий", true);
+      break;
+    }
+    case "strategy_start": {
+      const cur = document.getElementById("bcCurrent");
+      if (cur) cur.textContent = "▶ " + (ev.name || "");
+      break;
+    }
+    case "progress": {
+      const bar = document.getElementById("bcProgressBar");
+      const txt = document.getElementById("bcProgressText");
+      bar.value = parseInt(ev.done, 10) || 0;
+      txt.textContent = (ev.done || 0) + " / " + (ev.total || 0);
+      break;
+    }
+    case "strategy": {
+      const pass = parseInt(ev.pass, 10) || 0;
+      const fail = parseInt(ev.fail, 10) || 0;
+      const skip = parseInt(ev.skip, 10) || 0;
+      if (pass > 0) BC.counts.ok++;
+      else if (fail > 0) BC.counts.fail++;
+      else BC.counts.skip++;
+      BC.results.push(ev);
+      bcRenderResultsRow(ev);
+      bcUpdateCounts();
+      // Recompute combined-from-best whenever a new row arrives.
+      if (pass > 0) {
+        try { bcCombinedRefresh(); } catch (e) {}
+      }
+      // Custom-test inline result widget: this row came from the user's
+      // "test one strategy" button — show pass/fail right next to it.
+      if (BC.lastCustomTag && ev.name === BC.lastCustomTag) {
+        const cr = document.getElementById("bcCustomResult");
+        if (cr) {
+          if (pass > 0) {
+            cr.textContent = "✓ pass=" + pass + " · " + (ev.detail || "");
+            cr.className = "bc-custom-result ok";
+          } else {
+            cr.textContent = "✗ fail=" + (ev.fail || 0) + " · " + (ev.detail || "");
+            cr.className = "bc-custom-result fail";
+          }
+        }
+        BC.lastCustomTag = null;
+      }
+      break;
+    }
+    case "strategy_skip": {
+      BC.counts.skip++;
+      bcUpdateCounts();
+      break;
+    }
+    case "warn":
+    case "error":
+      bcAppendLog("[" + ev.type + "] " + (ev.msg || "") + "\n");
+      if (ev.type === "error") bcSetStatus("ошибка: " + (ev.msg || ""), false);
+      break;
+    case "end": {
+      bcSetStatus("готово (" + BC.counts.ok + " рабочих из " + BC.results.length + ")", false);
+      document.getElementById("bcDownloadBtn").disabled = false;
+      const cur = document.getElementById("bcCurrent");
+      if (cur) cur.textContent = "";
+      if (BC.pollTimer) { clearInterval(BC.pollTimer); BC.pollTimer = null; }
+      break;
+    }
+  }
+}
+
+// "Combined-from-best": enumerate ALL working strategies and produce the
+// full http×tls×quic cross-product as combined `--new`-chained lines.
+// Each combination becomes its own row with Copy / → ZAPRET2_CMD buttons.
+// Cap row count to keep the UI sane.
+const BC_COMBINED_CAP = 60;
+
+function bcCombinedRefresh() {
+  const box  = document.getElementById("bcCombinedBox");
+  const list = document.getElementById("bcCombinedList");
+  if (!box || !list) return;
+  const wins = BC.results.filter(r => (parseInt(r.pass, 10) || 0) > 0);
+  const https = wins.filter(r => r.proto === "http");
+  const tlss  = wins.filter(r => r.proto === "tls" || r.proto === "tls12" || r.proto === "tls13");
+  const quics = wins.filter(r => r.proto === "quic");
+  // Also pull every quic strategy from BC.results irrespective of pass —
+  // quic probe is currently always skipped, but the user still wants quic
+  // options available in the combined cross-product.
+  const quicCandidates = BC.results.filter(r => r.proto === "quic");
+  // De-dupe by args (in case the same args got reported twice).
+  const dedup = arr => {
+    const seen = new Set(); const out = [];
+    for (const r of arr) { if (!seen.has(r.args)) { seen.add(r.args); out.push(r); } }
+    return out;
+  };
+  const H = dedup(https);
+  const T = dedup(tlss);
+  let Q = dedup(quicCandidates);
+  // Always include a default-quic fallback option (named so), regardless of
+  // probes — it's a valid combined component on its own.
+  const DEFAULT_Q = {
+    name: "(QUIC по умолчанию)",
+    proto: "quic",
+    args: "--filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=20",
+  };
+  if (!Q.find(q => q.args === DEFAULT_Q.args)) Q = [DEFAULT_Q].concat(Q);
+  // Also allow "no QUIC at all" as a valid choice (HTTP+TLS only combo).
+  const NO_Q = { name: "(без QUIC)", proto: null, args: null };
+  const qOptions = [NO_Q].concat(Q);
+
+  // Build all combinations. Treat empty H/T like an empty placeholder so
+  // we still emit a combined even if only one of the two is present.
+  const HOpts = H.length ? H : [{ name: "(без HTTP)", proto: null, args: null }];
+  const TOpts = T.length ? T : [{ name: "(без TLS)",  proto: null, args: null }];
+
+  const variants = [];
+  for (const h of HOpts) {
+    for (const t of TOpts) {
+      for (const q of qOptions) {
+        if (!h.args && !t.args && !q.args) continue; // empty combined
+        const parts = [];
+        if (h.args) parts.push(h.args);
+        if (t.args) parts.push(t.args);
+        if (q.args) parts.push(q.args);
+        variants.push({
+          combined: parts.join(" --new "),
+          tag: [
+            h.args ? "HTTP=" + h.name : "—",
+            t.args ? "TLS="  + t.name : "—",
+            q.args ? "QUIC=" + q.name : "—"
+          ].join(", "),
+        });
+        if (variants.length >= BC_COMBINED_CAP) break;
+      }
+      if (variants.length >= BC_COMBINED_CAP) break;
+    }
+    if (variants.length >= BC_COMBINED_CAP) break;
+  }
+
+  if (variants.length === 0) { box.hidden = true; return; }
+  box.hidden = false;
+
+  // Render. We rebuild fully each time — combined-from-best is small.
+  list.innerHTML = "";
+  for (const v of variants) {
+    const row = document.createElement("div");
+    row.className = "bc-combined-row";
+    const argsAttr = v.combined.replace(/"/g, "&quot;");
+    row.innerHTML =
+      `<div class="bc-combined-tag">${v.tag}</div>` +
+      `<textarea class="bc-combined-args" readonly rows="2">${v.combined}</textarea>` +
+      `<div class="bc-combined-row-actions">` +
+        `<button type="button" class="primary" data-args="${argsAttr}" onclick="bcCombinedApplyOne(this)">→ ZAPRET2_CMD</button>` +
+        `<button type="button" data-args="${argsAttr}" onclick="bcCombinedCopyOne(this)">⧉</button>` +
+      `</div>`;
+    list.appendChild(row);
+  }
+  document.getElementById("bcCombinedSummary").textContent =
+    "— " + variants.length + " вариант(ов) из " + H.length + " HTTP × " + T.length + " TLS × " + qOptions.length + " QUIC" +
+    (variants.length >= BC_COMBINED_CAP ? " (обрезано)" : "");
+}
+
+function bcCombinedCopyOne(btn) {
+  const args = btn.dataset.args || "";
+  if (!args) return;
+  bcCopyFallback(args, () => {
+    const o = btn.textContent;
+    btn.textContent = "✓";
+    setTimeout(() => { btn.textContent = o; }, 1200);
+  });
+}
+function bcCombinedApplyOne(btn) {
+  const args = btn.dataset.args || "";
+  const fake = document.createElement("button");
+  fake.dataset.args = args;
+  fake.dataset.name = "combined";
+  bcApplyStrategy(fake);
+}
+
+function bcRenderResultsRow(ev) {
+  const table = document.getElementById("bcTable");
+  const tbox  = document.getElementById("bcTableBox");
+  if (tbox) tbox.hidden = false;
+  const tbody = table.querySelector("tbody");
+  const tr = document.createElement("tr");
+  const pass = parseInt(ev.pass, 10) || 0;
+  if (pass > 0) tr.classList.add("bc-row-ok");
+  else if ((parseInt(ev.fail, 10) || 0) > 0) tr.classList.add("bc-row-fail");
+  const args = ev.args || "";
+  // Every row gets a copy button so users can grab strategies that didn't
+  // pass too (sometimes they want to compare or tweak). Apply button only
+  // for working ones — applying a failing strategy makes no sense.
+  const argsAttr = escapeAttr(args);
+  const nameAttr = escapeAttr(ev.name || "");
+  const copyBtn  = args ? `<button type="button" class="ghost" title="Скопировать аргументы стратегии в буфер обмена" onclick="bcCopyStrategy(this)" data-args="${argsAttr}">⧉</button>` : "";
+  const applyBtn = pass > 0 && args ? `<button type="button" class="ghost" onclick="bcApplyStrategy(this)" data-args="${argsAttr}" data-name="${nameAttr}">→ ZAPRET2_CMD</button>` : "";
+  tr.innerHTML =
+    `<td><code title="${argsAttr}">${escapeAttr(ev.name || "")}</code></td>` +
+    `<td>${escapeAttr(ev.proto || "")}</td>` +
+    `<td>${pass}</td>` +
+    `<td>${ev.fail || 0}</td>` +
+    `<td>${ev.skip || 0}</td>` +
+    `<td><small>${escapeAttr(ev.detail || "")}</small></td>` +
+    `<td class="bc-row-actions">${copyBtn}${applyBtn}</td>`;
+  tr.dataset.pass = String(pass);
+  // Insert in sorted position (PASS DESC). Linear walk; fine even at 1000+ rows.
+  const tbody2 = tbody;
+  let inserted = false;
+  for (const existing of tbody2.children) {
+    const ep = parseInt(existing.dataset.pass || "0", 10);
+    if (pass > ep) {
+      tbody2.insertBefore(tr, existing);
+      inserted = true;
+      break;
+    }
+  }
+  if (!inserted) tbody2.appendChild(tr);
+  bcApplyFilterToRow(tr);
+}
+
+// Copy strategy args to clipboard. Fallback path covers ancient browsers
+// and the not-uncommon case of HTTP origin (clipboard API requires
+// secure context).
+function bcCopyStrategy(btn) {
+  const args = btn.dataset.args || "";
+  if (!args) return;
+  const ok = () => {
+    const orig = btn.textContent;
+    btn.textContent = "✓";
+    setTimeout(() => { btn.textContent = orig; }, 1200);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(args).then(ok).catch(() => bcCopyFallback(args, ok));
+  } else {
+    bcCopyFallback(args, ok);
+  }
+}
+function bcCopyFallback(text, onDone) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); if (onDone) onDone(); }
+  catch (e) { window.prompt("Скопируй вручную:", text); }
+  document.body.removeChild(ta);
+}
+
+// blockcheck → DPI handoff. blockcheck UI lives on /tools; ZAPRET2_CMD rows
+// live on /dpi. Plain navigation drops the strategy args; we persist them
+// in localStorage under a fixed key and the /dpi page picks them up on load.
+const BC_PENDING_KEY = "mihomo-bc-pending-zapret2";
+
+function bcApplyStrategy(btn) {
+  const args = btn.dataset.args || "";
+  const name = btn.dataset.name || "strategy";
+  if (!args) return;
+
+  if (location.pathname.endsWith("/dpi") || document.getElementById("zapret2")) {
+    // Same page — apply immediately.
+    bcInsertZapret2Row(args, name);
+    return;
+  }
+  // Cross-page: stash and navigate. Pickup happens on the dpi page load
+  // (see bcConsumePendingZapret2 below).
+  try {
+    localStorage.setItem(BC_PENDING_KEY, JSON.stringify({ args, name, ts: Date.now() }));
+  } catch (e) {}
+  location.href = "/cgi-bin/index?p=dpi#zapret2";
+}
+
+function bcInsertZapret2Row(args, name) {
+  if (typeof addRow !== "function") return;
+  // Click-add then locate the just-added row deterministically via dataset.
+  const before = new Set([...document.querySelectorAll('#zapret2 .env-row')].map(r => r));
+  addRow("zapret2", "ZAPRET2_CMD", false);
+  // Find the freshly inserted row.
+  let target = null;
+  for (const r of document.querySelectorAll('#zapret2 .env-row')) {
+    if (!before.has(r)) { target = r; break; }
+  }
+  if (!target) target = document.querySelector('#zapret2 .env-row:last-child');
+  if (!target) return;
+  const input = target.querySelector('input[name^="ZAPRET2_CMD"]:not([name$="_PACKETS"])');
+  if (!input) return;
+  input.value = args;
+  input.dispatchEvent(new Event("input",  { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  input.scrollIntoView({ behavior: "smooth", block: "center" });
+  input.focus();
+  // Friendly toast (or fallback alert if no toast helper).
+  if (typeof showToast === "function") {
+    showToast("Стратегия «" + name + "» добавлена в ZAPRET2_CMD. Сохраните, чтобы применить.");
+  }
+}
+
+// Run on /dpi page load to consume a pending blockcheck handoff.
+function bcConsumePendingZapret2() {
+  let raw = null;
+  try { raw = localStorage.getItem(BC_PENDING_KEY); } catch (e) {}
+  if (!raw) return;
+  try { localStorage.removeItem(BC_PENDING_KEY); } catch (e) {}
+  let payload;
+  try { payload = JSON.parse(raw); } catch (e) { return; }
+  if (!payload || !payload.args) return;
+  // Ignore stale handoffs (>5 minutes) — user probably gave up.
+  if (payload.ts && Date.now() - payload.ts > 5 * 60 * 1000) return;
+  // Defer slightly so the rest of /dpi DOM/JS is ready (env restore, etc).
+  setTimeout(() => bcInsertZapret2Row(payload.args, payload.name || "strategy"), 100);
+}
+// Auto-run on /dpi page load.
+if (typeof window !== "undefined") {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      if (document.getElementById("zapret2")) bcConsumePendingZapret2();
+    });
+  } else if (document.getElementById("zapret2")) {
+    bcConsumePendingZapret2();
+  }
+}
+
+function bcDecode(b64) {
+  if (!b64) return "";
+  try {
+    const bin = atob(b64);
+    // We expect ASCII/UTF-8 from runner; pass through as-is.
+    try { return decodeURIComponent(escape(bin)); } catch (e) { return bin; }
+  } catch (e) { return ""; }
+}
+
+function bcFormValues() {
+  const tests = [];
+  if (document.getElementById("bcTestHttp").checked)  tests.push("http");
+  if (document.getElementById("bcTestTls12").checked) tests.push("tls12");
+  if (document.getElementById("bcTestTls13").checked) tests.push("tls13");
+  if (document.getElementById("bcTestQuic").checked)  tests.push("quic");
+  const fb = document.getElementById("bcUseFakebin");
+  return {
+    domains:     (document.getElementById("bcDomains").value || "").trim(),
+    workers:     parseInt(document.getElementById("bcWorkers").value, 10) || 8,
+    level:       document.getElementById("bcLevel").value,
+    fakebin:     fb && fb.checked ? "1" : "0",
+    // Per-domain body-gate: triggered automatically when a domain line
+    // contains a path (e.g. `rutracker.org/forum`). The min-KB field
+    // here applies to all such domains in this run.
+    hard_min_kb: parseInt(document.getElementById("bcHardMinKb").value, 10) || 16,
+    rnd_repeats: parseInt(document.getElementById("bcRndRepeats").value, 10) || 2,
+    tests:       tests,
+  };
+}
+
+// "Test custom strategy" — wraps a single user-supplied nfqws args line in a
+// 1-line strategies file and starts a normal blockcheck job with workers=1.
+// The job goes through the same runner/probe pipeline as a regular run, so
+// results land in the table next to the others. We emit proto=combined so
+// the runner exercises the strategy against every test-type the user
+// checked (HTTP / TLS 1.2 / TLS 1.3 / QUIC).
+function blockcheck2Custom() {
+  const args = (document.getElementById("bcCustomArgs").value || "").trim();
+  const v    = bcFormValues();
+  if (!args) { alert("Введите аргументы nfqws"); return; }
+  if (!v.domains) { alert("Укажите хотя бы один домен (поле выше)."); return; }
+  const tests = [];
+  if (document.getElementById("bcCustomHttp").checked)  tests.push("http");
+  if (document.getElementById("bcCustomTls12").checked) tests.push("tls12");
+  if (document.getElementById("bcCustomTls13").checked) tests.push("tls13");
+  if (document.getElementById("bcCustomQuic")  && document.getElementById("bcCustomQuic").checked)  tests.push("quic");
+  if (!tests.length) { alert("Выберите хотя бы один протокол."); return; }
+
+  if (BC.jobId && document.getElementById("bcCancelBtn").disabled === false) {
+    if (!window.confirm("Уже запущен job " + BC.jobId + ". Остановить и запустить custom-test?")) return;
+    blockcheck2Cancel(true);
+  }
+  // NB: deliberately NOT wiping BC.results / counts / table / combined box —
+  // a custom-test should *append* to whatever the user already scanned.
+  // Only the offset is reset so we read this job's ndjson from the start.
+  BC.offset = 0;
+  // Tag this run's strategy so the strategy-event handler can recognise it
+  // as custom and update the inline result widget.
+  const customTag = "custom_" + Date.now();
+  BC.lastCustomTag = customTag;
+  const cr = document.getElementById("bcCustomResult");
+  if (cr) {
+    cr.textContent = "(тестирую " + tests.join("/") + "…)";
+    cr.className = "bc-custom-result running";
+  }
+  bcSetStatus("отправка custom-теста…", true);
+
+  // Synthesise one strategies.list line: NAME|PROTO|ARGS. proto=combined
+  // means run.sh will dispatch this strategy against every enabled test
+  // type (http / tls12 / tls13).
+  const line = customTag + "|combined|" + args + "\n";
+  const body = new URLSearchParams();
+  body.set("domains_b64",    btoa(unescape(encodeURIComponent(v.domains))));
+  body.set("workers",        "1");
+  body.set("tests",          tests.join(","));
+  body.set("strategies_b64", btoa(unescape(encodeURIComponent(line))));
+  // level is ignored when strategies_b64 is set, but send it for completeness
+  body.set("level",          v.level);
+  body.set("hard_min_kb",    String(v.hard_min_kb));
+  body.set("rnd_repeats",    String(v.rnd_repeats));
+
+  fetch("/cgi-bin/blockcheck2", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  }).then(r => r.json()).then(data => {
+    if (!data.ok) {
+      bcSetStatus("ошибка: " + bcDecode(data.error_b64), false);
+      BC.jobId = null;
+      return;
+    }
+    BC.jobId = data.job_id;
+    try { localStorage.setItem(BC_JOB_KEY, BC.jobId); } catch (e) {}
+    bcSetStatus("custom-test запущен, job " + BC.jobId, true);
+    BC.pollTimer = setInterval(blockcheck2Poll, 500);
+    blockcheck2Poll();
+  }).catch(err => {
+    bcSetStatus("ошибка запуска: " + err, false);
+    BC.jobId = null;
+  });
+}
+
+function blockcheck2Start() {
+  if (BC.jobId && document.getElementById("bcCancelBtn").disabled === false) {
+    if (!window.confirm("Уже запущен job " + BC.jobId + ". Остановить и запустить новый?")) return;
+    blockcheck2Cancel(true);
+  }
+  const v = bcFormValues();
+  if (!v.domains) { alert("Укажите хотя бы один домен."); return; }
+  if (!v.tests.length) { alert("Выберите хотя бы один тип теста."); return; }
+
+  // Reset UI.
+  BC.results = [];
+  BC.offset = 0;
+  BC.counts = { ok: 0, fail: 0, skip: 0 };
+  document.getElementById("bcLog").textContent = "";
+  document.getElementById("bcTable").querySelector("tbody").innerHTML = "";
+  const _tbox = document.getElementById("bcTableBox");
+  if (_tbox) _tbox.hidden = true;
+  document.getElementById("bcCounts").hidden = true;
+  document.getElementById("bcProgress").hidden = true;
+  document.getElementById("bcCurrent").textContent = "";
+  document.getElementById("bcDownloadBtn").disabled = true;
+  const cb = document.getElementById("bcCombinedBox");
+  if (cb) cb.hidden = true;
+  bcSetStatus("отправка запроса…", true);
+
+  const body = new URLSearchParams();
+  body.set("domains_b64", btoa(unescape(encodeURIComponent(v.domains))));
+  body.set("workers", String(v.workers));
+  body.set("tests", v.tests.join(","));
+  body.set("level",       v.level);
+  body.set("fakebin",     v.fakebin);
+  body.set("hard_min_kb", String(v.hard_min_kb));
+  body.set("rnd_repeats", String(v.rnd_repeats));
+
+  fetch("/cgi-bin/blockcheck2", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  }).then(r => r.json()).then(data => {
+    if (!data.ok) {
+      bcSetStatus("ошибка: " + bcDecode(data.error_b64), false);
+      try { localStorage.removeItem(BC_JOB_KEY); } catch (e) {}
+      BC.jobId = null;
+      return;
+    }
+    BC.jobId = data.job_id;
+    try { localStorage.setItem(BC_JOB_KEY, BC.jobId); } catch (e) {}
+    bcSetStatus("запущен job " + BC.jobId, true);
+    BC.pollTimer = setInterval(blockcheck2Poll, 700);
+    blockcheck2Poll();
+  }).catch(err => {
+    bcSetStatus("ошибка запуска: " + err, false);
+    BC.jobId = null;
+    try { localStorage.removeItem(BC_JOB_KEY); } catch (e) {}
+  });
+}
+
+function blockcheck2Poll() {
+  if (!BC.jobId) return;
+  fetch("/cgi-bin/blockcheck2-status?job=" + encodeURIComponent(BC.jobId) + "&offset=" + BC.offset)
+    .then(r => r.json()).then(data => {
+      if (!data.ok) {
+        // Job dir gone (server restart, manual cleanup) → reset.
+        if (BC.pollTimer) { clearInterval(BC.pollTimer); BC.pollTimer = null; }
+        bcSetStatus("job недоступен: " + (data.error || ""), false);
+        BC.jobId = null;
+        try { localStorage.removeItem(BC_JOB_KEY); } catch (e) {}
+        return;
+      }
+      BC.offset = data.offset;
+      const tail = bcDecode(data.log_b64);
+      if (tail) {
+        tail.split("\n").forEach(line => {
+          line = line.trim();
+          if (!line || line[0] !== "{") return;
+          let ev;
+          try { ev = JSON.parse(line); } catch (e) { return; }
+          bcHandleEvent(ev);
+          // Show only meaningful events in the log pane — the table and
+          // progress bar already convey the rest. Without this filter the
+          // log is a wall of `progress` / `strategy_start` noise.
+          if (!ev.type) return;
+          switch (ev.type) {
+            case "progress":
+            case "strategy_start":
+              return;
+            case "strategy":
+              // Only surface working strategies in the log; failed ones
+              // live in the table.
+              if ((parseInt(ev.pass, 10) || 0) > 0) {
+                bcAppendLog("[OK] " + ev.name + " (" + ev.proto + ") — " +
+                            (ev.detail || "") + "\n");
+              }
+              return;
+            case "start":
+              bcAppendLog("=== blockcheck2 начат: workers=" + (ev.workers || "?") +
+                          " tests=" + (ev.tests || "?") + " ===\n");
+              return;
+            case "end":
+              bcAppendLog("=== blockcheck2 завершён ===\n");
+              return;
+            case "queue":
+              bcAppendLog("В очереди: " + (ev.total || "?") + " стратегий\n");
+              return;
+            case "resolve":
+              bcAppendLog("DoH " + (ev.host || "") + " → " + (ev.ip || "") + "\n");
+              return;
+            case "resolve_fail":
+              bcAppendLog("[!] не разрешил " + (ev.host || "") + " через DoH\n");
+              return;
+            case "baseline":
+              bcAppendLog("baseline " + (ev.host || "") + " (" + (ev.ip || "") +
+                          "): " + (ev.result || "?") +
+                          (ev.warn ? "\n   ⚠ " + ev.warn : "") + "\n");
+              return;
+            case "nft_ready":
+              bcAppendLog("nft-таблица готова, маркировка по dst-IP + sport-range\n");
+              return;
+            case "warn":
+            case "error":
+              bcAppendLog("[" + ev.type + "] " + (ev.msg || "") + "\n");
+              return;
+            case "teardown":
+            case "strategy_skip":
+              // silent
+              return;
+            default:
+              bcAppendLog(line + "\n");
+          }
+        });
+      }
+      if (data.status === "done" || data.status === "error" || data.status === "cancelled") {
+        if (BC.pollTimer) { clearInterval(BC.pollTimer); BC.pollTimer = null; }
+        // Final status; download stays enabled on done; jobId stays so user
+        // can re-download after refresh until they start a new run.
+        bcSetStatus(data.status === "done"
+          ? "готово (" + BC.counts.ok + " рабочих из " + BC.results.length + ")"
+          : data.status, false);
+        document.getElementById("bcDownloadBtn").disabled = data.status !== "done";
+      }
+    }).catch(() => {});
+}
+
+function blockcheck2Cancel(silent) {
+  if (!BC.jobId) return;
+  const body = new URLSearchParams(); body.set("job", BC.jobId);
+  fetch("/cgi-bin/blockcheck2-cancel", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  }).then(r => r.json()).then(() => {
+    if (!silent) bcSetStatus("остановлен", false);
+    if (BC.pollTimer) { clearInterval(BC.pollTimer); BC.pollTimer = null; }
+  }).catch(() => {});
+}
+
+function blockcheck2Download() {
+  if (!BC.jobId) return;
+  window.location.href = "/cgi-bin/blockcheck2-status?job=" + encodeURIComponent(BC.jobId) + "&download=1";
+}
+
+// (blockcheck2Preview removed — generated count is shown right in the
+//  level dropdown labels; running gen-strategies twice was redundant.)

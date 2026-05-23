@@ -1,0 +1,43 @@
+# Blockcheck FALLBACK strategy list (nfqws2 / lua-desync).
+#
+# This list is only used when /www/blockcheck2/gen-strategies is missing or
+# fails. The runtime path always prefers the generator, which auto-discovers
+# fake blobs in /zapret-fakebin/ (so newly uploaded / removed files are
+# picked up on every run).
+#
+# Keep this file FREE OF HARDCODED BLOB PATHS — a stale `/zapret-fakebin/X.bin`
+# reference would make nfqws fail to start. Only pure-split, syndata, oob,
+# and host-header tricks live here.
+#
+# Format: NAME|PROTO|ARGS  (runner adds --lua-init=@/lua/*.lua + --filter-*)
+
+# HTTP — host header / method
+http_hostcase|http|--payload=http_req --lua-desync=http_hostcase
+http_hostcase_hoSt|http|--payload=http_req --lua-desync=http_hostcase:spell=hoSt
+http_domcase|http|--payload=http_req --lua-desync=http_domcase
+http_methodeol|http|--payload=http_req --lua-desync=http_methodeol
+http_unixeol|http|--payload=http_req --lua-desync=http_unixeol
+http_oob|http|--payload=http_req --lua-desync=oob
+http_syndata|http|--payload=http_req --lua-desync=syndata
+
+# TLS — pure split / disorder / tcpseg
+tls_multisplit_sniext|tls|--payload=tls_client_hello --lua-desync=multisplit:pos=sniext
+tls_multisplit_pos1|tls|--payload=tls_client_hello --lua-desync=multisplit:pos=1
+tls_multisplit_pos2|tls|--payload=tls_client_hello --lua-desync=multisplit:pos=2
+tls_multisplit_midsld|tls|--payload=tls_client_hello --lua-desync=multisplit:pos=midsld
+tls_multidisorder_sniext|tls|--payload=tls_client_hello --lua-desync=multidisorder:pos=sniext
+tls_multidisorder_pos1|tls|--payload=tls_client_hello --lua-desync=multidisorder:pos=1
+tls_multidisorder_pos2|tls|--payload=tls_client_hello --lua-desync=multidisorder:pos=2
+tls_multidisorder_midsld|tls|--payload=tls_client_hello --lua-desync=multidisorder:pos=midsld
+tls_tcpseg_0_1|tls|--payload=tls_client_hello --lua-desync=tcpseg:pos=0,1
+tls_tcpseg_0_2|tls|--payload=tls_client_hello --lua-desync=tcpseg:pos=0,2
+tls_tcpseg_0_midsld|tls|--payload=tls_client_hello --lua-desync=tcpseg:pos=0,midsld
+
+# TLS hostfakesplit
+tls_hostfakesplit_disorder_md5|tls|--payload=tls_client_hello --lua-desync=hostfakesplit:disorder:nofake1:tcp_md5:repeats=6
+tls_hostfakesplit_midhost_md5|tls|--payload=tls_client_hello --lua-desync=hostfakesplit:midhost=midsld:nofake1:tcp_md5:repeats=6
+tls_hostfakesplit_disorder_badsum|tls|--payload=tls_client_hello --lua-desync=hostfakesplit:disorder:nofake1:badsum:repeats=6
+
+# TLS syndata / OOB
+tls_syndata|tls|--payload=tls_client_hello --lua-desync=syndata
+tls_oob|tls|--payload=tls_client_hello --lua-desync=oob
