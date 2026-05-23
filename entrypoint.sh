@@ -3552,8 +3552,6 @@ hosts:
   
 sniffer:
   enable: ${SNIFFER:-true}
-  force-dns-mapping: false
-  parse-pure-ip: false
   override-destination: false
   sniff:
     QUIC:
