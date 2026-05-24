@@ -23,6 +23,69 @@ function envKey(name) { return "mihomo-env:" + name; }
 function originalKey(name) { return "mihomo-original:" + name; }
 function pageKey(name) { return "mihomo-page:" + name; }
 
+// --- Серверная персистентность черновика ---
+// Зеркалит localStorage в /dev/shm/mihomo-ui/draft.json на сервере. Нужно
+// для случая когда браузер чистит localStorage на закрытии (Chrome/Edge
+// privacy option, аддоны и т.п.). Сбрасывается рестартом контейнера.
+const DRAFT_KEYS_RE = /^mihomo-(env|original|page|tab|theme|command-env-list|bc-domains|bc-job):/;
+let draftSyncTimer = null;
+let draftLoadInFlight = false;
+function draftCollect() {
+  const out = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k) continue;
+    if (k === "mihomo-theme" || k === "mihomo-command-env-list" ||
+        k === "mihomo-bc-domains" || k === "mihomo-bc-job" ||
+        DRAFT_KEYS_RE.test(k)) {
+      out[k] = localStorage.getItem(k);
+    }
+  }
+  return out;
+}
+function draftSaveDebounced() {
+  if (draftSyncTimer) clearTimeout(draftSyncTimer);
+  draftSyncTimer = setTimeout(() => {
+    draftSyncTimer = null;
+    const data = draftCollect();
+    const body = JSON.stringify(data);
+    fetch("/cgi-bin/draft", { method: "POST", headers: {"Content-Type":"application/json"}, body })
+      .then(r => { if (!r.ok) console.warn("draft save HTTP", r.status); })
+      .catch((e) => console.warn("draft save failed:", e));
+  }, 1500);
+}
+function draftLoadFromServer() {
+  // Если в localStorage уже есть env-ключи — берём локальный (он свежее).
+  // Иначе подтягиваем с сервера и наполняем localStorage до того как
+  // wireFieldEvents начнёт читать.
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && DRAFT_KEYS_RE.test(k)) return Promise.resolve(false);
+  }
+  draftLoadInFlight = true;
+  return fetch("/cgi-bin/draft")
+    .then(r => r.json())
+    .then(data => {
+      if (!data || typeof data !== "object") return false;
+      let n = 0;
+      for (const k in data) {
+        if (typeof data[k] === "string") {
+          localStorage.setItem(k, data[k]);
+          n++;
+        }
+      }
+      return n > 0;
+    })
+    .catch(() => false)
+    .finally(() => { draftLoadInFlight = false; });
+}
+function draftDeleteOnServer() {
+  // resetUiDraft / resetCurrentPageDraft не должны оставлять серверный
+  // снапшот — иначе после reload черновик «возродится» с сервера.
+  fetch("/cgi-bin/draft", { method: "POST", headers: {"Content-Type":"application/json"}, body: "{}" })
+    .catch(() => {});
+}
+
 function getEnvListName() {
   const el = document.getElementById("commandEnvList");
   const value = el ? el.value.trim() : "";
@@ -46,6 +109,7 @@ function rememberField(el) {
   }
   localStorage.setItem(envKey(el.name), fieldValue(el));
   localStorage.setItem(pageKey(el.name), location.pathname);
+  draftSaveDebounced();
 }
 
 function wireFieldEvents(root) {
@@ -196,6 +260,7 @@ function resetUiDraft() {
       localStorage.removeItem(key);
     }
   });
+  draftDeleteOnServer();
   location.reload(true);
 }
 
@@ -211,6 +276,7 @@ function resetCurrentPageDraft() {
     localStorage.removeItem(originalKey(name));
     localStorage.removeItem(pageKey(name));
   });
+  draftSaveDebounced();
   location.reload(true);
 }
 
@@ -3126,7 +3192,7 @@ function refreshAllBadges() {
   updatePendingRemovalsPanel();
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+function bootstrapUI() {
   applyTheme(localStorage.getItem("mihomo-theme") || "dark");
   const envListInput = document.getElementById("commandEnvList");
   if (envListInput) envListInput.value = localStorage.getItem("mihomo-command-env-list") || defaultEnvListName;
@@ -3175,6 +3241,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const requestedButton = requestedYaml ? [...document.querySelectorAll(".file-list button")].find((btn) => btn.dataset.name === requestedYaml) : null;
   const first = requestedButton || document.querySelector(".file-list button");
   if (first) switchYaml(first.dataset.name);
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  // Сначала пробуем подтянуть черновик с сервера (если localStorage пуст —
+  // напр. браузер чистит storage на close, или открыли с другого устройства).
+  // Только после этого инициализируем форму, иначе значения серверного
+  // черновика не лягут в поля.
+  draftLoadFromServer().then(() => bootstrapUI());
 });
 
 // ===== Blockcheck (DPI strategy scanner) =====

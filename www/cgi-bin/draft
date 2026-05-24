@@ -1,0 +1,39 @@
+#!/bin/sh
+# /cgi-bin/draft — серверная персистентность черновика UI.
+#   GET  → текущее содержимое /dev/shm/mihomo-ui/draft.json
+#   POST → перезаписать /dev/shm/mihomo-ui/draft.json телом запроса
+# Файл в /dev/shm → переживает закрытие браузера, сбрасывается рестартом
+# контейнера (т.к. /dev/shm = tmpfs).
+
+DRAFT_DIR=/dev/shm/mihomo-ui
+DRAFT_FILE="$DRAFT_DIR/draft.json"
+MAX_BYTES=1048576  # 1 MB лимит на размер черновика
+
+mkdir -p "$DRAFT_DIR" 2>/dev/null
+
+if [ "$REQUEST_METHOD" = "POST" ]; then
+  case "$CONTENT_LENGTH" in
+    ''|*[!0-9]*) CONTENT_LENGTH=0 ;;
+  esac
+  if [ "$CONTENT_LENGTH" -gt "$MAX_BYTES" ]; then
+    echo "Content-Type: application/json; charset=utf-8"; echo ""
+    printf '{"ok":false,"error":"body too large"}\n'
+    exit 0
+  fi
+  # head -c $N надёжнее чем `dd bs=N count=1` (тот может вернуть <N байт
+  # за один read и не дочитать остальное), и быстрее чем `dd bs=1 count=N`.
+  head -c "$CONTENT_LENGTH" > "$DRAFT_FILE.tmp"
+  mv -f "$DRAFT_FILE.tmp" "$DRAFT_FILE"
+  echo "Content-Type: application/json; charset=utf-8"; echo ""
+  printf '{"ok":true}\n'
+  exit 0
+fi
+
+# GET
+echo "Content-Type: application/json; charset=utf-8"
+echo ""
+if [ -s "$DRAFT_FILE" ]; then
+  cat "$DRAFT_FILE"
+else
+  printf '{}\n'
+fi
