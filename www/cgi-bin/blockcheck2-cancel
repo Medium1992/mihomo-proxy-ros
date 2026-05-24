@@ -26,7 +26,9 @@ pidf="$job_dir/.pid"
 if [ -f "$pidf" ]; then
   pid=$(cat "$pidf" 2>/dev/null)
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    kill -TERM "$pid" 2>/dev/null
+    # Runner стартует через setsid → PGID == PID. Шлём всей группе,
+    # чтобы фоновые subshells-диспетчеры тоже получили TERM.
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
     printf '{"ok":true,"signaled":%s}\n' "$pid"
     exit 0
   fi

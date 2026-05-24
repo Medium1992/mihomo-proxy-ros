@@ -363,15 +363,15 @@ bc_probe_http() {
   while [ "$attempt" -lt 3 ]; do
     port=$(bc_probe_port "$k" "$n")
     if [ "$BC_HARD_BODY" = "1" ]; then
-      local hdr_file="${BC_STATE_DIR:-/tmp}/.http_hdr_w${k}.$$"
-      size=$(
-        printf '%s %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n' "$method" "$path" "$host" \
-        | timeout "$BC_PROBE_TIMEOUT" nc -p "$port" -w "$BC_PROBE_TIMEOUT" "$ip" 80 2>"${BC_STATE_DIR:-/tmp}/.http_err_w${k}" \
-        | tee >(head -c 256 > "$hdr_file") | wc -c
-      )
-      out=$(cat "$hdr_file" 2>/dev/null)
-      err=$(cat "${BC_STATE_DIR:-/tmp}/.http_err_w${k}" 2>/dev/null)
-      rm -f "$hdr_file" "${BC_STATE_DIR:-/tmp}/.http_err_w${k}"
+      local body_file="${BC_STATE_DIR:-/tmp}/.http_body_w${k}.$$"
+      local err_file="${BC_STATE_DIR:-/tmp}/.http_err_w${k}.$$"
+      printf '%s %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n' "$method" "$path" "$host" \
+        | timeout "$BC_PROBE_TIMEOUT" nc -p "$port" -w "$BC_PROBE_TIMEOUT" "$ip" 80 2>"$err_file" > "$body_file"
+      size=$(wc -c < "$body_file" 2>/dev/null)
+      case "$size" in ''|*[!0-9]*) size=0 ;; esac
+      out=$(head -c 256 "$body_file" 2>/dev/null)
+      err=$(cat "$err_file" 2>/dev/null)
+      rm -f "$body_file" "$err_file"
       case "$err" in
         *"Address in use"*|*"address in use"*|*"already in use"*)
           attempt=$((attempt+1)); continue ;;
@@ -416,17 +416,16 @@ bc_probe_tls() {
   esac
   local out size=0
   if [ "$BC_HARD_BODY" = "1" ]; then
-    local hdr_file="${BC_STATE_DIR:-/tmp}/.tls_hdr_w${k}_${ver}.$$"
+    local body_file="${BC_STATE_DIR:-/tmp}/.tls_body_w${k}_${ver}.$$"
     # shellcheck disable=SC2086
-    size=$(
-      printf 'GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n' "$BC_HARD_PATH" "$host" \
+    printf 'GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n' "$BC_HARD_PATH" "$host" \
       | timeout "$BC_PROBE_TIMEOUT" openssl s_client $flag -quiet -ign_eof \
           -bind "0.0.0.0:$port" -connect "$ip:443" -servername "$host" \
-          2>/dev/null \
-      | tee >(head -c 256 > "$hdr_file") | wc -c
-    )
-    out=$(cat "$hdr_file" 2>/dev/null)
-    rm -f "$hdr_file"
+          2>/dev/null > "$body_file"
+    size=$(wc -c < "$body_file" 2>/dev/null)
+    case "$size" in ''|*[!0-9]*) size=0 ;; esac
+    out=$(head -c 256 "$body_file" 2>/dev/null)
+    rm -f "$body_file"
     case "$out" in
       HTTP/*|*"HTTP/1."*)
         [ "$size" -ge "$BC_HARD_MIN_BYTES" ] && return 0

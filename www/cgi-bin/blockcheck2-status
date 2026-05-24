@@ -12,11 +12,43 @@ qs_get() {
 job=$(qs_get job)
 offset=$(qs_get offset)
 download=$(qs_get download)
+discover=$(qs_get discover)
 
 # basename sanity: prevent path traversal
 case "$job" in
   ''|*/*|*..*) job="" ;;
 esac
+
+# discover=1: вернуть самый свежий job любого статуса (running/done/error/
+# cancelled). Берётся по timestamp в имени папки <unixts>-<pid>. UI сам
+# решит что показать — если done, просто отрисует таблицу из ndjson + кнопка
+# скачать; если running — продолжит polling.
+if [ "$discover" = "1" ]; then
+  echo "Content-Type: application/json; charset=utf-8"; echo ""
+  latest=""
+  latest_ts=0
+  latest_status=""
+  if [ -d "$STATE_DIR" ]; then
+    for d in "$STATE_DIR"/*/; do
+      [ -d "$d" ] || continue
+      jid=$(basename "$d")
+      ts="${jid%%-*}"
+      case "$ts" in ''|*[!0-9]*) continue ;; esac
+      if [ "$ts" -gt "$latest_ts" ]; then
+        latest_ts="$ts"
+        latest="$jid"
+        latest_status=$(cat "$d/status" 2>/dev/null || echo unknown)
+      fi
+    done
+  fi
+  if [ -n "$latest" ]; then
+    printf '{"ok":true,"job_id":"%s","status":"%s"}\n' "$latest" "$latest_status"
+  else
+    printf '{"ok":true,"job_id":""}\n'
+  fi
+  exit 0
+fi
+
 if [ -z "$job" ]; then
   echo "Content-Type: application/json; charset=utf-8"; echo ""
   printf '{"ok":false,"error":"invalid job id"}\n'; exit 0
@@ -28,14 +60,49 @@ if [ ! -d "$job_dir" ]; then
 fi
 
 if [ "$download" = "1" ]; then
+  job_status=$(cat "$job_dir/status" 2>/dev/null || echo unknown)
   echo "Content-Type: text/plain; charset=utf-8"
   echo "Content-Disposition: attachment; filename=\"blockcheck2-${job}.txt\""
   echo ""
   if [ -s "$job_dir/result.txt" ]; then
     cat "$job_dir/result.txt"
   else
-    echo "(report not ready yet; status: $(cat "$job_dir/status" 2>/dev/null || echo unknown))"
-    [ -s "$job_dir/log.ndjson" ] && { echo; echo "--- log ---"; cat "$job_dir/log.ndjson"; }
+    # Финальный отчёт ещё не сформирован — выдаём «снимок» из ndjson сразу
+    # с предупреждением, чтобы пользователь не ждал. Покажем найденные на
+    # текущий момент рабочие стратегии и хвост лога.
+    echo "================================================================"
+    echo "PARTIAL REPORT (job status: $job_status)"
+    echo "================================================================"
+    echo "ВНИМАНИЕ: тест ещё идёт. Это снимок текущих результатов."
+    echo "Полный отчёт появится после завершения."
+    echo
+    if [ -s "$job_dir/log.ndjson" ]; then
+      echo "================================================================"
+      echo "Working strategies so far:"
+      echo "================================================================"
+      awk '
+        /"type":"strategy"/ {
+          name=""; proto=""; pass=""; fail=""; detail=""; args=""
+          n = split($0, parts, "\"")
+          for (i=1; i<=n; i++) {
+            if (parts[i] == "name")        name   = parts[i+2]
+            else if (parts[i] == "proto")  proto  = parts[i+2]
+            else if (parts[i] == "pass")   pass   = parts[i+2]
+            else if (parts[i] == "fail")   fail   = parts[i+2]
+            else if (parts[i] == "detail") detail = parts[i+2]
+            else if (parts[i] == "args")   args   = parts[i+2]
+          }
+          if (pass ~ /^[1-9][0-9]*$/) {
+            printf "[%s] %s  pass=%s fail=%s\n  detail: %s\n  args:   %s\n\n",
+              proto, name, pass, fail, detail, args
+          }
+        }
+      ' "$job_dir/log.ndjson"
+      echo "================================================================"
+      echo "Raw event log tail (last 200 lines):"
+      echo "================================================================"
+      tail -200 "$job_dir/log.ndjson"
+    fi
   fi
   exit 0
 fi
@@ -53,16 +120,15 @@ new_offset="$size"
 echo "Content-Type: application/json; charset=utf-8"
 echo ""
 
-# Stream only the bytes between offset and size we observed. dd MUST be
-# capped by count, otherwise it reads to current EOF — which can be larger
-# than `size` if the runner appended more between `wc -c` and `dd`, causing
-# the client to see the same events twice on the next poll (the client's
-# next offset is `new_offset == size` but those extra bytes already shipped).
+# Срез [offset, size) — через `tail -c +N | head -c COUNT`, без `dd bs=1`
+# (тот делал миллион syscall'ов на МБ лога → CPU 100%, polling-перекрытие).
 tail_b64=""
 count=$((size - offset))
 if [ "$count" -gt 0 ]; then
-  tail_b64=$(dd if="$log" bs=1 skip="$offset" count="$count" 2>/dev/null | base64 -w0 2>/dev/null \
-             || dd if="$log" bs=1 skip="$offset" count="$count" 2>/dev/null | base64 | tr -d '\n')
+  tail_b64=$(tail -c "+$((offset + 1))" "$log" 2>/dev/null | head -c "$count" 2>/dev/null \
+             | base64 -w0 2>/dev/null || \
+             tail -c "+$((offset + 1))" "$log" 2>/dev/null | head -c "$count" 2>/dev/null \
+             | base64 | tr -d '\n')
 fi
 printf '{"ok":true,"job_id":"%s","status":"%s","offset":%s,"log_b64":"%s"}\n' \
   "$job" "$status" "$new_offset" "$tail_b64"

@@ -89,17 +89,29 @@ bc_event() {
 }
 
 # ---- Cleanup ------------------------------------------------------------
+# При SIGTERM/INT надо ОБЯЗАТЕЛЬНО прибить background subshells диспетчера —
+# иначе они продолжают тестить пока probe timeout не истечёт, пишут в лог
+# уже после "cancelled" статуса, CPU 100%, остановка не работает.
 cleanup() {
+  trap - INT TERM EXIT
+  # 1. background-джобы диспетчера — каждый держит strategy в полёте.
+  # Шлём KILL сразу: при cancel пользователь хочет стоп, а не graceful.
+  local p
+  for p in $CHILD_PIDS; do
+    [ -n "$p" ] && kill -KILL "$p" 2>/dev/null
+  done
+  # 2. nfqws-воркеры по pidfile'ам.
   local i pidf
-  bc_event teardown
   i=0
   while [ "$i" -lt "$WORKERS" ]; do
     pidf="$JOB_DIR/nfqws_$i.pid"
     [ -f "$pidf" ] && bc_nfqws_stop "$pidf"
     i=$((i + 1))
   done
+  # 3. Снимаем nft — на этом «вселенная» останавливается.
   bc_nft_teardown
   rm -f "$LOCK"
+  bc_event teardown 2>/dev/null || true
 }
 trap 'cleanup; printf "%s\n" "${BC_FINAL_STATUS:-cancelled}" > "$STATUS"; exit' INT TERM
 trap 'cleanup' EXIT
@@ -335,6 +347,7 @@ run_strategy() {
 
 # ---- Dispatcher (simple polling) ---------------------------------------
 DONE=0
+CHILD_PIDS=""
 while IFS= read -r strat_line; do
   [ -z "$strat_line" ] && continue
   # Pick a free worker.
@@ -354,6 +367,7 @@ while IFS= read -r strat_line; do
         run_strategy "$chosen" "$strat_line"
         touch "$JOB_DIR/w${chosen}.free"
       ) &
+      CHILD_PIDS="$CHILD_PIDS $!"
       DONE=$((DONE + 1))
       bc_event progress "done=$DONE" "total=$TOTAL"
       break
@@ -363,8 +377,30 @@ while IFS= read -r strat_line; do
   done
 done < "$STRAT_Q"
 
-# Wait for outstanding subshells.
-wait
+# Ждём фоновые subshells по ЯВНОМУ списку PID (а не `jobs -p` — последний
+# в command substitution в busybox sh может цепляться за зомби и считать
+# их живыми вечно, отсюда было «132/132 но всё ещё тестирует»).
+# Дедлайн 60с после диспетчера: probe timeout=8с, run_strategy при штатной
+# работе укладывается в десятки секунд. Кто после 60с — действительно
+# завис; шлём SIGKILL без церемоний.
+WAIT_DEADLINE=$(( $(date +%s) + 60 ))
+while [ -n "$CHILD_PIDS" ]; do
+  REMAINING=""
+  for p in $CHILD_PIDS; do
+    kill -0 "$p" 2>/dev/null && REMAINING="$REMAINING $p"
+  done
+  CHILD_PIDS="$REMAINING"
+  [ -z "$CHILD_PIDS" ] && break
+  if [ "$(date +%s)" -ge "$WAIT_DEADLINE" ]; then
+    bc_event warn "msg=wait deadline (60s); SIGKILL stuck subshells"
+    for p in $CHILD_PIDS; do
+      kill -KILL "$p" 2>/dev/null
+    done
+    break
+  fi
+  sleep 0.2 2>/dev/null || sleep 1
+done
+wait 2>/dev/null
 bc_event progress "done=$DONE" "total=$TOTAL"
 
 # ---- Final report -------------------------------------------------------
@@ -381,28 +417,37 @@ bc_event progress "done=$DONE" "total=$TOTAL"
 # via a sed/awk pass against the ndjson log, which is far more robust on
 # busybox than awk-FS-quotes-magic.
 WORK_TSV="$JOB_DIR/.working.tsv"
-# JSON keys we want: name, proto, pass, fail, skip, detail, args. We use a
-# tiny shell loop with sed to pull each field. Strategy events look like
-#   {"ts":…,"type":"strategy","name":"…","proto":"…","pass":"…",…,"args":"…"}
-grep '"type":"strategy"' "$LOG" 2>/dev/null | while IFS= read -r line; do
-  pass=$(printf '%s' "$line" | sed -n 's/.*"pass":"\([^"]*\)".*/\1/p')
-  case "$pass" in 0|''|*[!0-9]*) continue ;; esac
-  name=$(printf '%s' "$line"   | sed -n 's/.*"name":"\([^"]*\)".*/\1/p')
-  proto=$(printf '%s' "$line"  | sed -n 's/.*"proto":"\([^"]*\)".*/\1/p')
-  fail=$(printf '%s' "$line"   | sed -n 's/.*"fail":"\([^"]*\)".*/\1/p')
-  skip=$(printf '%s' "$line"   | sed -n 's/.*"skip":"\([^"]*\)".*/\1/p')
-  detail=$(printf '%s' "$line" | sed -n 's/.*"detail":"\([^"]*\)".*/\1/p')
-  args=$(printf '%s' "$line"   | sed -n 's/.*"args":"\([^"]*\)".*/\1/p')
-  # ndjson serialisation escapes \ and ", but our args don't contain those —
-  # nfqws keys/values are [A-Za-z0-9_=,:./@+-]. So no unescaping needed.
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$name" "$proto" "$pass" "$fail" "$skip" "$detail" "$args" >> "$WORK_TSV"
-done
+bc_event report_building 2>/dev/null || true
+# Один awk-проход вместо 7 sed-форков на строку — на 1296 стратегий было
+# ~9000 subprocess'ов, отчёт строился десятками секунд (статус застревал
+# на «тестирую N/N»).
+awk '
+  /"type":"strategy"/ {
+    name=""; proto=""; pass=""; fail=""; skip=""; detail=""; args=""
+    n = split($0, parts, "\"")
+    for (i=1; i<=n; i++) {
+      if (parts[i] == "name")   name   = parts[i+2]
+      else if (parts[i] == "proto")  proto  = parts[i+2]
+      else if (parts[i] == "pass")   pass   = parts[i+2]
+      else if (parts[i] == "fail")   fail   = parts[i+2]
+      else if (parts[i] == "skip")   skip   = parts[i+2]
+      else if (parts[i] == "detail") detail = parts[i+2]
+      else if (parts[i] == "args")   args   = parts[i+2]
+    }
+    if (pass ~ /^[1-9][0-9]*$/) {
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", name, proto, pass, fail, skip, detail, args
+    }
+  }
+' "$LOG" > "$WORK_TSV" 2>/dev/null
 
-# Pick first HTTP and first TLS working strategies for the combined block.
+# Pick first working strategy per proto. QUIC берём из реально найденных
+# рабочих, fallback на дефолтный quic-стек если ни одна quic-стратегия
+# не прошла.
 FIRST_HTTP_ARGS=$(awk -F'\t' '$2=="http" {print $7; exit}'  "$WORK_TSV" 2>/dev/null)
 FIRST_TLS_ARGS=$(awk -F'\t'  '$2=="tls" || $2=="tls12" || $2=="tls13" {print $7; exit}' "$WORK_TSV" 2>/dev/null)
+FIRST_QUIC_ARGS=$(awk -F'\t' '$2=="quic" {print $7; exit}' "$WORK_TSV" 2>/dev/null)
 QUIC_DEFAULT='--filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=20'
+[ -z "$FIRST_QUIC_ARGS" ] && FIRST_QUIC_ARGS="$QUIC_DEFAULT"
 
 build_combined() {
   out=""
@@ -411,10 +456,36 @@ build_combined() {
     [ -n "$out" ] && out="$out --new "
     out="${out}${FIRST_TLS_ARGS}"
   fi
-  [ -n "$out" ] && out="$out --new $QUIC_DEFAULT"
+  if [ -n "$FIRST_QUIC_ARGS" ]; then
+    [ -n "$out" ] && out="$out --new "
+    out="${out}${FIRST_QUIC_ARGS}"
+  fi
   printf '%s' "$out"
 }
 COMBINED=$(build_combined)
+
+# Все рабочие комбинации http × tls × quic (как в UI «Сборные стратегии
+# из рабочих»). Ограничиваем разумно: top-3 от каждого proto → max 27.
+COMBINED_LIST=$(
+  awk -F'\t' '
+    $2=="http" && http_count<3 { http[++http_count] = $7 }
+    ($2=="tls" || $2=="tls12" || $2=="tls13") && tls_count<3 { tls[++tls_count] = $7 }
+    $2=="quic" && quic_count<3 { quic[++quic_count] = $7 }
+    END {
+      if (quic_count==0) { quic[1] = "'"$QUIC_DEFAULT"'"; quic_count=1 }
+      if (http_count==0 && tls_count==0) exit
+      h_lim = http_count>0 ? http_count : 1
+      t_lim = tls_count>0  ? tls_count  : 1
+      for (i=1; i<=h_lim; i++) for (j=1; j<=t_lim; j++) for (k=1; k<=quic_count; k++) {
+        line = ""
+        if (http_count>0) line = http[i]
+        if (tls_count>0)  line = (line ? line " --new " : "") tls[j]
+        if (quic_count>0) line = (line ? line " --new " : "") quic[k]
+        if (line != "") print line
+      }
+    }
+  ' "$WORK_TSV" 2>/dev/null
+)
 
 {
   echo "blockcheck2 job: $JOB"
@@ -431,6 +502,13 @@ COMBINED=$(build_combined)
     echo "(no working strategies found — DPI блокирует все варианты, либо стоит увеличить уровень / включить fakebin)"
   fi
   echo
+  if [ -n "$COMBINED_LIST" ]; then
+    echo "================================================================"
+    echo "Combined strategies (top-3 per proto, max 27 combinations):"
+    echo "================================================================"
+    printf '%s\n' "$COMBINED_LIST" | awk '{ printf "%d) %s\n", NR, $0 }'
+    echo
+  fi
   echo "================================================================"
   echo "Working strategies (with full nfqws args):"
   echo "================================================================"

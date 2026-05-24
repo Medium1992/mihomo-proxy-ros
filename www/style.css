@@ -1873,7 +1873,13 @@ nav a .nav-badge[data-kind="changed"] + .nav-badge[data-kind="error"] {
 .bc-preview-inline > summary::marker { color: var(--muted, #888); }
 .bc-preview-summary { color: var(--muted, #888); font-weight: normal; font-size: 12px; margin-left: 8px; }
 .bc-preview-body { max-height: 360px; overflow: auto; font-family: monospace; font-size: 11px; white-space: pre-wrap; word-break: break-all; margin: 6px 0; padding: 6px 8px; background: rgba(0,0,0,0.15); border-radius: 4px; }
-.bc-custom-result { font-family: monospace; font-size: 12px; padding: 2px 8px; border-radius: 4px; }
+.bc-custom-result {
+  font-family: monospace; font-size: 12px;
+  padding: 4px 8px; border-radius: 4px;
+  display: block; max-width: 100%;
+  overflow-wrap: anywhere; word-break: break-all;
+  white-space: normal;
+}
 .bc-custom-result.running { background: rgba(120,120,120,.2); color: var(--muted, #aaa); }
 .bc-custom-result.ok      { background: rgba(74,168,95,.2); color: var(--accent, #4a8); }
 .bc-custom-result.fail    { background: rgba(212,80,80,.2); color: #e87; }

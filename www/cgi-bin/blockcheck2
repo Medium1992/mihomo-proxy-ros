@@ -68,12 +68,23 @@ command -v nft     >/dev/null 2>&1 || err "nft не найден — фича р
 command -v openssl >/dev/null 2>&1 || err "openssl не найден"
 command -v nfqws2  >/dev/null 2>&1 || err "nfqws2 не найден"
 
-# Reject if another job is active.
+# Reject if another job is active. Если pid в .lock мёртв (sigkill снаружи,
+# OOM и т.п.) — снимаем замок и заодно прибиваем оставшиеся nfqws воркеры
+# с нашими queue-номерами, иначе они продолжают есть пакеты и CPU.
 if [ -f "$STATE_DIR/.lock" ]; then
   other=$(cat "$STATE_DIR/.lock" 2>/dev/null)
   if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
     err "another blockcheck2 job is already running (pid=$other)"
   fi
+  rm -f "$STATE_DIR/.lock"
+  # Stale nfqws sweep — qnum 700-731 are ours.
+  for q in $(seq 700 731); do
+    ps -o pid,args 2>/dev/null | awk -v q="$q" '
+      $0 ~ ("--qnum[= ]" q "([^0-9]|$)") { print $1 }
+    ' | while IFS= read -r pid; do
+      [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null
+    done
+  done
 fi
 
 job_id="$(date +%s)-$$"
@@ -86,6 +97,26 @@ printf '%s' "$domains_b64" | base64 -d > "$dom_file" 2>/dev/null
 
 strat_arg=""
 strat_file="$job_dir/strategies.list"
+
+# Минималистичный bc_event для CGI: пишет в тот же ndjson, что runner.
+# Нужно чтобы UI показал «генерирую стратегии…» пока gen-strategies долго
+# крутится с fakebin на больших уровнях (basic с ~1500 строк это ~5-10 с
+# CPU). Без этого юзер видит «отправка запроса…» и думает что висит.
+cgi_log="$job_dir/log.ndjson"
+cgi_event() {
+  # $1=type, остальное k=v
+  t="$1"; shift
+  ts=$(date +%s)
+  extra=""
+  for kv in "$@"; do
+    k="${kv%%=*}"
+    v="${kv#*=}"
+    # json escape \ и "
+    v=$(printf '%s' "$v" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    extra="$extra,\"$k\":\"$v\""
+  done
+  printf '{"ts":%s,"type":"%s"%s}\n' "$ts" "$t" "$extra" >> "$cgi_log"
+}
 
 if [ -n "$strats_b64" ]; then
   printf '%s' "$strats_b64" | base64 -d > "$strat_file" 2>/dev/null
@@ -107,12 +138,15 @@ else
   case ",$tests," in *,quic,*)  include="${include:+$include,}quic"  ;; esac
   [ -n "$include" ] && gen_args="$gen_args --include=$include"
 
+  cgi_event generating "level=$level" "fakebin=$fakebin" "include=$include"
   if [ -f "$BC_DIR/gen-strategies" ]; then
     sh "$BC_DIR/gen-strategies" $gen_args > "$strat_file" 2>/dev/null
   fi
   if [ ! -s "$strat_file" ] && [ -s "$BC_DIR/strategies.list" ]; then
     cp "$BC_DIR/strategies.list" "$strat_file"
   fi
+  gen_count=$(wc -l < "$strat_file" 2>/dev/null | tr -d ' ')
+  cgi_event generated "count=$gen_count"
 fi
 
 [ -s "$strat_file" ] || err "не удалось получить список стратегий"

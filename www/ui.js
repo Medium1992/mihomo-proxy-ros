@@ -3180,16 +3180,26 @@ document.addEventListener("DOMContentLoaded", () => {
 // ===== Blockcheck (DPI strategy scanner) =====
 
 const BC = {
+  inited: false,
   jobId: null,
   pollTimer: null,
+  pollInFlight: false,
   offset: 0,
   results: [],
   counts: { ok: 0, fail: 0, skip: 0 },
+  seenStrategies: new Set(),  // защита от двойного учёта event'а на UI
 };
 const BC_JOB_KEY = "mihomo-bc-job";
 
 function initBlockcheck() {
   if (!document.getElementById("bcDomains")) return;
+  // Идемпотентность: если функция уже отработала (повторный init из других
+  // render-цепочек Mihomo UI), не вешать второй input-listener и не плодить
+  // второй setInterval — иначе каждый event ndjson обрабатывался бы N раз
+  // и счётчики пухли (наблюдаемое было 8635 при 1075 done — 2-3 параллельных таймера).
+  if (BC.inited) return;
+  BC.inited = true;
+
   try {
     const saved = localStorage.getItem("mihomo-bc-domains");
     if (saved) document.getElementById("bcDomains").value = saved;
@@ -3204,11 +3214,28 @@ function initBlockcheck() {
   let savedJob = null;
   try { savedJob = localStorage.getItem(BC_JOB_KEY); } catch (e) {}
   if (savedJob) {
-    BC.jobId = savedJob;
-    bcSetStatus("проверка job " + savedJob + "…", true);
-    BC.pollTimer = setInterval(blockcheck2Poll, 1000);
-    blockcheck2Poll();
+    bcResumeJob(savedJob);
+    return;
   }
+  // localStorage пуст — спрашиваем сервер «есть ли активный job?».
+  // Сценарий: пользователь нажал Запустить, gen-strategies генерит ~5-10с,
+  // закрыл браузер до того как client успел сделать setItem(JOB_KEY).
+  // Сервер job уже создал и запустил — UI должен подобрать.
+  fetch("/cgi-bin/blockcheck2-status?discover=1")
+    .then(r => r.json()).then(data => {
+      if (data && data.ok && data.job_id) {
+        try { localStorage.setItem(BC_JOB_KEY, data.job_id); } catch (e) {}
+        bcResumeJob(data.job_id);
+      }
+    }).catch(() => {});
+}
+
+function bcResumeJob(jobId) {
+  BC.jobId = jobId;
+  bcSetStatus("восстановлен job " + jobId + "…", true);
+  if (BC.pollTimer) { clearInterval(BC.pollTimer); BC.pollTimer = null; }
+  BC.pollTimer = setInterval(blockcheck2Poll, 1000);
+  blockcheck2Poll();
 }
 
 function bcSetStatus(text, busy) {
@@ -3292,6 +3319,11 @@ function bcHandleEvent(ev) {
       break;
     }
     case "strategy": {
+      // Дубль того же strategy-события — отбрасываем, иначе при повторной
+      // обработке ndjson (F5, race fetch'ей) счётчики и таблица плодятся.
+      const sig = (ev.name || "") + "|" + (ev.ts || "");
+      if (BC.seenStrategies.has(sig)) break;
+      BC.seenStrategies.add(sig);
       const pass = parseInt(ev.pass, 10) || 0;
       const fail = parseInt(ev.fail, 10) || 0;
       const skip = parseInt(ev.skip, 10) || 0;
@@ -3705,10 +3737,15 @@ function blockcheck2Start() {
   if (!v.domains) { alert("Укажите хотя бы один домен."); return; }
   if (!v.tests.length) { alert("Выберите хотя бы один тип теста."); return; }
 
-  // Reset UI.
+  // Reset UI + останавливаем фоновое опрашивание прошлого job'а на всякий —
+  // иначе оно может дописать в UI события, пока новый job ещё не стартовал.
+  if (BC.pollTimer) { clearInterval(BC.pollTimer); BC.pollTimer = null; }
+  BC.jobId = null;
+  BC.pollInFlight = false;
   BC.results = [];
   BC.offset = 0;
   BC.counts = { ok: 0, fail: 0, skip: 0 };
+  BC.seenStrategies = new Set();
   document.getElementById("bcLog").textContent = "";
   document.getElementById("bcTable").querySelector("tbody").innerHTML = "";
   const _tbox = document.getElementById("bcTableBox");
@@ -3755,6 +3792,10 @@ function blockcheck2Start() {
 
 function blockcheck2Poll() {
   if (!BC.jobId) return;
+  // Не запускать второй fetch если предыдущий ещё в полёте — иначе при
+  // тормозящем сервере очередь fetch'ей растёт, страница виснет.
+  if (BC.pollInFlight) return;
+  BC.pollInFlight = true;
   fetch("/cgi-bin/blockcheck2-status?job=" + encodeURIComponent(BC.jobId) + "&offset=" + BC.offset)
     .then(r => r.json()).then(data => {
       if (!data.ok) {
@@ -3822,21 +3863,33 @@ function blockcheck2Poll() {
             case "strategy_skip":
               // silent
               return;
+            case "report_building":
+              bcSetStatus("формирую отчёт…", true);
+              return;
+            case "generating":
+              bcAppendLog("генерирую стратегии (level=" + (ev.level || "?") +
+                          (ev.fakebin === "1" ? ", fakebin" : "") +
+                          (ev.include ? ", include=" + ev.include : "") + ")…\n");
+              bcSetStatus("генерирую стратегии…", true);
+              return;
+            case "generated":
+              bcAppendLog("сгенерировано стратегий: " + (ev.count || "?") + "\n");
+              return;
             default:
               bcAppendLog(line + "\n");
           }
         });
       }
+      // Download button enabled как только есть job — отчёт-снимок CGI
+      // сам отдаст с пометкой PARTIAL пока тест идёт, или полный после.
+      if (BC.jobId) document.getElementById("bcDownloadBtn").disabled = false;
       if (data.status === "done" || data.status === "error" || data.status === "cancelled") {
         if (BC.pollTimer) { clearInterval(BC.pollTimer); BC.pollTimer = null; }
-        // Final status; download stays enabled on done; jobId stays so user
-        // can re-download after refresh until they start a new run.
         bcSetStatus(data.status === "done"
           ? "готово (" + BC.counts.ok + " рабочих из " + BC.results.length + ")"
           : data.status, false);
-        document.getElementById("bcDownloadBtn").disabled = data.status !== "done";
       }
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => { BC.pollInFlight = false; });
 }
 
 function blockcheck2Cancel(silent) {
