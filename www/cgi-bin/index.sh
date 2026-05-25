@@ -779,11 +779,19 @@ EOF
             <option value="vmess">VMess + WebSocket</option>
             <option value="trojan">Trojan</option>
             <option value="shadowsocks">Shadowsocks</option>
+            <option value="ssr">ShadowsocksR</option>
+            <option value="snell">Snell</option>
+            <option value="mieru">Mieru</option>
             <option value="anytls">AnyTLS</option>
             <option value="wireguard">WireGuard</option>
             <option value="amneziawg">AmneziaWG</option>
+            <option value="hysteria">Hysteria v1</option>
             <option value="hysteria2">Hysteria2</option>
             <option value="tuic">TUIC</option>
+            <option value="masque">MASQUE</option>
+            <option value="tailscale">Tailscale</option>
+            <option value="trusttunnel">TrustTunnel</option>
+            <option value="openvpn">OpenVPN</option>
             <option value="ssh">SSH</option>
           </select>
         </label>
@@ -821,13 +829,14 @@ EOF
 
 dpi_page() {
   page_tabs_nav \
-    byedpi     "BYEDPI" \
-    zapret     "ZAPRET" \
-    zapret2    "ZAPRET2" \
-    zapret-wg  "ZAPRET2 WG" \
-    blockcheck2 "Подбор стратегий (zapret2)" \
-    fakebin    "fakebin" \
-    lists      "lists"
+    byedpi      "BYEDPI" \
+    zapret      "ZAPRET" \
+    blockcheck  "BlockCheck" \
+    zapret2     "ZAPRET2" \
+    blockcheck2 "BlockCheck2" \
+    zapret-wg   "ZAPRET2 WG" \
+    fakebin     "fakebin" \
+    lists       "lists"
   section_start_tab byedpi "BYEDPI" "Команды BYEDPI_CMD* создают file provider и отдельные маршруты."
   echo '<div class="subhead"><b>BYEDPI_CMD*</b><button type="button" onclick="addRow('\''byedpi'\'', '\''BYEDPI_CMD'\'', false)">Добавить</button></div><div id="byedpi" class="rows">'
   for name in $(env_names '^BYEDPI_CMD[0-9]*='); do
@@ -854,6 +863,123 @@ EOF
   echo '</div>'
   section_end
 
+  section_start_tab blockcheck "Подбор стратегий BlockCheck — для zapret" "Параллельный перебор стратегий nfqws v1 (отдельные --dpi-desync-* флаги) против заданных доменов. Использует DoH (через openssl) для резолва, изолированную nft-таблицу и пул воркеров. Может работать параллельно с BlockCheck2 — у каждого свой пул src-портов / queue / mark. Требует nft-поддержки ядра — на RouterOS это arm64/amd64 версии 7.21 и выше."
+  cat <<'EOF'
+<div class="notice notice-warn"><b>Результаты в RAM</b><span>Логи и отчёты хранятся в <code>/dev/shm/mihomo-blockcheck1/</code> и пропадают после перезагрузки контейнера. Скачайте отчёт или примените стратегию в <code>ZAPRET_CMD</code>, если нужно надолго.</span></div>
+<div class="blockcheck-controls">
+  <label class="field" title="Форматы строк:&#10; • host                              — handshake-only тест (быстро)&#10; • host/path                          — handshake + скачивание body, должно прийти ≥ N КБ&#10; • @full https://host/path?query     — throughput-тест: тянем 256 КБ за ≤5 с (≈410 kbps min). Для googlevideo /videoplayback URL такой режим включается автоматически."><span><b>Домены</b><em>по одному в строке. <code>host</code> = handshake-only, <code>host/path</code> = + скачать body ≥ N КБ, <code>@full https://...</code> = throughput-тест 256 КБ за ≤5 с (для googlevideo автоматически).</em></span>
+    <textarea id="bc1Domains" rows="4" placeholder="rutracker.org
+discord.com
+google.com/search?q=test"></textarea>
+  </label>
+  <div class="grid bc-grid">
+    <label class="field"><span><b>Воркеров</b><em>1-32, параллелизм. Каждый воркер ≈ 5 МБ RAM</em></span>
+      <input id="bc1Workers" type="number" min="1" max="32" value="4">
+    </label>
+    <label class="field"><span><b>Уровень</b><em>сколько стратегий перебрать</em></span>
+      <select id="bc1Level">
+        <option value="quick">quick (~15)</option>
+        <option value="basic" selected>basic (~320, рекомендуется)</option>
+        <option value="medium">medium (~920)</option>
+        <option value="extended">extended (~1500)</option>
+        <option value="full">full (~1900)</option>
+      </select>
+    </label>
+  </div>
+  <details class="bc-tier-info">
+    <summary>Что добавляется в каждом уровне</summary>
+    <div class="bc-tier-info-body">
+      <p><b>quick</b> — sanity-check инфраструктуры. 1 splitter (<code>multisplit</code>), 2 fooling (<code>badsum</code>, <code>md5sig</code>), базовые позиции <code>1</code> / <code>host+1</code>. Без композитных модов, seqovl, cutoff.</p>
+      <p><b>basic</b> (+к quick) — стартовый рабочий набор. Сплиттеры <code>multidisorder</code>, <code>fakedsplit</code>; <b>композитные modes</b> (<code>fake,multisplit</code>, <code>fake,multidisorder</code>); foolings <code>badseq</code>, <code>datanoack</code>, <code>ts</code> + композит <code>ts,badsum</code>; seqovl <code>1, 681</code>; <code>fake-tls-mod=rnd,dupsid</code>; ещё позиции TLS.</p>
+      <p><b>medium</b> (+к basic) — расширение для типичных кейсов. Сплиттеры <code>fakeddisorder</code>, <code>hostfakesplit</code>; композит <code>fake,fakedsplit</code>; <b>cutoff</b> <code>n3/n4</code> (лимит обрабатываемых пакетов); <b>badseq-increment</b> <code>0/2</code>; seqovl <code>652, 726</code>; составной fooling <code>badsum,badseq</code>; длинные позиции (<code>sld+1</code>, <code>1,sld+1,endsld-2</code>).</p>
+      <p><b>extended</b> (+к medium) — глубокий поиск. Сплиттер <code>ipfrag2</code>; композит <code>syndata,multisplit</code>; fooling <code>hopbyhop</code>; seqovl <code>654, 1200</code>; супер-цепочка позиций TLS; HTTP позиция <code>endhost-1</code>.</p>
+      <p><b>full</b> (+к extended) — последний километр. seqovl <code>1500</code>; cutoff <code>n5</code>; badseq-inc <code>1000</code>; HTTP позиции <code>endhost-1/+1</code>.</p>
+    </div>
+  </details>
+  <div class="socks-toggles bc-tests" aria-label="Типы тестов">
+    <label class="socks-toggle" title="GET / по TCP/80 (handshake = есть HTTP-ответ; hard-body режим — что в теле есть HTTP/ и размер ≥ N КБ)"><input type="checkbox" id="bc1TestHttp"  checked><span>HTTP/80</span></label>
+    <label class="socks-toggle" title="TLS 1.2 handshake к TCP/443"><input type="checkbox" id="bc1TestTls12" checked><span>TLS 1.2</span></label>
+    <label class="socks-toggle" title="TLS 1.3 handshake к TCP/443"><input type="checkbox" id="bc1TestTls13" checked><span>TLS 1.3</span></label>
+    <label class="socks-toggle" title="QUIC v1 handshake к UDP/443"><input type="checkbox" id="bc1TestQuic" checked><span>QUIC/443</span></label>
+    <label class="socks-toggle" title="Дополнительно перебрать каждый .bin-файл из /zapret-fakebin как payload для --dpi-desync-fake-tls=$FILE / --dpi-desync-fake-http=$FILE / --dpi-desync-fake-quic=$FILE. Сильно увеличивает количество стратегий."><input type="checkbox" id="bc1UseFakebin"><span>×fakebin</span></label>
+  </div>
+  <div class="grid bc-grid">
+    <label class="field"><span><b>Мин. размер ответа для 16-20KB теста, КБ</b><em>Применяется к доменам с путём.</em></span>
+      <input id="bc1HardMinKb" type="number" min="4" max="256" value="16">
+    </label>
+    <label class="field" title="Стратегии с tls_mod=rnd рандомят ClientHello — probe засчитывается «ok» только если все N попыток прошли подряд. 2 — рекомендовано."><span><b>Повторов на rnd-стратегию</b><em>Probe считается «ok» только если все N попыток подряд прошли. Применяется к <code>rnd</code>-стратегиям. 2 — рекомендовано.</em></span>
+      <input id="bc1RndRepeats" type="number" min="1" max="5" value="2">
+    </label>
+  </div>
+  <div class="bc-actions">
+    <button type="button" class="primary" onclick="blockcheck1Start()" id="bc1StartBtn">Запустить</button>
+    <button type="button" onclick="blockcheck1Cancel()" id="bc1CancelBtn" disabled>Остановить</button>
+    <button type="button" onclick="blockcheck1Download()" id="bc1DownloadBtn" disabled>Скачать отчёт</button>
+    <span class="bc-status" id="bc1Status">готов</span>
+  </div>
+  <details class="bc-custom" id="bc1CustomBox">
+    <summary>Тест произвольной стратегии</summary>
+    <div class="bc-custom-body">
+      <label class="field"><span><b>Аргументы nfqws (v1)</b><em>полная строка с флагами nfqws: <code>--filter-tcp=…</code> + <code>--dpi-desync=…</code> + <code>--dpi-desync-split-pos=…</code> и т.д. Несколько профилей через <code>--new</code>.</em></span>
+        <textarea id="bc1CustomArgs" rows="3" spellcheck="false" placeholder="--filter-tcp=443 --dpi-desync=multisplit --dpi-desync-split-pos=1 --dpi-desync-fooling=badsum"></textarea>
+      </label>
+      <div class="bc-custom-row">
+        <div class="socks-toggles" aria-label="Протоколы для custom-теста">
+          <label class="socks-toggle"><input type="checkbox" id="bc1CustomHttp"  checked><span>HTTP</span></label>
+          <label class="socks-toggle"><input type="checkbox" id="bc1CustomTls12" checked><span>TLS 1.2</span></label>
+          <label class="socks-toggle"><input type="checkbox" id="bc1CustomTls13" checked><span>TLS 1.3</span></label>
+          <label class="socks-toggle"><input type="checkbox" id="bc1CustomQuic"  checked><span>QUIC</span></label>
+        </div>
+        <button type="button" onclick="blockcheck1Custom()" id="bc1CustomBtn">Запустить только эту</button>
+        <span id="bc1CustomResult" class="bc-custom-result" aria-live="polite"></span>
+      </div>
+    </div>
+  </details>
+</div>
+<div class="bc-results">
+  <div class="bc-progress" id="bc1Progress" hidden>
+    <progress id="bc1ProgressBar" value="0" max="100"></progress>
+    <span id="bc1ProgressText">0 / 0</span>
+    <span class="bc-current" id="bc1Current"></span>
+  </div>
+  <div class="bc-counts" id="bc1Counts" hidden>
+    <span class="bc-count-ok"   id="bc1CountOk">0 рабочих</span>
+    <span class="bc-count-fail" id="bc1CountFail">0 не сработали</span>
+    <span class="bc-count-skip" id="bc1CountSkip">0 пропущено</span>
+    <label class="socks-toggle bc-filter-toggle"><input type="checkbox" id="bc1FilterOk" checked><span>только рабочие</span></label>
+  </div>
+  <details class="bc-combined" id="bc1CombinedBox" hidden>
+    <summary><b>Сборные стратегии из рабочих</b> <span id="bc1CombinedSummary"></span><button type="button" class="bc-copy-all" title="Скопировать все сборные стратегии (по одной на строку)" onclick="event.preventDefault(); event.stopPropagation(); bc1CopyAllCombined(event)">⧉</button></summary>
+    <div class="bc-combined-body">
+      <p class="bc-combined-hint">Кросс-произведение всех рабочих <code>http</code> × <code>tls</code> × <code>quic</code> стратегий, склеенных через <code>--new</code>. Каждый вариант можно скопировать или применить в <code>ZAPRET_CMD</code>.</p>
+      <div id="bc1CombinedList" class="bc-combined-list"></div>
+    </div>
+  </details>
+  <details class="bc-table-box" id="bc1TableBox" hidden>
+    <summary>Подробная таблица найденных стратегий <span id="bc1TableSummary"></span><button type="button" class="bc-copy-all" title="Скопировать всю таблицу: name, proto, pass/fail/skip, args для каждой строки" onclick="event.preventDefault(); event.stopPropagation(); bc1CopyAllTable(event)">⧉</button></summary>
+    <div class="bc-table-scroll">
+      <table class="bc-table" id="bc1Table">
+        <thead><tr>
+          <th>Стратегия</th>
+          <th>Proto</th>
+          <th>Pass</th>
+          <th>Fail</th>
+          <th>Skip</th>
+          <th>Детали</th>
+          <th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </details>
+  <details class="bc-log" id="bc1LogBox"><summary>Лог событий runner'a<button type="button" class="bc-copy-all" title="Скопировать весь лог в буфер обмена" onclick="event.preventDefault(); event.stopPropagation(); bc1CopyAllLog(event)">⧉</button></summary>
+    <pre id="bc1Log">(пусто — лог появится после запуска)</pre>
+  </details>
+</div>
+
+EOF
+  section_end
+
   section_start_tab zapret2 "ZAPRET2 (nfqws2)" "Стратегии nfqws2 (lua-движок) и packet-window."
   echo '<div class="grid">'
   field ZAPRET2_PACKETS "ZAPRET2 packets" "Глобальная переменная: сколько первых пакетов соединения будут проходить очередь ZAPRET2. <code>0</code> — все пакеты всегда идут через ZAPRET2." "12" number "12"
@@ -869,43 +995,14 @@ EOF
   echo '</div>'
   section_end
 
-  section_start_tab zapret-wg "ZAPRET2 WG" "Отдельная стратегия для пробития WireGuard handshake через nfqws2."
-  cat <<EOF
-<div class="wg-editor">
-  <label class="field field-wide" data-env="ZAPRET2_WG_CMD">
-    <span><b>ZAPRET2 WG cmd</b><em>ZAPRET2_WG_CMD</em></span>
-    <textarea name="ZAPRET2_WG_CMD" placeholder="--blob=..." data-default="--blob=quic_vk:@/zapret-fakebin/quic_initial_vk_com.bin --payload wireguard_initiation --lua-desync=fake:blob=quic_vk:repeats=6">$(env_default ZAPRET2_WG_CMD "--blob=quic_vk:@/zapret-fakebin/quic_initial_vk_com.bin --payload wireguard_initiation --lua-desync=fake:blob=quic_vk:repeats=6" | h)</textarea>
-    <small>Команда nfqws2 для WireGuard handshake.</small>
-    <i>$(is_set ZAPRET2_WG_CMD)</i>
-  </label>
-  <div class="field field-wide wg-endpoint-editor" data-env="ZAPRET2_WG_DST">
-    <span><b>ZAPRET2 WG dst</b><em>ZAPRET2_WG_DST</em></span>
-    <input type="hidden" name="ZAPRET2_WG_DST" value="$(env_attr ZAPRET2_WG_DST "")" data-default="">
-    <div class="wg-endpoint-rows"></div>
-    <button type="button" class="wg-endpoint-add">Добавить endpoint</button>
-    <small>Endpoint-ы WireGuard собираются в env через запятую: <code>host:port,host2:port2</code>.</small>
-    <i>$(is_set ZAPRET2_WG_DST)</i>
-  </div>
-  <div class="notice">
-    <b>Заворот только WireGuard handshake в контейнер (MikroTik)</b>
-    <span>Чтобы через ZAPRET2 шёл только handshake, а основной WG-трафик — напрямую, в RouterOS на mangle помечаем только пакеты-handshake (фиксированный размер 176 байт для AmneziaWG/WireGuard) и заворачиваем их в роутинг-метку контейнера. Замените <code>162.159.192.1:2408</code> на endpoint вашего сервера, <code>MihomoProxyRoS</code> — на routing-mark, ведущую в контейнер.</span>
-    <pre><code>/ip firewall mangle
-add action=mark-routing chain=output dst-address=162.159.192.1 dst-port=2408 new-routing-mark=MihomoProxyRoS packet-size=176 passthrough=no protocol=udp</code></pre>
-  </div>
-</div>
-EOF
-  section_end
-
-  section_start_tab blockcheck2 "Подбор стратегий (blockcheck2 — для второго zapret)" "Параллельный перебор стратегий nfqws2 против заданных доменов. Использует DoH (через openssl) для резолва, изолированную nft-таблицу и пул воркеров. Требует nft-поддержки ядра — на RouterOS это arm64/amd64 версии 7.21 и выше."
+  section_start_tab blockcheck2 "Подбор стратегий BlockCheck2 — для zapret2" "Параллельный перебор стратегий nfqws2 (lua-движок) против заданных доменов. Использует DoH (через openssl) для резолва, изолированную nft-таблицу и пул воркеров. Может работать параллельно с BlockCheck — у каждого свой пул src-портов / queue / mark. Требует nft-поддержки ядра — на RouterOS это arm64/amd64 версии 7.21 и выше."
   cat <<'EOF'
 <div class="notice notice-warn"><b>Результаты в RAM</b><span>Логи и отчёты хранятся в <code>/dev/shm/mihomo-blockcheck2/</code> и пропадают после перезагрузки контейнера. Скачайте отчёт или примените стратегию в <code>ZAPRET2_CMD</code>, если нужно надолго.</span></div>
 <div class="blockcheck-controls">
-  <label class="field" title="Форматы строк:&#10; • host                              — handshake-only тест (быстро)&#10; • host/path                          — handshake + скачивание body, должно прийти ≥ N КБ&#10; • @full https://host/path?query     — throughput-тест: тянем 256 КБ за ≤5 с (≈410 kbps min). Для googlevideo /videoplayback URL такой режим включается автоматически.&#10;&#10;Для проверки именно потока YouTube-видео нужен прямой googlevideo URL. Браузерные ссылки из DevTools обычно бесполезны — YouTube отдаёт их в новом UMP/SABR-формате (нужен POST-запрос с protobuf, простой GET вернёт ~30 КБ). Рабочую ссылку даёт yt-dlp: https://github.com/yt-dlp/yt-dlp (требует cookies из залогиненного YouTube). Если не хочется возиться — просто кинь watch-URL и поставь Мин. размер 500 КБ, тогда throughput протестируется на самой watch-странице (≈1.5 МБ HTML+JS)."><span><b>Домены</b><em>по одному в строке. <code>host</code> = handshake-only, <code>host/path</code> = + скачать body ≥ N КБ, <code>@full https://...</code> = throughput-тест 256 КБ за ≤5 с (для googlevideo автоматически). Прямой googlevideo URL добывается через <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp</a> — браузерные DevTools-ссылки в SABR-формате не подойдут.</em></span>
+  <label class="field" title="Форматы строк:&#10; • host                              — handshake-only тест (быстро)&#10; • host/path                          — handshake + скачивание body, должно прийти ≥ N КБ&#10; • @full https://host/path?query     — throughput-тест: тянем 256 КБ за ≤5 с (≈410 kbps min). Для googlevideo /videoplayback URL такой режим включается автоматически."><span><b>Домены</b><em>по одному в строке. <code>host</code> = handshake-only, <code>host/path</code> = + скачать body ≥ N КБ, <code>@full https://...</code> = throughput-тест 256 КБ за ≤5 с (для googlevideo автоматически).</em></span>
     <textarea id="bcDomains" rows="4" placeholder="rutracker.org
 discord.com
-https://youtube.com/watch?v=jNQXAC9IVRw
-google.com/search?q=test
-@full https://rr5---sn-xxx.googlevideo.com/videoplayback?expire=...&signature=..."></textarea>
+google.com/search?q=test"></textarea>
   </label>
   <div class="grid bc-grid">
     <label class="field"><span><b>Воркеров</b><em>1-32, параллелизм. Каждый воркер ≈ 5 МБ RAM</em></span>
@@ -913,14 +1010,24 @@ google.com/search?q=test
     </label>
     <label class="field"><span><b>Уровень</b><em>сколько стратегий перебрать</em></span>
       <select id="bcLevel">
-        <option value="quick">quick (~25, минута)</option>
-        <option value="basic" selected>basic (~100, 3–5 минут)</option>
-        <option value="medium">medium (~300, ~15 минут)</option>
-        <option value="extended">extended (~700, ~30 минут)</option>
-        <option value="full">full (~1100+, ~1 час)</option>
+        <option value="quick">quick (~20)</option>
+        <option value="basic" selected>basic (~400, рекомендуется)</option>
+        <option value="medium">medium (~1300)</option>
+        <option value="extended">extended (~3500)</option>
+        <option value="full">full (~8000)</option>
       </select>
     </label>
   </div>
+  <details class="bc-tier-info">
+    <summary>Что добавляется в каждом уровне</summary>
+    <div class="bc-tier-info-body">
+      <p><b>quick</b> — sanity-check инфраструктуры. 2 сплиттера (<code>multidisorder</code>, <code>multisplit</code>), 2 fooling (<code>badsum</code>, <code>tcp_ts=-1000</code>), <code>tls_mod=rnd,dupsid</code>, без pre-fake.</p>
+      <p><b>basic</b> (+к quick) — типичный рабочий набор. Сплиттеры <code>fakedsplit</code>, <code>fakeddisorder</code>; <b>pre-fake on</b> (fake-цепочка перед split); foolings <code>tcp_ack=-66000:tcp_ts_up</code>, <code>tcp_md5</code>; tls_mod <code>rnd</code>; seqovl <code>1, -1, 681</code>; позиции <code>1,midsld,1220</code>, <code>host+1</code>, <code>sld+1</code>.</p>
+      <p><b>medium</b> (+к basic) — расширение. Сплиттер <code>hostfakesplit</code>; foolings <code>tcp_seq=-3000</code>, <code>tcp_nop_del</code>; tls_mod <code>dupsid</code>; seqovl <code>652, 726</code>; позиции <code>1,sniext+1</code>, <code>sniext+1,midsld</code>, <code>1,sld+1,endsld-2</code>; HTTP <code>method+4</code>, <code>host+5</code>.</p>
+      <p><b>extended</b> (+к medium) — глубокий поиск. Сплиттер <code>tcpseg</code>; foolings <code>ip_id=rnd</code>, <code>ip_id=zero</code>, композит <code>badsum:tcp_md5</code>; tls_mod <code>rndsni</code>; seqovl <code>-2, 1200</code>; супер-цепочка позиций TLS; HTTP <code>endhost-1</code>.</p>
+      <p><b>full</b> (+к extended) — всё, включая редкие. Сплиттер <code>multidisorder_legacy</code>; foolings <code>tcp_seq=-1000</code>, <code>ip_id=seq</code>, композит <code>tcp_ts=-1000:badsum</code>; seqovl <code>1500</code>; ещё позиции TLS/HTTP; <b>специальные lua-функции</b>: <code>synhide</code> (скрытие SYN), <code>wsize</code>/<code>wssize</code> (window-манипуляция), <code>tls_client_hello_clone</code>, <code>synack_split</code>, QUIC <code>udplen</code>.</p>
+    </div>
+  </details>
   <div class="socks-toggles bc-tests" aria-label="Типы тестов">
     <label class="socks-toggle" title="GET / по TCP/80 (handshake = есть HTTP-ответ; hard-body режим — что в теле есть HTTP/ и размер ≥ N КБ)"><input type="checkbox" id="bcTestHttp"  checked><span>HTTP/80</span></label>
     <label class="socks-toggle" title="TLS 1.2 handshake к TCP/443 через openssl s_client -tls1_2 -bind … -servername host (handshake = есть Cipher/Verify)"><input type="checkbox" id="bcTestTls12" checked><span>TLS 1.2</span></label>
@@ -929,10 +1036,10 @@ google.com/search?q=test
     <label class="socks-toggle" title="Дополнительно перебрать каждый .bin-файл из /zapret-fakebin в качестве fake-payload (заменяет fake_default_tls на --blob=fb:@…). Заметно увеличивает число стратегий (×N_blobs), но именно среди них чаще всего и находятся рабочие комбинации."><input type="checkbox" id="bcUseFakebin"><span>×fakebin</span></label>
   </div>
   <div class="grid bc-grid">
-    <label class="field"><span><b>Мин. размер ответа для 16-20KB теста, КБ</b><em>Применяется к доменам, для которых указан <em>путь</em> в поле выше (например <code>rutracker.org/forum/index.php</code>). Если в строке только хост — теста скачивания не будет, останется handshake-only.</em></span>
+    <label class="field"><span><b>Мин. размер ответа для 16-20KB теста, КБ</b><em>Применяется к доменам с путём.</em></span>
       <input id="bcHardMinKb" type="number" min="4" max="256" value="16">
     </label>
-    <label class="field" title="Стратегии с tls_mod=rnd рандомят ClientHello — один probe может случайно проскочить DPI, а следующий нет. Probe засчитывается «ok» только если ВСЕ N попыток прошли подряд. 1 = без повторов (быстро, много ложных «работающих»), 2 — рекомендовано, 3 — для финального отбора. Применяется только к rnd-стратегиям, остальные тестируются по одной попытке."><span><b>Повторов на rnd-стратегию</b><em>Probe считается «ok» только если все N попыток подряд прошли — отсеивает стратегии, которые случайно проскочили DPI один раз. Применяется только к <code>rnd</code>-стратегиям. 2 — рекомендовано.</em></span>
+    <label class="field" title="Стратегии с tls_mod=rnd рандомят ClientHello — probe засчитывается «ok» только если все N попыток прошли подряд. 2 — рекомендовано."><span><b>Повторов на rnd-стратегию</b><em>Probe считается «ok» только если все N попыток подряд прошли. Применяется к <code>rnd</code>-стратегиям. 2 — рекомендовано.</em></span>
       <input id="bcRndRepeats" type="number" min="1" max="5" value="2">
     </label>
   </div>
@@ -974,14 +1081,14 @@ google.com/search?q=test
     <label class="socks-toggle bc-filter-toggle" title="Скрыть строки которые не пробили DPI"><input type="checkbox" id="bcFilterOk" checked><span>только рабочие</span></label>
   </div>
   <details class="bc-combined" id="bcCombinedBox" hidden>
-    <summary><b>Сборные стратегии из рабочих</b> <span id="bcCombinedSummary"></span></summary>
+    <summary><b>Сборные стратегии из рабочих</b> <span id="bcCombinedSummary"></span><button type="button" class="bc-copy-all" title="Скопировать все сборные стратегии (по одной на строку)" onclick="event.preventDefault(); event.stopPropagation(); bcCopyAllCombined(event)">⧉</button></summary>
     <div class="bc-combined-body">
       <p class="bc-combined-hint">Кросс-произведение всех рабочих <code>http</code> × <code>tls</code> × <code>quic</code> стратегий, склеенных через <code>--new</code>. Каждый вариант можно скопировать или применить в <code>ZAPRET2_CMD</code>.</p>
       <div id="bcCombinedList" class="bc-combined-list"></div>
     </div>
   </details>
   <details class="bc-table-box" id="bcTableBox" hidden>
-    <summary>Подробная таблица найденных стратегий <span id="bcTableSummary"></span></summary>
+    <summary>Подробная таблица найденных стратегий <span id="bcTableSummary"></span><button type="button" class="bc-copy-all" title="Скопировать всю таблицу: name, proto, pass/fail/skip, args для каждой строки" onclick="event.preventDefault(); event.stopPropagation(); bcCopyAllTable(event)">⧉</button></summary>
     <div class="bc-table-scroll">
       <table class="bc-table" id="bcTable">
         <thead><tr>
@@ -997,11 +1104,38 @@ google.com/search?q=test
       </table>
     </div>
   </details>
-  <details class="bc-log" id="bcLogBox"><summary>Лог событий runner'a</summary>
+  <details class="bc-log" id="bcLogBox"><summary>Лог событий runner'a<button type="button" class="bc-copy-all" title="Скопировать весь лог в буфер обмена" onclick="event.preventDefault(); event.stopPropagation(); bcCopyAllLog(event)">⧉</button></summary>
     <pre id="bcLog">(пусто — лог появится после запуска)</pre>
   </details>
 </div>
 
+EOF
+  section_end
+
+  section_start_tab zapret-wg "ZAPRET2 WG" "Отдельная стратегия для пробития WireGuard handshake через nfqws2."
+  cat <<EOF
+<div class="wg-editor">
+  <label class="field field-wide" data-env="ZAPRET2_WG_CMD">
+    <span><b>ZAPRET2 WG cmd</b><em>ZAPRET2_WG_CMD</em></span>
+    <textarea name="ZAPRET2_WG_CMD" placeholder="--blob=..." data-default="--blob=quic_vk:@/zapret-fakebin/quic_initial_vk_com.bin --payload wireguard_initiation --lua-desync=fake:blob=quic_vk:repeats=6">$(env_default ZAPRET2_WG_CMD "--blob=quic_vk:@/zapret-fakebin/quic_initial_vk_com.bin --payload wireguard_initiation --lua-desync=fake:blob=quic_vk:repeats=6" | h)</textarea>
+    <small>Команда nfqws2 для WireGuard handshake.</small>
+    <i>$(is_set ZAPRET2_WG_CMD)</i>
+  </label>
+  <div class="field field-wide wg-endpoint-editor" data-env="ZAPRET2_WG_DST">
+    <span><b>ZAPRET2 WG dst</b><em>ZAPRET2_WG_DST</em></span>
+    <input type="hidden" name="ZAPRET2_WG_DST" value="$(env_attr ZAPRET2_WG_DST "")" data-default="">
+    <div class="wg-endpoint-rows"></div>
+    <button type="button" class="wg-endpoint-add">Добавить endpoint</button>
+    <small>Endpoint-ы WireGuard собираются в env через запятую: <code>host:port,host2:port2</code>.</small>
+    <i>$(is_set ZAPRET2_WG_DST)</i>
+  </div>
+  <div class="notice">
+    <b>Заворот только WireGuard handshake в контейнер (MikroTik)</b>
+    <span>Чтобы через ZAPRET2 шёл только handshake, а основной WG-трафик — напрямую, в RouterOS на mangle помечаем только пакеты-handshake (фиксированный размер 176 байт для AmneziaWG/WireGuard) и заворачиваем их в роутинг-метку контейнера. Замените <code>162.159.192.1:2408</code> на endpoint вашего сервера, <code>MihomoProxyRoS</code> — на routing-mark, ведущую в контейнер.</span>
+    <pre><code>/ip firewall mangle
+add action=mark-routing chain=output dst-address=162.159.192.1 dst-port=2408 new-routing-mark=MihomoProxyRoS packet-size=176 passthrough=no protocol=udp</code></pre>
+  </div>
+</div>
 EOF
   section_end
 

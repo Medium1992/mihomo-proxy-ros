@@ -1,0 +1,10 @@
+proxies:
+  - name: mieru-example
+    type: mieru
+    server: server.example.com
+    port: 2999
+    port-range: 2090-2099
+    transport: TCP
+    username: <username>
+    password: <password>
+    multiplexing: MULTIPLEXING_LOW

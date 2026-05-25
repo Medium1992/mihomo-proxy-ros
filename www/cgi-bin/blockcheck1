@@ -1,7 +1,12 @@
 #!/bin/sh
-# POST /cgi-bin/blockcheck2 → {ok, job_id} | {ok:false, error_b64}
-# Body (urlencoded): domains_b64, workers, tests, strategies_b64, level,
-# fakebin, hard_min_kb, rnd_repeats.
+# POST /cgi-bin/blockcheck1 → {ok, job_id} | {ok:false, error_b64}
+# Аналог /cgi-bin/blockcheck2, но для nfqws v1 (zapret первый):
+#   - другой STATE_DIR (можно гонять одновременно с blockcheck2)
+#   - другой пул src-портов / queue numbers / nft-таблицы / mark
+#   - бинарник nfqws вместо nfqws2
+#   - другой gen-strategies (синтаксис v1)
+# Сам runner и lib.sh переиспользованы из blockcheck2 — они полностью
+# параметризованы через BC_* env vars.
 
 echo "Content-Type: application/json; charset=utf-8"
 echo ""
@@ -52,17 +57,24 @@ esac
 [ "$workers" -lt 1 ]  && workers=1
 [ "$workers" -gt 32 ] && workers=32
 [ -z "$tests" ] && tests="http,tls12,tls13"
-# tests sanity: only alphanumerics and commas
 case "$tests" in
   *[!a-z0-9,]*) err "tests contains invalid chars" ;;
 esac
 
-STATE_DIR=/dev/shm/mihomo-blockcheck2
+# === Константы, отличающие BC1 от BC2 ===
+# Каждый параметр должен НЕ пересекаться с BC2, чтобы оба сканера могли
+# работать одновременно: разные nft-таблицы, queue-номера, src-port range,
+# state-dir. Бинарник nfqws (v1) другой.
+STATE_DIR=/dev/shm/mihomo-blockcheck1
+BC1_NFT_TABLE=mihomo_blockcheck1
+BC1_QUEUE_BASE=800
+BC1_MARK_BASE=0x80000
+BC1_SPORT_BASE=18000
+BC1_NFQWS=nfqws
+
 mkdir -p "$STATE_DIR" || err "cannot mkdir $STATE_DIR"
 
-# GC: оставляем 5 последних завершённых job'ов + все running. Без этого
-# tmpfs обрастает logs/result.txt после каждого запуска.
-# Имя папки = <unixts>-<pid>, сортируем по ts (числом).
+# GC: 5 последних завершённых + все running.
 {
   for d in "$STATE_DIR"/*; do
     [ -d "$d" ] || continue
@@ -73,8 +85,8 @@ mkdir -p "$STATE_DIR" || err "cannot mkdir $STATE_DIR"
     printf '%s\t%s\t%s\n' "$ts" "$st" "$d"
   done
 } | sort -rn | awk -F'\t' '
-  $2 == "running" { next }              # running всегда оставляем
-  { kept++; if (kept > 5) print $3 }    # beyond top-5 newest → delete
+  $2 == "running" { next }
+  { kept++; if (kept > 5) print $3 }
 ' | while IFS= read -r victim; do
   [ -n "$victim" ] || continue
   case "$victim" in
@@ -82,25 +94,23 @@ mkdir -p "$STATE_DIR" || err "cannot mkdir $STATE_DIR"
   esac
 done
 
-BC_DIR="${BC_DIR:-/www/blockcheck2}"
-[ -f "$BC_DIR/run" ]              || err "$BC_DIR/run not found — обновите файлы www/blockcheck2/ и перезапустите контейнер"
-[ -r "$BC_DIR/lib.sh" ]           || err "$BC_DIR/lib.sh not found"
+BC_DIR="${BC_DIR:-/www/blockcheck1}"
+BC_RUN_DIR="${BC_RUN_DIR:-/www/blockcheck2}"
+[ -f "$BC_RUN_DIR/run" ]          || err "$BC_RUN_DIR/run not found"
+[ -r "$BC_RUN_DIR/lib.sh" ]       || err "$BC_RUN_DIR/lib.sh not found"
 [ -f "$BC_DIR/strategies.list" ]  || err "$BC_DIR/strategies.list not found"
 command -v nft     >/dev/null 2>&1 || err "nft не найден — фича работает только на RouterOS arm64/amd64 7.21+"
 command -v openssl >/dev/null 2>&1 || err "openssl не найден"
-command -v nfqws2  >/dev/null 2>&1 || err "nfqws2 не найден"
+command -v "$BC1_NFQWS" >/dev/null 2>&1 || err "$BC1_NFQWS не найден"
 
-# Reject if another job is active. Если pid в .lock мёртв (sigkill снаружи,
-# OOM и т.п.) — снимаем замок и заодно прибиваем оставшиеся nfqws воркеры
-# с нашими queue-номерами, иначе они продолжают есть пакеты и CPU.
+# Stale lock cleanup — наша диапазон queue 800-831.
 if [ -f "$STATE_DIR/.lock" ]; then
   other=$(cat "$STATE_DIR/.lock" 2>/dev/null)
   if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
-    err "another blockcheck2 job is already running (pid=$other)"
+    err "another blockcheck1 job is already running (pid=$other)"
   fi
   rm -f "$STATE_DIR/.lock"
-  # Stale nfqws sweep — qnum 700-731 are ours.
-  for q in $(seq 700 731); do
+  for q in $(seq "$BC1_QUEUE_BASE" $((BC1_QUEUE_BASE + 31))); do
     ps -o pid,args 2>/dev/null | awk -v q="$q" '
       $0 ~ ("--qnum[= ]" q "([^0-9]|$)") { print $1 }
     ' | while IFS= read -r pid; do
@@ -120,7 +130,6 @@ printf '%s' "$domains_b64" | base64 -d > "$dom_file" 2>/dev/null
 strat_file="$job_dir/strategies.list"
 cgi_log="$job_dir/log.ndjson"
 
-# Sync-validation того что нельзя отложить: должно вернуться в HTTP-ответе.
 SETSID=$(command -v setsid 2>/dev/null)
 [ -n "$SETSID" ] || err "setsid не найден (util-linux отсутствует)"
 
@@ -152,19 +161,11 @@ case ",$tests," in *,quic,*)  include="${include:+$include,}quic"  ;; esac
 # каждом запуске. Стоимость регенерации — 5-10s CPU на extended+fakebin,
 # приемлемо.
 
-# Раньше gen-strategies гонялся синхронно в CGI: на extended+fakebin это 5-10с,
-# и всё это время UI висел на «отправка запроса…», пользователь думал что
-# зависло. Теперь весь prep (decode strategies_b64 / gen-strategies / запуск
-# runner) уехал в bg-скрипт _prep.sh, а CGI возвращает job_id сразу — клиент
-# подхватывает события `generating`/`generated` через обычный polling ndjson.
 printf 'preparing\n' > "$job_dir/status"
 
 prep_script="$job_dir/_prep.sh"
 cat > "$prep_script" <<'PREP_EOF'
 #!/bin/sh
-# Background prep: decode strategies / run gen-strategies / exec runner.
-# Все входы передаются через env (см. блок ниже).
-
 _emit() {
   _t=$1; shift
   _ts=$(date +%s)
@@ -203,10 +204,19 @@ if [ ! -s "$STRAT_FILE" ]; then
   exit 1
 fi
 
+# Runner reused from /www/blockcheck2/run; всё разделение по BC_* env vars,
+# которые lib.sh подбирает через ${BC_X:-default}.
 exec env \
+  BC_STATE_DIR="$BC_STATE_DIR" \
+  BC_NFT_TABLE="$BC_NFT_TABLE" \
+  BC_QUEUE_BASE="$BC_QUEUE_BASE" \
+  BC_MARK_BASE="$BC_MARK_BASE" \
+  BC_SPORT_BASE="$BC_SPORT_BASE" \
+  BC_NFQWS="$BC_NFQWS" \
   BC_HARD_MIN_BYTES="$BC_HARD_MIN_BYTES" \
   BC_PROBE_RND_REPEATS="$BC_PROBE_RND_REPEATS" \
-  sh "$BC_DIR/run" \
+  BC_QUIC_DEFAULT="$BC_QUIC_DEFAULT" \
+  sh "$BC_RUN_DIR/run" \
     --job="$JOB_ID" \
     --workers="$WORKERS" \
     --domains="$DOM_FILE" \
@@ -222,13 +232,21 @@ STRAT_FILE="$strat_file" \
 STATUS_FILE="$job_dir/status" \
 CGI_LOG="$cgi_log" \
 BC_DIR="$BC_DIR" \
+BC_RUN_DIR="$BC_RUN_DIR" \
 STRATS_B64="$strats_b64" \
 GEN_LEVEL="$level" \
 GEN_FAKEBIN="$fakebin" \
 GEN_INCLUDE="$include" \
 GEN_ARGS="$gen_args" \
+BC_STATE_DIR="$STATE_DIR" \
+BC_NFT_TABLE="$BC1_NFT_TABLE" \
+BC_QUEUE_BASE="$BC1_QUEUE_BASE" \
+BC_MARK_BASE="$BC1_MARK_BASE" \
+BC_SPORT_BASE="$BC1_SPORT_BASE" \
+BC_NFQWS="$BC1_NFQWS" \
 BC_HARD_MIN_BYTES="$hard_min_bytes" \
 BC_PROBE_RND_REPEATS="$rnd_repeats" \
+BC_QUIC_DEFAULT="--filter-udp=0-65535 --dpi-desync=fake --dpi-desync-repeats=20" \
   nohup "$SETSID" sh "$prep_script" >>"$job_dir/runner.log" 2>&1 </dev/null &
 
 printf '{"ok":true,"job_id":"%s"}\n' "$job_id"

@@ -1,0 +1,8 @@
+# Минимальный fallback-список стратегий nfqws v1 если gen-strategies упал.
+# Format: NAME|PROTO|ARGS
+http_multisplit_method_2_badsum|http|--filter-tcp=80 --dpi-desync=multisplit --dpi-desync-split-pos=method+2 --dpi-desync-fooling=badsum
+http_multisplit_method_2_md5sig|http|--filter-tcp=80 --dpi-desync=multisplit --dpi-desync-split-pos=method+2 --dpi-desync-fooling=md5sig
+tls_multisplit_1_badsum|tls|--filter-tcp=443 --dpi-desync=multisplit --dpi-desync-split-pos=1 --dpi-desync-fooling=badsum
+tls_multisplit_host1_md5sig|tls|--filter-tcp=443 --dpi-desync=multisplit --dpi-desync-split-pos=host+1 --dpi-desync-fooling=md5sig
+tls_multidisorder_sniext1_badseq|tls|--filter-tcp=443 --dpi-desync=multidisorder --dpi-desync-split-pos=sniext+1 --dpi-desync-fooling=badseq
+quic_default_r6|quic|--filter-udp=443 --dpi-desync=fake --dpi-desync-repeats=6

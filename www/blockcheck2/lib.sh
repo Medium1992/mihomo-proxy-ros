@@ -7,7 +7,6 @@ BC_NFT_TABLE="${BC_NFT_TABLE:-mihomo_blockcheck2}"
 BC_NFT_TARGETS_SET="${BC_NFT_TARGETS_SET:-bc_targets}"
 BC_QUEUE_BASE="${BC_QUEUE_BASE:-700}"
 BC_MARK_BASE="${BC_MARK_BASE:-0x70000}"
-BC_WORKER_USER_PREFIX="${BC_WORKER_USER_PREFIX:-bc_w}"
 BC_WORKER_MAX="${BC_WORKER_MAX:-32}"
 # Per-worker source-port sub-range. Busybox nc has no SO_REUSEADDR; the
 # range must be wide enough to avoid wrapping into TIME_WAIT'd ports.
@@ -56,7 +55,7 @@ bc_preflight() {
 }
 
 # DoH resolve cache: $BC_DOH_CACHE_DIR/<host>, line 1 = expiry_unix_ts, остальное = IPv4.
-BC_DOH_CACHE_DIR="${BC_DOH_CACHE_DIR:-/dev/shm/mihomo-blockcheck2/.dohcache}"
+BC_DOH_CACHE_DIR="${BC_DOH_CACHE_DIR:-${BC_STATE_DIR}/.dohcache}"
 BC_DOH_TTL_MIN="${BC_DOH_TTL_MIN:-30}"
 BC_DOH_TTL_MAX="${BC_DOH_TTL_MAX:-3600}"
 
@@ -171,32 +170,10 @@ bc_doh_cache_clear() {
   rm -rf "$BC_DOH_CACHE_DIR" 2>/dev/null
 }
 
-# ---------------- Worker UIDs --------------------------------------------
-# Create N worker accounts (idempotent). Args: $1 = count
-bc_ensure_users() {
-  local n="$1" i name
-  [ -z "$n" ] && return 1
-  [ "$n" -gt "$BC_WORKER_MAX" ] && n="$BC_WORKER_MAX"
-  i=0
-  while [ "$i" -lt "$n" ]; do
-    name="${BC_WORKER_USER_PREFIX}${i}"
-    if ! id "$name" >/dev/null 2>&1; then
-      adduser -DH -s /sbin/nologin "$name" >/dev/null 2>&1 || {
-        bc_log "adduser $name failed"
-        return 1
-      }
-    fi
-    i=$((i + 1))
-  done
-}
-
-# Get numeric UID for worker K.
-bc_worker_uid() {
-  id -u "${BC_WORKER_USER_PREFIX}${1}" 2>/dev/null
-}
-
 # Marking: dst-IP set @bc_targets + per-worker src-port sub-range → ct mark K → queue K.
-# `meta skuid` и cgroupv2-matching не работают на ядре 5.6.3 RouterOS — отсюда sport-схема.
+# Worker UID-based маркировка (`meta skuid`, cgroupv2) на ядре 5.6.3 RouterOS не
+# работает — отсюда sport-схема. От ранних проб остались bc_ensure_users / per-UID
+# probes; всё это удалено, probes идут от root (CGI uid), маркируется sport-range.
 # Probe должен делать `-bind 0.0.0.0:<port>` через bc_probe_port. NO `bypass` на queue:
 # если nfqws упал — пакеты дропаются, и probe явно фейлится вместо тихого pass.
 bc_nft_setup() {
@@ -376,9 +353,16 @@ bc_probe_http() {
         *"Address in use"*|*"address in use"*|*"already in use"*)
           attempt=$((attempt+1)); continue ;;
       esac
-      case "$out" in
-        HTTP/*|*"HTTP/1."*)
+      # HTTP/80 на большинстве сайтов отдаёт 301/302 на HTTPS — тело редиректа
+      # маленькое (~300 байт), size-гейт его режет. Для HTTP DPI обходится если
+      # вообще пришёл ответ 2xx/3xx; size-гейт держим только для 200 (полное тело).
+      status_line=$(printf '%s' "$out" | awk 'NR==1{print; exit}')
+      case "$status_line" in
+        "HTTP/1."[01]" 2"*)
           [ "$size" -ge "$BC_HARD_MIN_BYTES" ] && return 0
+          ;;
+        "HTTP/1."[01]" 3"*)
+          return 0
           ;;
       esac
       break

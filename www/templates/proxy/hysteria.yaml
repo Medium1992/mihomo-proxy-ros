@@ -1,0 +1,13 @@
+proxies:
+  - name: hysteria-example
+    type: hysteria
+    server: server.example.com
+    port: 443
+    auth-str: <password>
+    protocol: udp
+    up: "30 Mbps"
+    down: "200 Mbps"
+    sni: server.example.com
+    skip-cert-verify: false
+    alpn:
+      - h3

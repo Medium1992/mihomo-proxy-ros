@@ -1,9 +1,9 @@
 #!/bin/sh
-# POST /cgi-bin/blockcheck2-cancel  body: job=ID
+# POST /cgi-bin/blockcheck1-cancel  body: job=ID
 echo "Content-Type: application/json; charset=utf-8"
 echo ""
 
-STATE_DIR=/dev/shm/mihomo-blockcheck2
+STATE_DIR=/dev/shm/mihomo-blockcheck1
 
 case "$CONTENT_LENGTH" in
   ''|*[!0-9]*) CONTENT_LENGTH=0 ;;
@@ -26,8 +26,6 @@ pidf="$job_dir/.pid"
 if [ -f "$pidf" ]; then
   pid=$(cat "$pidf" 2>/dev/null)
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    # Runner стартует через setsid → PGID == PID. Шлём всей группе,
-    # чтобы фоновые subshells-диспетчеры тоже получили TERM.
     kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
     printf '{"ok":true,"signaled":%s}\n' "$pid"
     exit 0

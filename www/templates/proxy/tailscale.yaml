@@ -1,0 +1,6 @@
+proxies:
+  - name: tailscale-example
+    type: tailscale
+    hostname: mihomo
+    auth-key: tskey-auth-xxxxxxxxxxxxxx
+    udp: true

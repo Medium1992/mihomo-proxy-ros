@@ -1,0 +1,11 @@
+proxies:
+  - name: snell-example
+    type: snell
+    server: server.example.com
+    port: 44046
+    psk: <psk>
+    version: 3
+    udp: true
+    obfs-opts:
+      mode: http
+      host: bing.com

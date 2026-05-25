@@ -1,0 +1,8 @@
+proxies:
+  - name: trusttunnel-example
+    type: trusttunnel
+    server: server.example.com
+    port: 443
+    username: <username>
+    password: <password>
+    udp: true

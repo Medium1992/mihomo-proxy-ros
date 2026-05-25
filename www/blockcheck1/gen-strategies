@@ -1,0 +1,342 @@
+#!/bin/sh
+# gen-strategies — emits per-protocol nfqws v1 strategies for BlockCheck1.
+#
+# Output format: NAME|PROTO|ARGS (same as blockcheck2).
+# Filter convention (как в blockcheck2):
+#   http → --filter-tcp=80
+#   tls  → --filter-tcp=0-65535
+#   quic → --filter-udp=0-65535
+#
+# Источники для подбора осей:
+#   C:/Users/Medium/zapret-discord-youtube/*.bat — реальные стратегии для
+#     YouTube / Discord / Cloudflare-fronted.
+#   C:/Users/Medium/zapret4rocket/config.default — production-наборы.
+#   C:/Users/Medium/zapret/blockcheck.sh — структура тиров.
+
+LEVEL=basic
+INCLUDE="http,tls12,tls13"
+FAKEBIN_DIR=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --level=*)        LEVEL="${arg#*=}" ;;
+    --include=*)      INCLUDE="${arg#*=}" ;;
+    --fakebin-dir=*)  FAKEBIN_DIR="${arg#*=}" ;;
+    -h|--help)        sed -n '2,30p' "$0"; exit 0 ;;
+    *) echo "unknown arg: $arg" >&2; exit 1 ;;
+  esac
+done
+
+case "$LEVEL" in
+  quick)    TIER=1 ;;
+  basic)    TIER=2 ;;
+  medium)   TIER=3 ;;
+  extended) TIER=4 ;;
+  full)     TIER=5 ;;
+  *) echo "level must be quick|basic|medium|extended|full" >&2; exit 1 ;;
+esac
+
+want_http=0; want_tls=0; want_quic=0
+case ",$INCLUDE," in *,http,*)  want_http=1 ;; esac
+case ",$INCLUDE," in *,tls,*|*,tls12,*|*,tls13,*) want_tls=1 ;; esac
+case ",$INCLUDE," in *,quic,*) want_quic=1 ;; esac
+
+# ---- Tier axes ---------------------------------------------------------
+# Композитные modes (`fake,multisplit` и т.п.) и композитные foolings
+# (`ts,badsum`) — реально доминирующие в готовых наборах (zapret4rocket,
+# zapret-discord-youtube). seqovl=681 — top-1 значение, splits `sld+1` /
+# `1,sld+1,endsld-2` — top-3 для TLS.
+case $TIER in
+  1) # quick: минимум, проверка инфры
+     FOOLINGS="badsum md5sig"
+     POS_TLS="1 host+1"
+     POS_HTTP="2 method+2"
+     SPLITTERS="multisplit"
+     COMPOSITE_MODES=""
+     REPEATS_FAKE="6"
+     SEQOVL_VALUES=""
+     CUTOFF_VALUES=""
+     FAKE_TLS_MODS=""
+     BADSEQ_INC=""
+     ;;
+  2) # basic: стартовый набор «по делу»
+     FOOLINGS="badsum md5sig badseq datanoack ts ts,badsum"
+     POS_TLS="1 host+1 sniext+1 midsld 1,midsld"
+     POS_HTTP="2 method+2 method+2,midsld"
+     SPLITTERS="multisplit multidisorder fakedsplit"
+     COMPOSITE_MODES="fake,multisplit fake,multidisorder"
+     REPEATS_FAKE="6 11"
+     SEQOVL_VALUES="1 681"
+     CUTOFF_VALUES=""
+     FAKE_TLS_MODS="rnd,dupsid"
+     BADSEQ_INC=""
+     ;;
+  3) # medium
+     FOOLINGS="badsum md5sig badseq datanoack ts ts,badsum badsum,badseq"
+     POS_TLS="1 host+1 sniext+1 sniext+4 midsld 1,midsld sld+1 1,sld+1,endsld-2"
+     POS_HTTP="2 method+2 method+2,midsld"
+     SPLITTERS="multisplit multidisorder fakedsplit fakeddisorder hostfakesplit"
+     COMPOSITE_MODES="fake,multisplit fake,multidisorder fake,fakedsplit"
+     REPEATS_FAKE="6 11 20"
+     SEQOVL_VALUES="1 681 652 726"
+     CUTOFF_VALUES="n3 n4"
+     FAKE_TLS_MODS="rnd,dupsid"
+     BADSEQ_INC="0 2"
+     ;;
+  4) # extended
+     FOOLINGS="badsum md5sig badseq datanoack ts hopbyhop ts,badsum badsum,badseq"
+     POS_TLS="1 host+1 sniext+1 sniext+4 midsld 1,midsld sld+1 1,sld+1,endsld-2 1,sniext+1,host+1,midsld-2,midsld,midsld+2,endhost-1"
+     POS_HTTP="2 method+2 method+2,midsld endhost-1"
+     SPLITTERS="multisplit multidisorder fakedsplit fakeddisorder hostfakesplit ipfrag2"
+     COMPOSITE_MODES="fake,multisplit fake,multidisorder fake,fakedsplit syndata,multisplit"
+     REPEATS_FAKE="6 11 20 30"
+     SEQOVL_VALUES="1 681 652 726 654 1200"
+     CUTOFF_VALUES="n3 n4"
+     FAKE_TLS_MODS="rnd,dupsid"
+     BADSEQ_INC="0 2"
+     ;;
+  5) # full
+     FOOLINGS="badsum md5sig badseq datanoack ts hopbyhop ts,badsum badsum,badseq"
+     POS_TLS="1 host+1 sniext+1 sniext+4 midsld 1,midsld sld+1 1,sld+1,endsld-2 endhost-1 1,sniext+1,host+1,midsld-2,midsld,midsld+2,endhost-1"
+     POS_HTTP="2 method+2 method+2,midsld endhost-1 endhost+1"
+     SPLITTERS="multisplit multidisorder fakedsplit fakeddisorder hostfakesplit ipfrag2"
+     COMPOSITE_MODES="fake,multisplit fake,multidisorder fake,fakedsplit syndata,multisplit"
+     REPEATS_FAKE="6 11 20 30 50"
+     SEQOVL_VALUES="1 681 652 726 654 1200 1500"
+     CUTOFF_VALUES="n3 n4 n5"
+     FAKE_TLS_MODS="rnd,dupsid"
+     BADSEQ_INC="0 2 1000"
+     ;;
+esac
+
+# ---- Fakebin blobs ------------------------------------------------------
+TLS_BLOBS=""
+HTTP_BLOBS=""
+QUIC_BLOBS=""
+if [ -n "$FAKEBIN_DIR" ] && [ -d "$FAKEBIN_DIR" ]; then
+  for f in "$FAKEBIN_DIR"/*; do
+    [ -f "$f" ] || continue
+    bn=$(basename "$f")
+    case "$bn" in
+      *quic*|*dtls*)                                  QUIC_BLOBS="$QUIC_BLOBS $f" ;;
+      *tls*|*clienthello*|*serverhello*|*tls_alert*)  TLS_BLOBS="$TLS_BLOBS $f" ;;
+      *http*)                                         HTTP_BLOBS="$HTTP_BLOBS $f" ;;
+    esac
+  done
+fi
+
+safe() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/_/g; s/__*/_/g; s/^_//; s/_$//'; }
+emit() { printf '%s|%s|%s\n' "$1" "$2" "$3"; }
+
+# Возвращает 0 если в строке foolings есть `badseq`.
+has_badseq() {
+  case "$1" in *badseq*) return 0 ;; esac
+  return 1
+}
+
+# Возвращает 0 если mode композитный (содержит запятую).
+is_composite() {
+  case "$1" in *,*) return 0 ;; esac
+  return 1
+}
+
+# Возвращает filter-флаг для proto. http→80, tls→0-65535, quic→0-65535.
+filter_for() {
+  case "$1" in
+    http) printf -- '--filter-tcp=80' ;;
+    tls)  printf -- '--filter-tcp=0-65535' ;;
+    quic) printf -- '--filter-udp=0-65535' ;;
+  esac
+}
+
+# ---- HTTP: simple mutators (no splitter) -------------------------------
+if [ "$want_http" = 1 ]; then
+  emit http_hostcase     http "$(filter_for http) --hostcase"
+  emit http_hostspell    http "$(filter_for http) --hostspell=hoSt"
+  emit http_hostnospace  http "$(filter_for http) --hostnospace"
+  emit http_methodspace  http "$(filter_for http) --methodspace"
+  if [ "$TIER" -ge 2 ]; then
+    emit http_hostpad      http "$(filter_for http) --hostpad=1024"
+    emit http_methodeol    http "$(filter_for http) --methodeol"
+    emit http_unixeol      http "$(filter_for http) --unixeol"
+  fi
+fi
+
+# ---- Generic splitter loop helper --------------------------------------
+# $1=proto (http|tls), $2=mode list, $3=pos list, $4=tag prefix
+emit_split_block() {
+  proto="$1"; modes="$2"; positions="$3"; tag="$4"
+  fil=$(filter_for "$proto")
+  for fl in $FOOLINGS; do
+    fls=$(safe "$fl")
+    for pos in $positions; do
+      poss=$(safe "$pos")
+      for sf in $modes; do
+        sfs=$(safe "$sf")
+        # Базовая стратегия
+        args="$fil --dpi-desync=$sf --dpi-desync-split-pos=$pos --dpi-desync-fooling=$fl"
+        # Композитные modes — добавляем repeats (т.к. в них есть fake-часть)
+        if is_composite "$sf"; then
+          # Один представительный repeats — иначе матрица взрывается
+          rep=$(printf '%s' "$REPEATS_FAKE" | awk '{print $1}')
+          args_base="$args --dpi-desync-repeats=$rep"
+          # Без mod
+          emit "${tag}_${sfs}_${poss}_${fls}_r${rep}" "$proto" "$args_base"
+          # С fake-tls-mod (только для tls и tier ≥ 2)
+          if [ "$proto" = "tls" ]; then
+            for tm in $FAKE_TLS_MODS; do
+              tms=$(safe "$tm")
+              emit "${tag}_${sfs}_${poss}_${fls}_r${rep}_${tms}" "$proto" "$args_base --dpi-desync-fake-tls-mod=$tm"
+            done
+          fi
+        else
+          # Чистый splitter
+          if has_badseq "$fl" && [ -n "$BADSEQ_INC" ]; then
+            for bi in $BADSEQ_INC; do
+              emit "${tag}_${sfs}_${poss}_${fls}_bi${bi}" "$proto" "$args --dpi-desync-badseq-increment=$bi"
+            done
+          else
+            emit "${tag}_${sfs}_${poss}_${fls}" "$proto" "$args"
+          fi
+        fi
+      done
+    done
+  done
+}
+
+# ---- HTTP splitter + composite -----------------------------------------
+if [ "$want_http" = 1 ]; then
+  emit_split_block http "$SPLITTERS" "$POS_HTTP" http
+  [ -n "$COMPOSITE_MODES" ] && emit_split_block http "$COMPOSITE_MODES" "$POS_HTTP" http
+fi
+
+# ---- TLS splitter + composite ------------------------------------------
+if [ "$want_tls" = 1 ]; then
+  emit_split_block tls "$SPLITTERS" "$POS_TLS" tls
+  [ -n "$COMPOSITE_MODES" ] && emit_split_block tls "$COMPOSITE_MODES" "$POS_TLS" tls
+fi
+
+# ---- TLS seqovl variants -----------------------------------------------
+if [ "$want_tls" = 1 ] && [ -n "$SEQOVL_VALUES" ]; then
+  fil=$(filter_for tls)
+  for so in $SEQOVL_VALUES; do
+    sos=$(safe "$so")
+    for pos in 1 midsld host+1 sld+1; do
+      poss=$(safe "$pos")
+      emit "tls_multisplit_seqovl_${sos}_${poss}" tls \
+        "$fil --dpi-desync=multisplit --dpi-desync-split-pos=$pos --dpi-desync-split-seqovl=$so"
+    done
+  done
+fi
+
+# ---- TLS pure-fake strategies (с blob fan-out + cutoff + mod) ----------
+if [ "$want_tls" = 1 ] && [ -n "$TLS_BLOBS" ]; then
+  fil=$(filter_for tls)
+  # Если CUTOFF_VALUES пуст — один эмит без cutoff, иначе цикл по cutoff
+  CO_LIST="${CUTOFF_VALUES:- }"   # пробел = «без cutoff»
+  # Если FAKE_TLS_MODS пуст — один эмит без mod
+  TM_LIST="${FAKE_TLS_MODS:- }"
+  for fl in $FOOLINGS; do
+    fls=$(safe "$fl")
+    for r in $REPEATS_FAKE; do
+      for b in $TLS_BLOBS; do
+        bs=$(safe "$(basename "${b%.bin}")")
+        for co in $CO_LIST; do
+          for tm in $TM_LIST; do
+            args="$fil --dpi-desync=fake --dpi-desync-fake-tls=$b --dpi-desync-fooling=$fl --dpi-desync-repeats=$r"
+            tag_suffix=""
+            if [ -n "$co" ] && [ "$co" != " " ]; then
+              args="$args --dpi-desync-cutoff=$co"
+              tag_suffix="${tag_suffix}_co${co}"
+            fi
+            if [ -n "$tm" ] && [ "$tm" != " " ]; then
+              args="$args --dpi-desync-fake-tls-mod=$tm"
+              tag_suffix="${tag_suffix}_$(safe "$tm")"
+            fi
+            emit "tls_fake_${fls}_r${r}_${bs}${tag_suffix}" tls "$args"
+          done
+        done
+      done
+    done
+  done
+fi
+
+# ---- HTTP pure-fake strategies (с blob fan-out) ------------------------
+if [ "$want_http" = 1 ] && [ "$TIER" -ge 2 ] && [ -n "$HTTP_BLOBS" ]; then
+  fil=$(filter_for http)
+  CO_LIST="${CUTOFF_VALUES:- }"
+  for fl in $FOOLINGS; do
+    fls=$(safe "$fl")
+    for r in $REPEATS_FAKE; do
+      for b in $HTTP_BLOBS; do
+        bs=$(safe "$(basename "${b%.bin}")")
+        for co in $CO_LIST; do
+          args="$fil --dpi-desync=fake --dpi-desync-fake-http=$b --dpi-desync-fooling=$fl --dpi-desync-repeats=$r"
+          tag_suffix=""
+          if [ -n "$co" ] && [ "$co" != " " ]; then
+            args="$args --dpi-desync-cutoff=$co"
+            tag_suffix="_co${co}"
+          fi
+          emit "http_fake_${fls}_r${r}_${bs}${tag_suffix}" http "$args"
+        done
+      done
+    done
+  done
+fi
+
+# ---- QUIC --------------------------------------------------------------
+if [ "$want_quic" = 1 ]; then
+  fil=$(filter_for quic)
+  emit "quic_default_r6" quic "$fil --dpi-desync=fake --dpi-desync-repeats=6"
+  if [ "$TIER" -ge 2 ]; then
+    for r in 6 11 20 30; do
+      [ "$r" = "6" ] && continue   # уже эмиттнули выше
+      emit "quic_default_r${r}" quic "$fil --dpi-desync=fake --dpi-desync-repeats=$r"
+    done
+  fi
+  if [ "$TIER" -ge 2 ] && [ -n "$QUIC_BLOBS" ]; then
+    for q in $QUIC_BLOBS; do
+      qs=$(safe "$(basename "${q%.bin}")")
+      for r in 6 11 20; do
+        emit "quic_fake_${qs}_r${r}" quic \
+          "$fil --dpi-desync=fake --dpi-desync-fake-quic=$q --dpi-desync-repeats=$r"
+      done
+    done
+  fi
+fi
+
+# ---- UDP "any-protocol" (для игр: Discord voice, CS, etc) --------------
+# nfqws применяет fake ко ВСЕМУ UDP-трафику включая не-QUIC. Для QUIC-пакетов
+# берётся --dpi-desync-fake-quic (или дефолт), для остальных — --dpi-desync-
+# fake-unknown-udp. Эти стратегии эмиттятся под proto=quic потому что blockcheck
+# других UDP-проб не имеет: пробит QUIC-handshake = стратегия хотя бы не ломает
+# QUIC-трафик, для игр применять и проверять «руками» в реальной игре.
+if [ "$want_quic" = 1 ] && [ "$TIER" -ge 2 ]; then
+  fil=$(filter_for quic)
+  # Без blob — built-in fake_unknown_udp используется
+  for r in 6 11 12 20; do
+    emit "udp_any_r${r}" quic \
+      "$fil --dpi-desync=fake --dpi-desync-any-protocol=1 --dpi-desync-repeats=$r --dpi-desync-cutoff=n3"
+  done
+  # С blob fan-out (используем QUIC blobs как fake-unknown-udp payload —
+  # zapret-discord-youtube именно так и делает: quic_initial_*.bin как fake
+  # для game UDP)
+  if [ -n "$QUIC_BLOBS" ]; then
+    for q in $QUIC_BLOBS; do
+      qs=$(safe "$(basename "${q%.bin}")")
+      for r in 6 11 12; do
+        emit "udp_any_fbunk_${qs}_r${r}" quic \
+          "$fil --dpi-desync=fake --dpi-desync-any-protocol=1 --dpi-desync-fake-unknown-udp=$q --dpi-desync-repeats=$r --dpi-desync-cutoff=n3"
+      done
+    done
+  fi
+  # Более агрессивные: с разными cutoff
+  if [ "$TIER" -ge 3 ]; then
+    for co in n2 n4 n5; do
+      for r in 6 11 20; do
+        emit "udp_any_r${r}_co${co}" quic \
+          "$fil --dpi-desync=fake --dpi-desync-any-protocol=1 --dpi-desync-repeats=$r --dpi-desync-cutoff=$co"
+      done
+    done
+  fi
+fi

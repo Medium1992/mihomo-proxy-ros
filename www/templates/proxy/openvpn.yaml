@@ -1,0 +1,17 @@
+proxies:
+  - name: openvpn-example
+    type: openvpn
+    server: vpn.example.com
+    port: 1194
+    proto: udp
+    username: <username>
+    password: <password>
+    udp: true
+    ca: |
+      -----BEGIN CERTIFICATE-----
+      <CA cert here>
+      -----END CERTIFICATE-----
+    tls-crypt: |
+      -----BEGIN OpenVPN Static key V1-----
+      <static key here>
+      -----END OpenVPN Static key V1-----

@@ -124,12 +124,7 @@ if ! bc_preflight 2>>"$LOG"; then
 fi
 bc_event start "workers=$WORKERS" "tests=$TESTS"
 
-# ---- Provision workers + nft -------------------------------------------
-if ! bc_ensure_users "$WORKERS" 2>>"$LOG"; then
-  bc_event error "msg=could not create worker users"
-  BC_FINAL_STATUS=error
-  exit 1
-fi
+# ---- Provision nft + sweep stale nfqws ---------------------------------
 # Defense-in-depth: a previous crash may have left our nft table + nfqws
 # processes around. bc_nft_setup teardowns first, but kill stale nfqws too,
 # otherwise they'll fight for queue numbers we're about to bind.
@@ -301,24 +296,38 @@ run_strategy() {
   # рандомный ClientHello может проскочить DPI один раз случайно.
   reps=1
   case "$args" in *rnd*) reps="${BC_PROBE_RND_REPEATS:-2}" ;; esac
+  # Лейблы режима для detail. Подсказывают пользователю что именно
+  # тестировалось: handshake-only / body-mode с порогом / throughput.
+  hard_kb=$((BC_HARD_MIN_BYTES / 1024))
+  tp_kb=$((BC_THROUGHPUT_BYTES / 1024))
+  tp_sec="${BC_THROUGHPUT_MAX_SEC:-5}"
   while IFS=$(printf '\t') read -r host ip path mode; do
     [ -z "$host" ] && continue
     if [ "$mode" = "throughput" ]; then
       bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
+      thr_tag="throughput-${tp_kb}k/${tp_sec}s"
       case "$ok" in
-        1) pass=$((pass + 1)); detail="${detail:+$detail,}$host/throughput=ok" ;;
-        0) fail=$((fail + 1)); detail="${detail:+$detail,}$host/throughput=fail" ;;
+        1) pass=$((pass + 1)); detail="${detail:+$detail,}$host/$thr_tag=ok" ;;
+        0) fail=$((fail + 1)); detail="${detail:+$detail,}$host/$thr_tag=fail" ;;
       esac
       continue
     fi
     if [ -n "$path" ]; then
       export BC_HARD_BODY=1 BC_HARD_PATH="$path"
+      mode_tag="body-${hard_kb}k"
     else
       export BC_HARD_BODY=0
+      mode_tag="hs"
     fi
     for tt in http tls12 tls13 quic; do
       eval "want=\$want_$tt"
       [ "$want" = 1 ] || continue
+      # QUIC probe всегда handshake-only (тело UDP не качаем).
+      if [ "$tt" = "quic" ]; then
+        tt_mode_tag="hs"
+      else
+        tt_mode_tag="$mode_tag"
+      fi
       case "$proto/$tt" in
         http/http)         bc_repeat_probe "$reps" bc_probe_http "$k" "$host" "$ip"        && ok=1 || ok=0 ;;
         tls/tls12)         bc_repeat_probe "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_2 && ok=1 || ok=0 ;;
@@ -334,8 +343,8 @@ run_strategy() {
       esac
       # detail items joined by ',' (no spaces) so we can pass it as a single quoted arg.
       case "$ok" in
-        1)    pass=$((pass + 1)); detail="${detail:+$detail,}$host/$tt=ok" ;;
-        0)    fail=$((fail + 1)); detail="${detail:+$detail,}$host/$tt=fail" ;;
+        1)    pass=$((pass + 1)); detail="${detail:+$detail,}$host/$tt-$tt_mode_tag=ok" ;;
+        0)    fail=$((fail + 1)); detail="${detail:+$detail,}$host/$tt-$tt_mode_tag=fail" ;;
         skip) skip=$((skip + 1)) ;;
       esac
     done
@@ -446,7 +455,9 @@ awk '
 FIRST_HTTP_ARGS=$(awk -F'\t' '$2=="http" {print $7; exit}'  "$WORK_TSV" 2>/dev/null)
 FIRST_TLS_ARGS=$(awk -F'\t'  '$2=="tls" || $2=="tls12" || $2=="tls13" {print $7; exit}' "$WORK_TSV" 2>/dev/null)
 FIRST_QUIC_ARGS=$(awk -F'\t' '$2=="quic" {print $7; exit}' "$WORK_TSV" 2>/dev/null)
-QUIC_DEFAULT='--filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=20'
+# Дефолт зависит от движка. BC2 (nfqws2) — lua-синтаксис, BC1 (nfqws v1) —
+# `--dpi-desync=...`. Передаётся через env BC_QUIC_DEFAULT из CGI.
+QUIC_DEFAULT="${BC_QUIC_DEFAULT:---filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=20}"
 [ -z "$FIRST_QUIC_ARGS" ] && FIRST_QUIC_ARGS="$QUIC_DEFAULT"
 
 build_combined() {
