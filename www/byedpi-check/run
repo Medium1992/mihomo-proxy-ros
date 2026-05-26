@@ -1,0 +1,376 @@
+#!/bin/sh
+# byedpi-check-run: parallel ByeDPI strategy testing.
+
+BC_SCRIPT_DIR="${BC_SCRIPT_DIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}"
+. "$BC_SCRIPT_DIR/lib.sh"
+
+BC_HARD_MIN_BYTES="${BC_HARD_MIN_BYTES:-16384}"
+BC_PROBE_RND_REPEATS="${BC_PROBE_RND_REPEATS:-2}"
+
+JOB=""
+WORKERS=4
+STRAT_FILE="$BC_SCRIPT_DIR/strategies.list"
+DOM_FILE=""
+TESTS="http,tls12,tls13,quic"
+
+for arg in "$@"; do
+  case "$arg" in
+    --job=*)        JOB="${arg#*=}" ;;
+    --workers=*)    WORKERS="${arg#*=}" ;;
+    --strategies=*) STRAT_FILE="${arg#*=}" ;;
+    --domains=*)    DOM_FILE="${arg#*=}" ;;
+    --tests=*)      TESTS="${arg#*=}" ;;
+    *) echo "unknown arg: $arg" >&2; exit 1 ;;
+  esac
+done
+
+[ -z "$JOB" ] && { echo "--job required" >&2; exit 1; }
+[ -z "$DOM_FILE" ] || [ ! -s "$DOM_FILE" ] && { echo "--domains file missing/empty" >&2; exit 1; }
+[ ! -s "$STRAT_FILE" ] && { echo "--strategies file missing/empty" >&2; exit 1; }
+case "$WORKERS" in ''|*[!0-9]*) WORKERS=4 ;; esac
+[ "$WORKERS" -lt 1 ] && WORKERS=1
+[ "$WORKERS" -gt "$BC_WORKER_MAX" ] && WORKERS="$BC_WORKER_MAX"
+
+JOB_DIR="$BC_STATE_DIR/$JOB"
+mkdir -p "$JOB_DIR" || exit 1
+LOG="$JOB_DIR/log.ndjson"
+RESULT="$JOB_DIR/result.txt"
+STATUS="$JOB_DIR/status"
+PIDF="$JOB_DIR/.pid"
+BYEDPI_LOG="$JOB_DIR/byedpi.log"
+
+printf '%s\n' "$$" > "$PIDF"
+printf 'running\n' > "$STATUS"
+
+LOCK="$BC_STATE_DIR/.lock"
+mkdir -p "$BC_STATE_DIR"
+if ! ( set -C; printf '%s\n' "$$" > "$LOCK" ) 2>/dev/null; then
+  other=$(cat "$LOCK" 2>/dev/null)
+  if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
+    printf 'error\n' > "$STATUS"
+    exit 1
+  fi
+  rm -f "$LOCK"
+  printf '%s\n' "$$" > "$LOCK"
+fi
+
+json_esc() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+bc_event() {
+  local t="$1"; shift
+  local ts kv k v extra=""
+  ts=$(date +%s)
+  for kv in "$@"; do
+    case "$kv" in *=*) k="${kv%%=*}"; v="${kv#*=}" ;; *) k="$kv"; v="" ;; esac
+    extra="$extra,\"$k\":\"$(json_esc "$v")\""
+  done
+  printf '{"ts":%s,"type":"%s"%s}\n' "$ts" "$t" "$extra" >> "$LOG"
+}
+
+cleanup() {
+  trap - INT TERM EXIT
+  local p i
+  for p in $CHILD_PIDS; do
+    [ -n "$p" ] && kill -KILL "$p" 2>/dev/null
+  done
+  sleep 0.3 2>/dev/null || true
+  for p in $CHILD_PIDS; do
+    wait "$p" 2>/dev/null
+  done
+  i=0
+  while [ "$i" -lt "$WORKERS" ]; do
+    bc_byedpi_stop "$JOB_DIR/byedpi_${i}_tcp.pid" "$JOB_DIR/byedpi_${i}_udp.pid"
+    i=$((i + 1))
+  done
+  bc_kill_stale_byedpi 2>/dev/null || true
+  bc_hs5t_teardown 2>/dev/null || true
+  bc_nft_teardown 2>/dev/null || true
+  rm -f "$LOCK"
+  bc_event teardown 2>/dev/null || true
+}
+trap 'cleanup; printf "%s\n" "${BC_FINAL_STATUS:-cancelled}" > "$STATUS"; exit' INT TERM
+trap 'cleanup' EXIT
+
+if ! bc_preflight 2>>"$LOG"; then
+  bc_event error "msg=preflight failed: need openssl, nc, byedpi, hs5t and nft or iptables"
+  BC_FINAL_STATUS=error
+  exit 1
+fi
+bc_event start "workers=$WORKERS" "tests=$TESTS"
+
+bc_kill_stale_byedpi 2>/dev/null || true
+bc_hs5t_teardown 2>/dev/null || true
+export BC_TOTAL_WORKERS="$WORKERS"
+
+if ! bc_nft_setup "$WORKERS" 2>>"$LOG"; then
+  bc_event error "msg=rules setup failed"
+  BC_FINAL_STATUS=error
+  exit 1
+fi
+if ! bc_hs5t_setup "$WORKERS" 2>>"$LOG"; then
+  bc_event error "msg=hs5t setup failed"
+  BC_FINAL_STATUS=error
+  exit 1
+fi
+rm -f "$BC_STATE_DIR"/.portctr_w* 2>/dev/null
+bc_event nft_ready "backend=${BC_RULE_BACKEND:-unknown}"
+
+RESOLVED="$JOB_DIR/resolved.txt"
+DIAG="$JOB_DIR/doh.diag"
+: > "$RESOLVED"
+: > "$DIAG"
+export BC_DOH_DIAG="$DIAG"
+
+while IFS= read -r raw || [ -n "$raw" ]; do
+  raw=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/\r$//')
+  [ -z "$raw" ] && continue
+  case "$raw" in \#*) continue ;; esac
+  mode=""
+  case "$raw" in
+    '@full '*|'@full	'*)
+      rest=$(printf '%s' "$raw" | sed 's/^@full[[:space:]]*//')
+      case "$rest" in https://*) rest="${rest#https://}" ;; http://*) rest="${rest#http://}" ;; esac
+      case "$rest" in */*) host="${rest%%/*}"; path="/${rest#*/}" ;; *) host="$rest"; path="/" ;; esac
+      mode="throughput"
+      ;;
+    *)
+      case "$raw" in https://*) raw="${raw#https://}" ;; http://*) raw="${raw#http://}" ;; esac
+      case "$raw" in */*) host="${raw%%/*}"; path="/${raw#*/}" ;; *) host="$raw"; path="" ;; esac
+      case "$host" in *.googlevideo.com) case "$path" in */videoplayback*) mode="throughput" ;; esac ;; esac
+      ;;
+  esac
+  [ -z "$host" ] && continue
+  ip=$(bc_doh_resolve "$host" | head -n1)
+  if [ -z "$ip" ]; then
+    diag_tail=$(tail -c 300 "$DIAG" 2>/dev/null | tr '\n\r\t' '   ')
+    bc_event resolve_fail "host=$host" "diag=$diag_tail"
+    continue
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$host" "$ip" "$path" "$mode" >> "$RESOLVED"
+  bc_nft_add_target "$ip" 2>>"$LOG"
+  bc_event resolve "host=$host" "ip=$ip" "path=$path" "mode=$mode"
+done < "$DOM_FILE"
+
+if [ ! -s "$RESOLVED" ]; then
+  bc_event error "msg=no domains resolved via DoH"
+  BC_FINAL_STATUS=error
+  exit 1
+fi
+
+BC_BASELINE_HOST="${BC_BASELINE_HOST:-iana.org}"
+baseline_ip=$(bc_doh_resolve "$BC_BASELINE_HOST" | head -n1)
+if [ -n "$baseline_ip" ] && BC_HARD_BODY=0 bc_probe_tls 0 "$BC_BASELINE_HOST" "$baseline_ip" tls1_2; then
+  bc_event baseline "host=$BC_BASELINE_HOST" "ip=$baseline_ip" "result=ok"
+else
+  bc_event baseline "host=$BC_BASELINE_HOST" "ip=$baseline_ip" "result=fail"
+fi
+
+STRAT_Q="$JOB_DIR/queue.txt"
+grep -vE '^[[:space:]]*(#|$)' "$STRAT_FILE" > "$STRAT_Q"
+TOTAL=$(wc -l < "$STRAT_Q" | tr -d ' ')
+bc_event queue "total=$TOTAL"
+
+i=0
+while [ "$i" -lt "$WORKERS" ]; do
+  touch "$JOB_DIR/w${i}.free"
+  i=$((i + 1))
+done
+
+want_http=0; want_tls12=0; want_tls13=0; want_quic=0
+case ",$TESTS," in *,http,*)  want_http=1 ;; esac
+case ",$TESTS," in *,tls12,*) want_tls12=1 ;; esac
+case ",$TESTS," in *,tls13,*) want_tls13=1 ;; esac
+case ",$TESTS," in *,quic,*)  want_quic=1 ;; esac
+
+run_strategy() {
+  local k="$1" line="$2"
+  local name proto args pid_tcp pid_udp
+  name="${line%%|*}"; line="${line#*|}"
+  proto="${line%%|*}"; args="${line#*|}"
+
+  local relevant=0
+  case "$proto" in
+    http|tcp)       if [ "$want_http" = 1 ] || [ "$want_tls12" = 1 ] || [ "$want_tls13" = 1 ]; then relevant=1; fi ;;
+    tls|tls12|tls13) if [ "$want_tls12" = 1 ] || [ "$want_tls13" = 1 ]; then relevant=1; fi ;;
+    udp|quic)       [ "$want_quic" = 1 ] && relevant=1 ;;
+    combined|all)   relevant=1 ;;
+    *)              relevant=1 ;;
+  esac
+  if [ "$relevant" = 0 ]; then
+    bc_event strategy_skip "name=$name" "proto=$proto" "reason=proto_not_in_tests"
+    return 0
+  fi
+
+  pid_tcp="$JOB_DIR/byedpi_${k}_tcp.pid"
+  pid_udp="$JOB_DIR/byedpi_${k}_udp.pid"
+  rm -f "$pid_tcp" "$pid_udp"
+  bc_event strategy_start "name=$name" "proto=$proto" "worker=$k"
+
+  if ! bc_byedpi_start "$k" "$args" "$pid_tcp" "$pid_udp" "$BYEDPI_LOG"; then
+    tail=$(tail -c 500 "$BYEDPI_LOG" 2>/dev/null | tr '\n\r\t' '   ')
+    bc_byedpi_stop "$pid_tcp" "$pid_udp"
+    bc_event strategy_skip "name=$name" "proto=$proto" "reason=byedpi_start_failed_or_forbidden_args" "byedpi_tail=$tail" "args=$args"
+    return 0
+  fi
+
+  local pass=0 fail=0 skip=0 detail="" host ip path mode tt want ok reps hard_kb mode_tag tt_mode_tag
+  reps=1
+  case "$args" in *rand*|*orig*|*fake-sni*|*"?"*|*"*"*) reps="${BC_PROBE_RND_REPEATS:-2}" ;; esac
+  hard_kb=$((BC_HARD_MIN_BYTES / 1024))
+  while IFS=$(printf '\t') read -r host ip path mode; do
+    [ -z "$host" ] && continue
+    if [ "$mode" = "throughput" ]; then
+      bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
+      case "$ok" in
+        1) pass=$((pass + 1)); detail="${detail:+$detail,}$host/throughput=ok" ;;
+        0) fail=$((fail + 1)); detail="${detail:+$detail,}$host/throughput=fail" ;;
+      esac
+      continue
+    fi
+    if [ -n "$path" ]; then
+      export BC_HARD_BODY=1 BC_HARD_PATH="$path"
+      mode_tag="body-${hard_kb}k"
+    else
+      export BC_HARD_BODY=0
+      mode_tag="hs"
+    fi
+    for tt in http tls12 tls13 quic; do
+      eval "want=\$want_$tt"
+      [ "$want" = 1 ] || continue
+      tt_mode_tag="$mode_tag"
+      [ "$tt" = "quic" ] && tt_mode_tag="hs"
+      case "$proto/$tt" in
+        udp/http|udp/tls12|udp/tls13|quic/http|quic/tls12|quic/tls13) ok=skip ;;
+        http/quic|tls/quic|tls12/quic|tls13/quic|tcp/quic) ok=skip ;;
+        http/http|tcp/http|combined/http|all/http)       bc_repeat_probe "$reps" bc_probe_http "$k" "$host" "$ip" && ok=1 || ok=0 ;;
+        tls/tls12|tls12/tls12|tcp/tls12|combined/tls12|all/tls12) bc_repeat_probe "$reps" bc_probe_tls "$k" "$host" "$ip" tls1_2 && ok=1 || ok=0 ;;
+        tls/tls13|tls13/tls13|tcp/tls13|combined/tls13|all/tls13) bc_repeat_probe "$reps" bc_probe_tls "$k" "$host" "$ip" tls1_3 && ok=1 || ok=0 ;;
+        udp/quic|quic/quic|combined/quic|all/quic)       bc_repeat_probe "$reps" bc_probe_quic "$k" "$host" "$ip" && ok=1 || ok=0 ;;
+        */http)   bc_repeat_probe "$reps" bc_probe_http "$k" "$host" "$ip" && ok=1 || ok=0 ;;
+        */tls12)  bc_repeat_probe "$reps" bc_probe_tls "$k" "$host" "$ip" tls1_2 && ok=1 || ok=0 ;;
+        */tls13)  bc_repeat_probe "$reps" bc_probe_tls "$k" "$host" "$ip" tls1_3 && ok=1 || ok=0 ;;
+        */quic)   bc_repeat_probe "$reps" bc_probe_quic "$k" "$host" "$ip" && ok=1 || ok=0 ;;
+      esac
+      case "$ok" in
+        1)    pass=$((pass + 1)); detail="${detail:+$detail,}$host/$tt-$tt_mode_tag=ok" ;;
+        0)    fail=$((fail + 1)); detail="${detail:+$detail,}$host/$tt-$tt_mode_tag=fail" ;;
+        skip) skip=$((skip + 1)) ;;
+      esac
+    done
+  done < "$RESOLVED"
+
+  bc_byedpi_stop "$pid_tcp" "$pid_udp"
+  tail=$(tail -c 500 "$BYEDPI_LOG" 2>/dev/null | tr '\n\r\t' '   ')
+  bc_event strategy "name=$name" "proto=$proto" "pass=$pass" "fail=$fail" "skip=$skip" "detail=$detail" "args=$args" "byedpi_tail=$tail"
+}
+
+DONE=0
+CHILD_PIDS=""
+while IFS= read -r strat_line; do
+  [ -z "$strat_line" ] && continue
+  while :; do
+    k=0; chosen=""
+    while [ "$k" -lt "$WORKERS" ]; do
+      if [ -f "$JOB_DIR/w${k}.free" ]; then chosen="$k"; break; fi
+      k=$((k + 1))
+    done
+    if [ -n "$chosen" ]; then
+      rm -f "$JOB_DIR/w${chosen}.free"
+      ( run_strategy "$chosen" "$strat_line"; touch "$JOB_DIR/w${chosen}.free" ) &
+      CHILD_PIDS="$CHILD_PIDS $!"
+      DONE=$((DONE + 1))
+      bc_event progress "done=$DONE" "total=$TOTAL"
+      break
+    fi
+    sleep 0.1 2>/dev/null || sleep 1
+  done
+done < "$STRAT_Q"
+
+WAIT_DEADLINE=$(( $(date +%s) + 60 ))
+while [ -n "$CHILD_PIDS" ]; do
+  REMAINING=""
+  for p in $CHILD_PIDS; do
+    if kill -0 "$p" 2>/dev/null; then
+      if [ -f "/proc/$p/status" ] && grep -q "^State:.*Z (zombie)" "/proc/$p/status" 2>/dev/null; then
+        wait "$p" 2>/dev/null
+        continue
+      fi
+      REMAINING="$REMAINING $p"
+    fi
+  done
+  CHILD_PIDS="$REMAINING"
+  [ -z "$CHILD_PIDS" ] && break
+  if [ "$(date +%s)" -ge "$WAIT_DEADLINE" ]; then
+    bc_event warn "msg=wait deadline; killing stuck strategy workers"
+    for p in $CHILD_PIDS; do kill -KILL "$p" 2>/dev/null; done
+    sleep 1
+    for p in $CHILD_PIDS; do wait "$p" 2>/dev/null; done
+    break
+  fi
+  sleep 0.2 2>/dev/null || sleep 1
+done
+for p in $CHILD_PIDS; do
+  wait "$p" 2>/dev/null
+done
+bc_event progress "done=$DONE" "total=$TOTAL"
+
+WORK_TSV="$JOB_DIR/.working.tsv"
+bc_event report_building 2>/dev/null || true
+awk '
+  /"type":"strategy"/ {
+    name=""; proto=""; pass=""; fail=""; skip=""; detail=""; args=""
+    n = split($0, parts, "\"")
+    for (i=1; i<=n; i++) {
+      key = parts[i]
+      gsub(/^[^a-zA-Z0-9_]+|[^a-zA-Z0-9_]+$/, "", key)
+      if (key == "name") name = parts[i+2]
+      else if (key == "proto") proto = parts[i+2]
+      else if (key == "pass") pass = parts[i+2]
+      else if (key == "fail") fail = parts[i+2]
+      else if (key == "skip") skip = parts[i+2]
+      else if (key == "detail") detail = parts[i+2]
+      else if (key == "args") args = parts[i+2]
+    }
+    if (pass ~ /^[1-9][0-9]*$/) printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", name, proto, pass, fail, skip, detail, args
+  }
+' "$LOG" 2>/dev/null | sort -k3,3nr -k4,4n > "$WORK_TSV"
+
+FIRST_ARGS=$(awk -F'\t' '{print $7; exit}' "$WORK_TSV" 2>/dev/null)
+
+{
+  echo "byedpi-check job: $JOB"
+  echo "workers: $WORKERS  tests: $TESTS"
+  echo "domains:"
+  awk -F'\t' '{ printf "  %s -> %s\n", $1, $2 }' "$RESOLVED"
+  echo
+  echo "================================================================"
+  echo "READY-TO-USE  (paste into BYEDPI_CMD0):"
+  echo "================================================================"
+  if [ -n "$FIRST_ARGS" ]; then
+    printf '%s\n' "$FIRST_ARGS"
+  else
+    echo "(no working strategies found)"
+  fi
+  echo
+  echo "================================================================"
+  echo "Working strategies:"
+  echo "================================================================"
+  if [ -s "$WORK_TSV" ]; then
+    awk -F'\t' '{
+      printf "[%s] %s  pass=%s fail=%s skip=%s\n  detail: %s\n  args:   %s\n\n",
+        $2, $1, $3, $4, $5, $6, $7
+    }' "$WORK_TSV"
+  else
+    echo "(empty)"
+  fi
+  echo "================================================================"
+  echo "Full event log: $LOG"
+  echo "ByeDPI log: $BYEDPI_LOG"
+} > "$RESULT"
+rm -f "$WORK_TSV"
+
+BC_FINAL_STATUS=done
+printf 'done\n' > "$STATUS"
+bc_event end

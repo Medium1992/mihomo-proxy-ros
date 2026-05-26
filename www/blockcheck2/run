@@ -435,13 +435,15 @@ awk '
     name=""; proto=""; pass=""; fail=""; skip=""; detail=""; args=""
     n = split($0, parts, "\"")
     for (i=1; i<=n; i++) {
-      if (parts[i] == "name")   name   = parts[i+2]
-      else if (parts[i] == "proto")  proto  = parts[i+2]
-      else if (parts[i] == "pass")   pass   = parts[i+2]
-      else if (parts[i] == "fail")   fail   = parts[i+2]
-      else if (parts[i] == "skip")   skip   = parts[i+2]
-      else if (parts[i] == "detail") detail = parts[i+2]
-      else if (parts[i] == "args")   args   = parts[i+2]
+      key = parts[i]
+      gsub(/^[^a-zA-Z0-9_]+|[^a-zA-Z0-9_]+$/, "", key)
+      if (key == "name")   name   = parts[i+2]
+      else if (key == "proto")  proto  = parts[i+2]
+      else if (key == "pass")   pass   = parts[i+2]
+      else if (key == "fail")   fail   = parts[i+2]
+      else if (key == "skip")   skip   = parts[i+2]
+      else if (key == "detail") detail = parts[i+2]
+      else if (key == "args")   args   = parts[i+2]
     }
     if (pass ~ /^[1-9][0-9]*$/) {
       printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", name, proto, pass, fail, skip, detail, args

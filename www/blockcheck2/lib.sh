@@ -16,6 +16,7 @@ BC_PROBE_TIMEOUT="${BC_PROBE_TIMEOUT:-8}"
 BC_HARD_BODY="${BC_HARD_BODY:-0}"
 BC_HARD_PATH="${BC_HARD_PATH:-/}"
 BC_HARD_MIN_BYTES="${BC_HARD_MIN_BYTES:-16384}"
+BC_TLS_MIN_BYTES="${BC_TLS_MIN_BYTES:-1024}"
 BC_THROUGHPUT_BYTES="${BC_THROUGHPUT_BYTES:-262144}"
 BC_THROUGHPUT_MAX_SEC="${BC_THROUGHPUT_MAX_SEC:-5}"
 BC_DOH_TIMEOUT="${BC_DOH_TIMEOUT:-4}"
@@ -108,7 +109,7 @@ bc_doh_resolve() {
         printf 'Host: %s\r\n' "$sni"
         printf 'Accept: application/dns-json\r\n'
         printf 'Connection: close\r\n\r\n'
-      } | timeout "$BC_DOH_TIMEOUT" \
+      } | timeout -k 2 "$BC_DOH_TIMEOUT" \
         openssl s_client -quiet -connect "$ip:443" -servername "$sni" 2>"$stderr_buf"
     )
     local rc=$?
@@ -343,7 +344,7 @@ bc_probe_http() {
       local body_file="${BC_STATE_DIR:-/tmp}/.http_body_w${k}.$$"
       local err_file="${BC_STATE_DIR:-/tmp}/.http_err_w${k}.$$"
       printf '%s %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n' "$method" "$path" "$host" \
-        | timeout "$BC_PROBE_TIMEOUT" nc -p "$port" -w "$BC_PROBE_TIMEOUT" "$ip" 80 2>"$err_file" > "$body_file"
+        | timeout -k 2 "$BC_PROBE_TIMEOUT" nc -p "$port" -w "$BC_PROBE_TIMEOUT" "$ip" 80 2>"$err_file" > "$body_file"
       size=$(wc -c < "$body_file" 2>/dev/null)
       case "$size" in ''|*[!0-9]*) size=0 ;; esac
       out=$(head -c 256 "$body_file" 2>/dev/null)
@@ -368,7 +369,7 @@ bc_probe_http() {
       break
     else
       out=$(printf 'HEAD / HTTP/1.0\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n' "$host" \
-        | timeout "$BC_PROBE_TIMEOUT" nc -p "$port" -w "$BC_PROBE_TIMEOUT" "$ip" 80 2>&1)
+        | timeout -k 2 "$BC_PROBE_TIMEOUT" nc -p "$port" -w "$BC_PROBE_TIMEOUT" "$ip" 80 2>&1)
       case "$out" in
         HTTP/*|*"HTTP/1."*) return 0 ;;
         *"Address in use"*|*"address in use"*|*"already in use"*)
@@ -403,7 +404,7 @@ bc_probe_tls() {
     local body_file="${BC_STATE_DIR:-/tmp}/.tls_body_w${k}_${ver}.$$"
     # shellcheck disable=SC2086
     printf 'GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n' "$BC_HARD_PATH" "$host" \
-      | timeout "$BC_PROBE_TIMEOUT" openssl s_client $flag -quiet -ign_eof \
+      | timeout -k 2 "$BC_PROBE_TIMEOUT" openssl s_client $flag -quiet -ign_eof \
           -bind "0.0.0.0:$port" -connect "$ip:443" -servername "$host" \
           2>/dev/null > "$body_file"
     size=$(wc -c < "$body_file" 2>/dev/null)
@@ -417,17 +418,19 @@ bc_probe_tls() {
     esac
   else
     # shellcheck disable=SC2086
-    out=$(timeout "$BC_PROBE_TIMEOUT" openssl s_client $flag \
+    out=$(timeout -k 2 "$BC_PROBE_TIMEOUT" openssl s_client $flag \
       -bind "0.0.0.0:$port" -connect "$ip:443" -servername "$host" \
       </dev/null 2>&1)
     size=${#out}
-    case "$out" in
-      *"Cipher is "*|*"Cipher    : "*|*"New, TLSv"*|*"Verification: OK"*|*"Verify return code: 0"*) return 0 ;;
-    esac
+    if [ "$size" -ge "$BC_TLS_MIN_BYTES" ]; then
+      case "$out" in
+        *"Cipher is "*|*"Cipher    : "*|*"New, TLSv"*|*"Verification: OK"*|*"Verify return code: 0"*) return 0 ;;
+      esac
+    fi
   fi
   if [ -n "$BC_STATE_DIR" ]; then
-    printf 'mode=%s size=%s port=%s ver=%s\n---\n%s\n' \
-      "${BC_HARD_BODY:-0}" "$size" "$port" "$ver" "$out" \
+    printf 'mode=%s size=%s min=%s port=%s ver=%s\n---\n%s\n' \
+      "${BC_HARD_BODY:-0}" "$size" "$BC_TLS_MIN_BYTES" "$port" "$ver" "$out" \
       > "${BC_STATE_DIR}/.tls_diag_w${k}_${ver}" 2>/dev/null
   fi
   return 1
@@ -442,7 +445,7 @@ bc_probe_quic() {
   port=$(bc_probe_port "$k" "$n")
 
   local out
-  out=$(timeout "$BC_PROBE_TIMEOUT" openssl s_client -quic \
+  out=$(timeout -k 2 "$BC_PROBE_TIMEOUT" openssl s_client -quic \
         -bind "0.0.0.0:$port" -connect "$ip:443" \
         -servername "$host" -alpn h3 \
         </dev/null 2>&1)
@@ -472,7 +475,7 @@ bc_probe_throughput() {
   local out_file="${BC_STATE_DIR:-/dev/shm/mihomo-blockcheck2}/.thr_w${k}.$$"
   printf 'GET %s HTTP/1.0\r\nHost: %s\r\nRange: bytes=0-%s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n' \
     "$path" "$host" "$((bytes - 1))" \
-  | timeout "$max" openssl s_client -tls1_3 -quiet -ign_eof \
+  | timeout -k 2 "$max" openssl s_client -tls1_3 -quiet -ign_eof \
       -bind "0.0.0.0:$port" -connect "$ip:443" -servername "$host" \
       2>/dev/null > "$out_file"
 

@@ -1,0 +1,232 @@
+#!/bin/sh
+# Emit ByeDPI strategies as NAME|PROTO|ARGS.
+# PROTO determines which tests the runner applies:
+#   http  → only HTTP probes
+#   tls   → only TLS 1.2 / TLS 1.3 probes
+#   quic  → only QUIC probes
+#   all   → all probes (combined / unknown)
+
+LEVEL=basic
+INCLUDE="http,tls12,tls13,quic"
+FAKEBIN_DIR=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --level=*)       LEVEL="${arg#*=}" ;;
+    --include=*)     INCLUDE="${arg#*=}" ;;
+    --fakebin-dir=*) FAKEBIN_DIR="${arg#*=}" ;;
+    -h|--help)       sed -n '1,80p' "$0"; exit 0 ;;
+    *) echo "unknown arg: $arg" >&2; exit 1 ;;
+  esac
+done
+
+case "$LEVEL" in
+  quick) TIER=1 ;;
+  basic) TIER=2 ;;
+  medium) TIER=3 ;;
+  extended) TIER=4 ;;
+  full) TIER=5 ;;
+  *) echo "level must be quick|basic|medium|extended|full" >&2; exit 1 ;;
+esac
+
+want_tcp=0
+want_udp=0
+case ",$INCLUDE," in *,http,*|*,tls,*|*,tls12,*|*,tls13,*) want_tcp=1 ;; esac
+case ",$INCLUDE," in *,quic,*|*,udp,*) want_udp=1 ;; esac
+
+safe() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/_/g; s/__*/_/g; s/^_//; s/_$//'; }
+emit() { printf '%s|%s|%s\n' "$1" "$2" "$3"; }
+emit_all()  { emit "$(safe "$1")" all  "$2"; }
+emit_tls()  { emit "$(safe "$1")" tls  "$2"; }
+emit_quic() { emit "$(safe "$1")" quic "$2"; }
+emit_http() { emit "$(safe "$1")" http "$2"; }
+
+udp_ladder="--proto=udp --udp-fake 1 --auto=none --disorder 1 --split 1+s --disorder 3+s --split 6+s --disorder 9+s --split 12+s --disorder 15+s --split 20+s --disorder 25+s --split 30+s --disorder 35+s"
+tcp_ladder="--disorder 1 --split 1+s --disorder 3+s --split 6+s --disorder 9+s --split 12+s --disorder 15+s --split 20+s --disorder 25+s --split 30+s --disorder 35+s"
+auto_all="--auto=torst,redirect,ssl_err"
+auto_tls="--auto=ssl_err"
+auto_rst="--auto=torst"
+auto_redir="--auto=redirect"
+
+# ---- fakebin categorisation ------------------------------------------------
+tls_bins=""
+http_bins=""
+udp_bins=""
+if [ -n "$FAKEBIN_DIR" ] && [ -d "$FAKEBIN_DIR" ]; then
+  for f in "$FAKEBIN_DIR"/*; do
+    [ -f "$f" ] || continue
+    b=$(basename "$f")
+    case "$b" in
+      *quic_initial*|quic_[0-9]*.bin|quic2_*.bin|*dtls_clienthello*|*stun*|*discord-ip-discovery*) udp_bins="$udp_bins $f" ;;
+      *http*) http_bins="$http_bins $f" ;;
+      *tls_clienthello*|*clienthello*) tls_bins="$tls_bins $f" ;;
+    esac
+  done
+fi
+
+# ============================================================================
+# TIER 0  — seed / combined strategies (always emitted)
+# ============================================================================
+if [ "$want_tcp" = 1 ] || [ "$want_udp" = 1 ]; then
+  emit_all "seed_udp_ladder_tls_sni_yandex" "--timeout 5 $udp_ladder $auto_all $auto_tls --fake -1 --md5sig --fake-sni yandex.ru $auto_redir --disorder 1 $auto_tls --fake -1 --md5sig --fake-sni mail.ru --fake-tls-mod rand"
+  emit_all "seed_udp_ladder_rutube_oob"     "--timeout 5 $udp_ladder $auto_all $auto_tls --fake -1 --md5sig --fake-sni rutube.ru --oob 25000+s $auto_tls --fake 1+s --md5sig $auto_redir --disorder 1"
+  emit_all "seed_ladder_ttl96_http_fake"    "$udp_ladder $auto_all --disorder 30+hm --mod-http d --oob 9 --def-ttl 96 --disorder 30 --fake -23 --split 30+s --split 50+s $auto_rst --split 1+s $auto_rst --fake -1 --md5sig $auto_tls --tlsrec 3+s $tcp_ladder"
+  emit_all "seed_short_oob_fake_ttl6"       "--oob 1 --udp-fake 1 --auto=torst,redirect,ssl_err --fake -1 --udp-fake 1 --auto=redirect,ssl_err --oob 1 --udp-fake 1 --auto=torst --tlsrec 1+s --fake -1 --ttl 6 --udp-fake 1"
+  emit_all "seed_tfo_ttl128_split50"        "$udp_ladder $auto_all --tlsrec -14+s --split 50+s --oob 23 --tfo --tlsrec 9+s --udp-fake 2 --def-ttl 128 $auto_rst --split 1+s $auto_tls --fake 1+s --md5sig $auto_tls --fake -1 --md5sig --fake-sni ya.ru"
+fi
+
+# ============================================================================
+# TIER 1  — quick (≈10 strategies)
+# ============================================================================
+if [ "$TIER" -ge 1 ]; then
+  for sni in yandex.ru mail.ru rutube.ru ya.ru m.vk.com; do
+    sn=$(safe "$sni")
+    emit_all "quick_${sn}_fake_md5_ladder" "--timeout 5 $udp_ladder $auto_all $auto_tls --fake -1 --md5sig --fake-sni $sni"
+    emit_all "quick_${sn}_tlsrec_oob"      "--timeout 5 $auto_all --tlsrec 3+s --split 1+s --disorder 3+s --oob 1 --udp-fake 1 $auto_tls --fake -1 --md5sig --fake-sni $sni"
+  done
+  if [ -n "$FAKEBIN_DIR" ] && [ -d "$FAKEBIN_DIR" ]; then
+    fake_seen=""
+    fake_count=0
+    for f in $tls_bins $http_bins $udp_bins; do
+      [ -f "$f" ] || continue
+      case " $fake_seen " in *" $f "*) continue ;; esac
+      fake_seen="$fake_seen $f"
+      fake_count=$((fake_count + 1))
+      [ "$fake_count" -gt 8 ] && break
+
+      bn=$(safe "$(basename "$f")")
+      emit_all "fakebin_quick_${bn}" "--timeout 5 --fake -1 --md5sig --fake-data $f --udp-fake 1 --auto=none"
+    done
+  fi
+fi
+
+# ============================================================================
+# TIER 2  — basic (≈70 strategies)
+# ============================================================================
+if [ "$TIER" -ge 2 ]; then
+  # --- combined / ladder variants ------------------------------------------
+  for ttl in 6 8 10 12 16 32 64 96 128; do
+    emit_all "ttl_${ttl}_udp_ladder_fake"  "--timeout 5 $udp_ladder $auto_all --fake -1 --ttl $ttl --md5sig $auto_tls --tlsrec 3+s"
+    emit_all "def_ttl_${ttl}_oob_tlsrec"   "--timeout 5 --def-ttl $ttl $auto_all --oob 1 --tlsrec 1+s --split 1+s --disorder 3+s --udp-fake 1"
+  done
+
+  for pos in 1+s 2+s 3+s 5+s 7+s 9+s 12+s 20+s 30+s 50+s -1 -1+s -5+s -14+s; do
+    ps=$(safe "$pos")
+    emit_all  "split_disoob_${ps}"  "--timeout 5 $auto_all --split $pos --disoob 1 --udp-fake 1"
+    emit_tls  "tlsrec_fake_${ps}"   "--timeout 5 $auto_tls --tlsrec $pos --fake -1 --md5sig"
+    emit_all  "oob_disorder_${ps}"  "--timeout 5 $auto_all --oob $pos --disorder 1 --split 1+s --udp-fake 1"
+  done
+
+  for mod in rand orig msize=-64 msize=-128 msize=512 msize=1024 msize=1500; do
+    ms=$(safe "$mod")
+    emit_tls "tlsmod_${ms}_mail" "--timeout 5 $auto_tls --fake -1 --md5sig --fake-sni mail.ru --fake-tls-mod $mod"
+  done
+
+  for buf in 1024 1500 4096 8192 16384; do
+    emit_all "buf_${buf}_ladder" "--timeout 5 --buf-size $buf $udp_ladder $auto_all --split 1 --disoob 1 $auto_tls --fake -1 --md5sig"
+  done
+
+  if [ -n "$FAKEBIN_DIR" ] && [ -d "$FAKEBIN_DIR" ]; then
+    fake_seen=""
+    fake_count=0
+    for f in $tls_bins $http_bins $udp_bins; do
+      [ -f "$f" ] || continue
+      case " $fake_seen " in *" $f "*) continue ;; esac
+      fake_seen="$fake_seen $f"
+      fake_count=$((fake_count + 1))
+      [ "$fake_count" -gt 24 ] && break
+
+      bn=$(safe "$(basename "$f")")
+      case " $udp_bins " in
+        *" $f "*) emit_quic "fakebin_quic_${bn}" "--timeout 5 --proto=udp --udp-fake 1 --fake-data $f --split 1+s --disorder 3 --auto=none" ;;
+      esac
+      case " $http_bins " in
+        *" $f "*) emit_http "fakebin_http_${bn}" "--timeout 5 --proto=http --fake -1 --md5sig --fake-data $f --mod-http d --auto=none" ;;
+      esac
+      case " $tls_bins " in
+        *" $f "*) emit_tls "fakebin_tls_${bn}" "--timeout 5 --proto=tls --fake -1 --md5sig --fake-data $f --auto=none" ;;
+      esac
+      emit_all "fakebin_all_${bn}" "--timeout 5 --fake -1 --md5sig --fake-data $f --udp-fake 1 --split 1+s --disorder 3+s --auto=none"
+    done
+  fi
+
+  # --- per-protocol simple strategies ---------------------------------------
+  if [ "$want_tcp" = 1 ]; then
+    # HTTP-only: mod-http + split / disorder / oob without UDP components
+    for pos in 1+s 3+s 5+s 9+s 12+s 20+s; do
+      ps=$(safe "$pos")
+      emit_http "http_split_${ps}"       "--timeout 5 --mod-http d --split $pos --disorder 1"
+      emit_http "http_oob_${ps}"         "--timeout 5 --mod-http h --oob $pos --split 1+s"
+    done
+    emit_http "http_mod_none"            "--timeout 5 --mod-http d --auto=none --split 1+s --disorder 3"
+    emit_http "http_mod_h_tfo"           "--timeout 5 --mod-http h --tfo --split 1+s --disorder 1"
+
+    # TLS-only: no UDP ladder, pure TLS tricks
+    for pos in 1+s 3+s 5+s 9+s 12+s 20+s 30+s; do
+      ps=$(safe "$pos")
+      emit_tls "tls_split_${ps}"          "--timeout 5 $auto_tls --tlsrec $pos --fake -1 --md5sig"
+      emit_tls "tls_disorder_${ps}"       "--timeout 5 $auto_tls --disorder $pos --split 1+s --fake -1 --md5sig"
+    done
+    emit_tls "tls_fake_sni_yandex"        "--timeout 5 $auto_tls --fake -1 --md5sig --fake-sni yandex.ru"
+    emit_tls "tls_fake_sni_google"        "--timeout 5 $auto_tls --fake -1 --md5sig --fake-sni google.com"
+    emit_tls "tls_drop_sack"              "--timeout 5 $auto_tls --drop-sack --fake -1 --md5sig"
+    emit_tls "tls_tfo"                    "--timeout 5 $auto_tls --tfo --fake -1 --md5sig"
+  fi
+
+  if [ "$want_udp" = 1 ]; then
+    # QUIC-only: pure UDP/QUIC tricks, no TCP/TLS-only flags
+    for pos in 1+s 3+s 5+s 9+s 12+s 20+s 30+s; do
+      ps=$(safe "$pos")
+      emit_quic "quic_split_${ps}"         "--timeout 5 --proto=udp --udp-fake 1 --auto=none --split $pos --disorder 1"
+      emit_quic "quic_disorder_${ps}"      "--timeout 5 --proto=udp --udp-fake 1 --auto=none --disorder $pos --split 1+s"
+    done
+    emit_quic "quic_udp_fake_2"            "--timeout 5 --proto=udp --udp-fake 2 --auto=none --split 1+s --disorder 3"
+    emit_quic "quic_udp_fake_3"            "--timeout 5 --proto=udp --udp-fake 3 --auto=none --split 1+s --disorder 3"
+    emit_quic "quic_oob"                   "--timeout 5 --proto=udp --udp-fake 1 --auto=none --oob 1 --split 1+s"
+  fi
+fi
+
+# ============================================================================
+# TIER 3  — medium combos (combined only)
+# ============================================================================
+if [ "$TIER" -ge 3 ]; then
+  for combo in \
+    "$udp_ladder $auto_all --split 1 --disoob 1 --udp-fake 1 $auto_all --split 5 --oob 25000+s --udp-fake 1 $auto_all --oob 1 --disorder 1 --tlsrec 1+s --split 1+s --disorder 3+s --udp-fake 1" \
+    "$udp_ladder $auto_all --fake -1 --tlsrec 1+s --udp-fake 1 $auto_all --split 1 --oob 1+s --split -1 --udp-fake 1 $auto_tls --fake -1 --md5sig --fake-sni rutube.ru --oob 25000+s" \
+    "$tcp_ladder $auto_all --split 1 --disoob 1 $auto_all --split 5 --oob 20+s $auto_all --oob 1 --disorder 1 --tlsrec 1+s --ttl 10 --buf-size 1024" \
+    "--drop-sack $tcp_ladder $auto_all --fake -1 --md5sig --fake-offset 5 --tlsrec 1+s --udp-fake 1" \
+    "--tfo --def-ttl 128 $auto_all --tlsrec 9+s --split 50+s --oob 23 --udp-fake 2"; do
+    emit_all "combo_$(safe "$combo")" "--timeout 5 $combo"
+  done
+fi
+
+# ============================================================================
+# TIER 4  — extended (combined + fakebin TLS/HTTP)
+# ============================================================================
+if [ "$TIER" -ge 4 ]; then
+  for sni in google.com yandex.ru mail.ru rutube.ru ya.ru vk.com; do
+    sn=$(safe "$sni")
+    emit_all "extended_${sn}_dual_ladder" "--timeout 5 --proto=udp --udp-fake 1 --auto=none $tcp_ladder $auto_all --split 1 --disoob 1 $auto_all --split 5 --oob 25000+s $auto_all --fake -1 --md5sig --fake-sni $sni --fake-tls-mod rand"
+  done
+  for f in $tls_bins; do
+    bn=$(safe "$(basename "$f")")
+    emit_tls "fake_data_${bn}" "--timeout 5 --proto=tls --fake -1 --md5sig --fake-data $f --auto=none"
+  done
+  for f in $http_bins; do
+    bn=$(safe "$(basename "$f")")
+    emit_http "fake_data_${bn}" "--timeout 5 --proto=http --fake -1 --md5sig --fake-data $f --mod-http d --auto=none"
+  done
+fi
+
+# ============================================================================
+# TIER 5  — full (QUIC fakebin + UDP fake counts)
+# ============================================================================
+if [ "$TIER" -ge 5 ]; then
+  for f in $udp_bins; do
+    bn=$(safe "$(basename "$f")")
+    emit_quic "udp_fake_data_${bn}" "--timeout 5 --proto=udp --udp-fake 1 --fake-data $f --split 1+s --disorder 3 --auto=none"
+  done
+  for n in 1 2 3 4 5 8 13 21; do
+    emit_quic "udp_fake_count_${n}" "--timeout 5 --proto=udp --udp-fake $n --auto=none --split 1+s --disorder 3"
+  done
+fi

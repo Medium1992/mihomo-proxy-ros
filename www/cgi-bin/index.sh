@@ -830,6 +830,7 @@ EOF
 dpi_page() {
   page_tabs_nav \
     byedpi      "BYEDPI" \
+    byedpicheck "ByeDPI Check" \
     zapret      "ZAPRET" \
     blockcheck  "BlockCheck" \
     zapret2     "ZAPRET2" \
@@ -846,6 +847,114 @@ dpi_page() {
 EOF
   done
   echo '</div>'
+  section_end
+
+  section_start_tab byedpicheck "Подбор стратегий ByeDPI Check — для byedpi" "Параллельный перебор стратегий byedpi против заданных доменов. Использует DoH (через openssl) для резолва, изолированные nft/iptables-правила и пул воркеров. TCP проверяется через временный byedpi transparent, UDP/QUIC — через byedpi SOCKS + hs5t; у каждого воркера свой src-порт / mark / route table. Может работать рядом с основными BYEDPI_CMD*, потому что использует отдельные тестовые порты и таблицы."
+  cat <<'EOF'
+<div class="notice notice-warn"><b>Результаты в RAM</b><span>Логи и отчёты хранятся в <code>/dev/shm/mihomo-byedpi-check/</code> и пропадают после перезагрузки контейнера. Скачайте отчёт или примените стратегию в <code>BYEDPI_CMD</code>, если нужно надолго.</span></div>
+<div class="blockcheck-controls">
+  <label class="field" title="Форматы строк:&#10; • host                              — handshake-only тест (быстро)&#10; • host/path                          — handshake + скачивание body, должно прийти ≥ N КБ&#10; • @full https://host/path?query     — throughput-тест: тянем 256 КБ за ≤5 с (≈410 kbps min). Для googlevideo /videoplayback URL такой режим включается автоматически."><span><b>Домены</b><em>по одному в строке. <code>host</code> = handshake-only, <code>host/path</code> = + скачать body ≥ N КБ, <code>@full https://...</code> = throughput-тест 256 КБ за ≤5 с (для googlevideo автоматически).</em></span>
+    <textarea id="bdcDomains" rows="4" placeholder="rutracker.org
+discord.com
+google.com/search?q=test"></textarea>
+  </label>
+  <div class="grid bc-grid">
+    <label class="field"><span><b>Воркеров</b><em>1-16, параллелизм. Каждый воркер поднимает временные byedpi и hs5t</em></span>
+      <input id="bdcWorkers" type="number" min="1" max="16" value="4">
+    </label>
+    <label class="field"><span><b>Уровень</b><em>сколько стратегий перебрать</em></span>
+      <select id="bdcLevel">
+        <option value="quick">quick (~15)</option>
+        <option value="basic" selected>basic (~70, рекомендуется)</option>
+        <option value="medium">medium (~120)</option>
+        <option value="extended">extended (~220)</option>
+        <option value="full">full (~300+)</option>
+      </select>
+    </label>
+  </div>
+  <details class="bc-tier-info">
+    <summary>Что добавляется в каждом уровне</summary>
+    <div class="bc-tier-info-body">
+      <p><b>quick</b> — sanity-check инфраструктуры. Базовые <code>fake</code>, <code>split</code>, <code>disorder</code>, <code>tlsrec</code>, UDP fake и короткие ladder-варианты.</p>
+      <p><b>basic</b> (+к quick) — стартовый рабочий набор. TTL/def-ttl, SNI fake, <code>fake-tls-mod</code>, HTTP mod, позиции <code>1+s</code> / <code>3+s</code> / <code>host</code>-смещения, а при включённом fakebin — <code>--fake-data &lt;file&gt;</code>.</p>
+      <p><b>medium</b> (+к basic) — расширение для типичных кейсов. <code>auto=torst,redirect,ssl_err</code>, <code>oob</code>/<code>disoob</code>, смешанные TCP/UDP цепочки и более длинные ladder-комбинации.</p>
+      <p><b>extended</b> (+к medium) — глубокий поиск. Больше SNI, dual-ladder варианты, fake-data по TLS/HTTP категориям.</p>
+      <p><b>full</b> (+к extended) — последний километр. QUIC fake-data из fakebin, дополнительные UDP fake counts и самые тяжёлые варианты.</p>
+    </div>
+  </details>
+  <div class="socks-toggles bc-tests" aria-label="Типы тестов">
+    <label class="socks-toggle" title="GET / по TCP/80 (handshake = есть HTTP-ответ; hard-body режим — что в теле есть HTTP/ и размер ≥ N КБ)"><input type="checkbox" id="bdcTestHttp" checked><span>HTTP/80</span></label>
+    <label class="socks-toggle" title="TLS 1.2 handshake к TCP/443"><input type="checkbox" id="bdcTestTls12" checked><span>TLS 1.2</span></label>
+    <label class="socks-toggle" title="TLS 1.3 handshake к TCP/443"><input type="checkbox" id="bdcTestTls13" checked><span>TLS 1.3</span></label>
+    <label class="socks-toggle" title="QUIC v1 handshake к UDP/443 через byedpi SOCKS + hs5t"><input type="checkbox" id="bdcTestQuic" checked><span>QUIC/443</span></label>
+    <label class="socks-toggle" title="Дополнительно перебрать .bin-файлы из /zapret-fakebin как payload для byedpi --fake-data FILE. Увеличивает количество стратегий."><input type="checkbox" id="bdcUseFakebin"><span>×fakebin</span></label>
+  </div>
+  <div class="grid bc-grid">
+    <label class="field"><span><b>Мин. размер ответа для 16-20KB теста, КБ</b><em>Применяется к доменам с путём.</em></span>
+      <input id="bdcHardMinKb" type="number" min="4" max="256" value="16">
+    </label>
+    <label class="field" title="Стратегии с fake-sni/fake-tls-mod rand могут вести себя нестабильно — probe засчитывается «ok» только если все N попыток прошли подряд. 2 — рекомендовано."><span><b>Повторов на rnd-стратегию</b><em>Probe считается «ok» только если все N попыток подряд прошли. Применяется к <code>rnd</code>-стратегиям. 2 — рекомендовано.</em></span>
+      <input id="bdcRndRepeats" type="number" min="1" max="5" value="2">
+    </label>
+  </div>
+  <div class="bc-actions">
+    <button type="button" class="primary" onclick="byedpiCheckStart()" id="bdcStartBtn">Запустить</button>
+    <button type="button" onclick="byedpiCheckCancel()" id="bdcCancelBtn" disabled>Остановить</button>
+    <button type="button" onclick="byedpiCheckDownload()" id="bdcDownloadBtn" disabled>Скачать отчёт</button>
+    <span class="bc-status" id="bdcStatus">готов</span>
+  </div>
+  <details class="bc-custom" id="bdcCustomBox">
+    <summary>Тест произвольной стратегии</summary>
+    <div class="bc-custom-body">
+      <label class="field"><span><b>Аргументы byedpi</b><em>полная строка с флагами byedpi: <code>--fake</code>, <code>--split</code>, <code>--disorder</code>, <code>--tlsrec</code>, <code>--auto=…</code>, <code>--fake-data=…</code>. Без <code>--port</code>, <code>--transparent</code>, <code>--daemon</code> — порты и режимы задаёт runner.</em></span>
+        <textarea id="bdcCustomArgs" rows="3" spellcheck="false" placeholder="--timeout 5 --auto=ssl_err --fake -1 --md5sig --fake-sni yandex.ru"></textarea>
+      </label>
+      <div class="bc-custom-row">
+        <div class="socks-toggles" aria-label="Протоколы для custom-теста">
+          <label class="socks-toggle"><input type="checkbox" id="bdcCustomHttp" checked><span>HTTP</span></label>
+          <label class="socks-toggle"><input type="checkbox" id="bdcCustomTls12" checked><span>TLS 1.2</span></label>
+          <label class="socks-toggle"><input type="checkbox" id="bdcCustomTls13" checked><span>TLS 1.3</span></label>
+          <label class="socks-toggle"><input type="checkbox" id="bdcCustomQuic" checked><span>QUIC</span></label>
+        </div>
+        <button type="button" onclick="byedpiCheckCustom()" id="bdcCustomBtn">Запустить только эту</button>
+        <span id="bdcCustomResult" class="bc-custom-result" aria-live="polite"></span>
+      </div>
+    </div>
+  </details>
+</div>
+<div class="bc-results">
+  <div class="bc-progress" id="bdcProgress" hidden>
+    <progress id="bdcProgressBar" value="0" max="100"></progress>
+    <span id="bdcProgressText">0 / 0</span>
+    <span class="bc-current" id="bdcCurrent"></span>
+  </div>
+  <div class="bc-counts" id="bdcCounts" hidden>
+    <span class="bc-count-ok" id="bdcCountOk">0 рабочих</span>
+    <span class="bc-count-fail" id="bdcCountFail">0 не сработали</span>
+    <span class="bc-count-skip" id="bdcCountSkip">0 пропущено</span>
+    <label class="socks-toggle bc-filter-toggle"><input type="checkbox" id="bdcFilterOk" checked><span>только рабочие</span></label>
+  </div>
+  <details class="bc-combined" id="bdcCombinedBox" hidden>
+    <summary><b>Рабочие стратегии BYEDPI</b> <span id="bdcCombinedSummary"></span><button type="button" class="bc-copy-all" title="Скопировать все рабочие стратегии" onclick="event.preventDefault(); event.stopPropagation(); bdcCopyAllCombined(event)">⧉</button></summary>
+    <div class="bc-combined-body">
+      <p class="bc-combined-hint">Все стратегии, у которых есть хотя бы один успешный probe. Каждый вариант можно скопировать или применить в <code>BYEDPI_CMD</code>.</p>
+      <div id="bdcCombinedList" class="bc-combined-list"></div>
+    </div>
+  </details>
+  <details class="bc-table-box" id="bdcTableBox" hidden>
+    <summary>Подробная таблица найденных стратегий <span id="bdcTableSummary"></span><button type="button" class="bc-copy-all" title="Скопировать таблицу" onclick="event.preventDefault(); event.stopPropagation(); bdcCopyAllTable(event)">⧉</button></summary>
+    <div class="bc-table-scroll">
+      <table class="bc-table" id="bdcTable">
+        <thead><tr><th>Стратегия</th><th>Proto</th><th>Pass</th><th>Fail</th><th>Skip</th><th>Детали</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </details>
+  <details class="bc-log" id="bdcLogBox"><summary>Лог событий runner'a<button type="button" class="bc-copy-all" title="Скопировать лог" onclick="event.preventDefault(); event.stopPropagation(); bdcCopyAllLog(event)">⧉</button></summary>
+    <pre id="bdcLog">(пусто — лог появится после запуска)</pre>
+  </details>
+</div>
+EOF
   section_end
 
   section_start_tab zapret "ZAPRET (nfqws)" "Стратегии nfqws и packet-window для обычного DPI обхода."

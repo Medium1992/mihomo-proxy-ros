@@ -1,9 +1,9 @@
 #!/bin/sh
-# GET /cgi-bin/blockcheck2-status?job=ID[&offset=N][&download=1]
+# GET /cgi-bin/byedpi-check-status?job=ID[&offset=N][&download=1]
 #   offset    — byte offset into log.ndjson; returns only bytes >= offset
 #   download  — instead of JSON, stream result.txt with attachment headers
 
-STATE_DIR=/dev/shm/mihomo-blockcheck2
+STATE_DIR=/dev/shm/mihomo-byedpi-check
 
 qs_get() {
   printf '%s' "$QUERY_STRING" | tr '&' '\n' | awk -F= -v k="$1" '$1==k{print $2; exit}'
@@ -62,7 +62,7 @@ fi
 if [ "$download" = "1" ]; then
   job_status=$(cat "$job_dir/status" 2>/dev/null || echo unknown)
   echo "Content-Type: text/plain; charset=utf-8"
-  echo "Content-Disposition: attachment; filename=\"blockcheck2-${job}.txt\""
+  echo "Content-Disposition: attachment; filename=\"byedpi-check-${job}.txt\""
   echo ""
   if [ -s "$job_dir/result.txt" ]; then
     cat "$job_dir/result.txt"

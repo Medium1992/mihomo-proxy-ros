@@ -1,0 +1,6 @@
+# Fallback list used if gen-strategies is unavailable.
+tcp_fake_md5|all|--timeout 3 --fake -1 --md5sig
+tcp_split_disorder_sni|all|--timeout 3 --split 1+s --disorder 3+s
+tcp_auto_torst_tlsrec|all|--timeout 3 --auto=torst --tlsrec 3+s
+tcp_auto_ssl_fake_md5|all|--timeout 3 --auto=ssl_err --fake -1 --md5sig
+udp_fake1|all|--timeout 3 --udp-fake 1

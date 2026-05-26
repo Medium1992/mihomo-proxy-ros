@@ -1457,6 +1457,7 @@ pre {
   .overview-head h2 { font-size: 24px; }
   .stats b { font-size: 24px; }
   button, .ghost, .primary, .theme-btn { width: 100%; }
+  .bc-copy-all { width: 28px; }
   .subhead { align-items: stretch; flex-direction: column; }
 }
 
@@ -1872,8 +1873,12 @@ nav a .nav-badge[data-kind="changed"] + .nav-badge[data-kind="error"] {
   top: 50%;
   right: 0;
   transform: translateY(-50%);
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
   font-size: 13px;
-  padding: 2px 8px;
+  padding: 0;
   border: 1px solid var(--border, #444);
   background: rgba(255,255,255,0.04);
   border-radius: 3px;
@@ -1944,7 +1949,9 @@ nav a .nav-badge[data-kind="changed"] + .nav-badge[data-kind="error"] {
   max-height: 280px; overflow: auto;
   font-size: 11px; line-height: 1.35;
   background: var(--surface-2, rgba(0,0,0,0.2));
-  padding: 8px; border-radius: 4px;
+  padding: 8px;
+  padding-right: 40px;
+  border-radius: 4px;
   white-space: pre-wrap; word-break: break-all;
 }
 

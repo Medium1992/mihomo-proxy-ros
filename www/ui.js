@@ -34,7 +34,7 @@ function pageKey(name) { return "mihomo-page:" + name; }
 // `invalid` тоже включён: маркеры невалидных значений нужно гонять на сервер,
 // иначе после browser-clear localStorage бейджи валидации остаются пустыми
 // пока пользователь не зайдёт на проблемную страницу и не запустит валидатор.
-const DRAFT_KEYS_RE = /^mihomo-(env|original|page|tab|theme|command-env-list|invalid|bc-form|bc1-form):/;
+const DRAFT_KEYS_RE = /^mihomo-(env|original|page|tab|theme|command-env-list|invalid|bc-form|bc1-form|bdc-form):/;
 let draftSyncTimer = null;
 let draftLoadInFlight = false;
 function draftCollect() {
@@ -45,6 +45,7 @@ function draftCollect() {
     if (k === "mihomo-theme" || k === "mihomo-command-env-list" ||
         k === "mihomo-bc-domains"  || k === "mihomo-bc-job" ||
         k === "mihomo-bc1-domains" || k === "mihomo-bc1-job" ||
+        k === "mihomo-bdc-domains" || k === "mihomo-bdc-job" ||
         DRAFT_KEYS_RE.test(k)) {
       out[k] = localStorage.getItem(k);
     }
@@ -60,7 +61,7 @@ function draftSaveDebounced() {
     fetch("/cgi-bin/draft", { method: "POST", headers: {"Content-Type":"application/json"}, body })
       .then(r => { if (!r.ok) console.warn("draft save HTTP", r.status); })
       .catch((e) => console.warn("draft save failed:", e));
-  }, 1500);
+  }, 500);
 }
 function isPersistedDraftKey(k) {
   if (!k) return false;
@@ -68,6 +69,7 @@ function isPersistedDraftKey(k) {
   // Фиксированные ключи (без двоеточия) — должны учитываться так же.
   if (k === "mihomo-bc-domains"  || k === "mihomo-bc-job")  return true;
   if (k === "mihomo-bc1-domains" || k === "mihomo-bc1-job") return true;
+  if (k === "mihomo-bdc-domains" || k === "mihomo-bdc-job") return true;
   return false;
 }
 
@@ -2942,7 +2944,7 @@ function activatePageTab(tabId) {
   // там нет name-полей env-формы, кнопка бесполезна и только путает.
   const bottomSubmit = document.querySelector(".bottom-submit");
   if (bottomSubmit) {
-    bottomSubmit.hidden = (tabId === "blockcheck" || tabId === "blockcheck2");
+    bottomSubmit.hidden = (tabId === "blockcheck" || tabId === "blockcheck2" || tabId === "byedpicheck");
   }
 }
 
@@ -3244,6 +3246,7 @@ function bootstrapUI() {
   initFieldValidators();
   initBlockcheck();
   initBlockcheck1();
+  initByedpiCheck();
   renderRulesPreview();
   refreshAllBadges();
   document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]").forEach((el) => {
@@ -3283,6 +3286,28 @@ document.addEventListener("DOMContentLoaded", () => {
   // Только после этого инициализируем форму, иначе значения серверного
   // черновика не лягут в поля.
   draftLoadFromServer().then(() => bootstrapUI());
+});
+
+// Emergency flush before tab close / navigate so we don't lose the last
+// few keystrokes that haven't been debounced yet.
+function draftFlushSync() {
+  if (draftSyncTimer) { clearTimeout(draftSyncTimer); draftSyncTimer = null; }
+  const data = JSON.stringify(draftCollect());
+  const url = "/cgi-bin/draft";
+  if (typeof navigator !== "undefined" && navigator.sendBeacon) {
+    try { navigator.sendBeacon(url, new Blob([data], { type: "application/json" })); } catch (e) {}
+  } else {
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", url, false);
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.send(data);
+    } catch (e) {}
+  }
+}
+window.addEventListener("beforeunload", draftFlushSync);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") draftFlushSync();
 });
 
 // ===== Blockcheck (DPI strategy scanner) =====
@@ -3365,7 +3390,7 @@ function initBlockcheck() {
   // Сценарий: пользователь нажал Запустить, gen-strategies генерит ~5-10с,
   // закрыл браузер до того как client успел сделать setItem(JOB_KEY).
   // Сервер job уже создал и запустил — UI должен подобрать.
-  fetch("/cgi-bin/blockcheck2-status?discover=1")
+  fetch("/cgi-bin/blockcheck1-status?discover=1")
     .then(r => r.json()).then(data => {
       if (data && data.ok && data.job_id) {
         try { localStorage.setItem(BC_JOB_KEY, data.job_id); } catch (e) {}
@@ -3870,7 +3895,7 @@ function blockcheck2Custom() {
   body.set("hard_min_kb",    String(v.hard_min_kb));
   body.set("rnd_repeats",    String(v.rnd_repeats));
 
-  fetch("/cgi-bin/blockcheck2", {
+  fetch("/cgi-bin/blockcheck1", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -3930,7 +3955,7 @@ function blockcheck2Start() {
   body.set("hard_min_kb", String(v.hard_min_kb));
   body.set("rnd_repeats", String(v.rnd_repeats));
 
-  fetch("/cgi-bin/blockcheck2", {
+  fetch("/cgi-bin/blockcheck1", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -3959,7 +3984,7 @@ function blockcheck2Poll() {
   // тормозящем сервере очередь fetch'ей растёт, страница виснет.
   if (BC.pollInFlight) return;
   BC.pollInFlight = true;
-  fetch("/cgi-bin/blockcheck2-status?job=" + encodeURIComponent(BC.jobId) + "&offset=" + BC.offset)
+  fetch("/cgi-bin/blockcheck1-status?job=" + encodeURIComponent(BC.jobId) + "&offset=" + BC.offset)
     .then(r => r.json()).then(data => {
       if (!data.ok) {
         // Job dir gone (server restart, manual cleanup) → reset.
@@ -4059,7 +4084,7 @@ function blockcheck2Poll() {
 function blockcheck2Cancel(silent) {
   if (!BC.jobId) return;
   const body = new URLSearchParams(); body.set("job", BC.jobId);
-  fetch("/cgi-bin/blockcheck2-cancel", {
+  fetch("/cgi-bin/blockcheck1-cancel", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -4071,7 +4096,7 @@ function blockcheck2Cancel(silent) {
 
 function blockcheck2Download() {
   if (!BC.jobId) return;
-  window.location.href = "/cgi-bin/blockcheck2-status?job=" + encodeURIComponent(BC.jobId) + "&download=1";
+  window.location.href = "/cgi-bin/blockcheck1-status?job=" + encodeURIComponent(BC.jobId) + "&download=1";
 }
 
 // (blockcheck2Preview removed — generated count is shown right in the
@@ -4154,7 +4179,7 @@ function initBlockcheck1() {
   // Сценарий: пользователь нажал Запустить, gen-strategies генерит ~5-10с,
   // закрыл браузер до того как client успел сделать setItem(JOB_KEY).
   // Сервер job уже создал и запустил — UI должен подобрать.
-  fetch("/cgi-bin/blockcheck1-status?discover=1")
+  fetch("/cgi-bin/blockcheck2-status?discover=1")
     .then(r => r.json()).then(data => {
       if (data && data.ok && data.job_id) {
         try { localStorage.setItem(BC1_JOB_KEY, data.job_id); } catch (e) {}
@@ -4658,7 +4683,7 @@ function blockcheck1Custom() {
   body.set("hard_min_kb",    String(v.hard_min_kb));
   body.set("rnd_repeats",    String(v.rnd_repeats));
 
-  fetch("/cgi-bin/blockcheck1", {
+  fetch("/cgi-bin/blockcheck2", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -4718,7 +4743,7 @@ function blockcheck1Start() {
   body.set("hard_min_kb", String(v.hard_min_kb));
   body.set("rnd_repeats", String(v.rnd_repeats));
 
-  fetch("/cgi-bin/blockcheck1", {
+  fetch("/cgi-bin/blockcheck2", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -4747,7 +4772,7 @@ function blockcheck1Poll() {
   // тормозящем сервере очередь fetch'ей растёт, страница виснет.
   if (BC1.pollInFlight) return;
   BC1.pollInFlight = true;
-  fetch("/cgi-bin/blockcheck1-status?job=" + encodeURIComponent(BC1.jobId) + "&offset=" + BC1.offset)
+  fetch("/cgi-bin/blockcheck2-status?job=" + encodeURIComponent(BC1.jobId) + "&offset=" + BC1.offset)
     .then(r => r.json()).then(data => {
       if (!data.ok) {
         // Job dir gone (server restart, manual cleanup) → reset.
@@ -4847,7 +4872,7 @@ function blockcheck1Poll() {
 function blockcheck1Cancel(silent) {
   if (!BC1.jobId) return;
   const body = new URLSearchParams(); body.set("job", BC1.jobId);
-  fetch("/cgi-bin/blockcheck1-cancel", {
+  fetch("/cgi-bin/blockcheck2-cancel", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -4859,8 +4884,338 @@ function blockcheck1Cancel(silent) {
 
 function blockcheck1Download() {
   if (!BC1.jobId) return;
-  window.location.href = "/cgi-bin/blockcheck1-status?job=" + encodeURIComponent(BC1.jobId) + "&download=1";
+  window.location.href = "/cgi-bin/blockcheck2-status?job=" + encodeURIComponent(BC1.jobId) + "&download=1";
 }
+
+// ===== ByeDPI Check =====
+const BDC_JOB_KEY = "mihomo-bdc-job";
+const BDC = { jobId: null, offset: 0, pollTimer: null, pollInFlight: false, results: [], counts: { ok: 0, fail: 0, skip: 0 }, seenStrategies: new Set(), lastCustomTag: null };
+
+function initByedpiCheck() {
+  if (!document.getElementById("bdcDomains")) return;
+  const saved = localStorage.getItem("mihomo-bdc-domains");
+  if (saved) document.getElementById("bdcDomains").value = saved;
+  document.getElementById("bdcDomains").addEventListener("input", (e) => {
+    try { localStorage.setItem("mihomo-bdc-domains", e.target.value); draftSaveDebounced(); } catch (e2) {}
+  });
+  ["bdcWorkers","bdcLevel","bdcHardMinKb","bdcRndRepeats","bdcTestHttp","bdcTestTls12","bdcTestTls13","bdcTestQuic","bdcUseFakebin","bdcCustomArgs","bdcCustomHttp","bdcCustomTls12","bdcCustomTls13","bdcCustomQuic"].forEach((id) => {
+    const el = document.getElementById(id); if (!el) return;
+    const key = "mihomo-bdc-form:" + id;
+    const val = localStorage.getItem(key);
+    if (val !== null) { if (el.type === "checkbox") el.checked = val === "1"; else el.value = val; }
+    const save = () => { try { localStorage.setItem(key, el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value); draftSaveDebounced(); } catch (e) {} };
+    el.addEventListener("change", save);
+    el.addEventListener("input", () => { if (el.type !== "checkbox") save(); });
+  });
+  const filter = document.getElementById("bdcFilterOk");
+  if (filter) filter.addEventListener("change", bdcApplyFilter);
+  const savedJob = localStorage.getItem(BDC_JOB_KEY);
+  if (savedJob) bdcResumeJob(savedJob);
+  fetch("/cgi-bin/byedpi-check-status?discover=1").then(r => r.json()).then(data => {
+    if (data && data.ok && data.job_id && data.job_id !== savedJob) bdcResumeJob(data.job_id);
+  }).catch(() => {});
+}
+
+function bdcResumeJob(jobId) {
+  BDC.jobId = jobId; BDC.offset = 0;
+  bdcSetStatus("восстановлен job " + jobId + "…", true);
+  if (BDC.pollTimer) clearInterval(BDC.pollTimer);
+  BDC.pollTimer = setInterval(byedpiCheckPoll, 1000);
+  byedpiCheckPoll();
+}
+
+function bdcSetStatus(text, busy) {
+  const el = document.getElementById("bdcStatus"); if (el) el.textContent = text;
+  document.getElementById("bdcCancelBtn").disabled = !busy;
+  document.getElementById("bdcStartBtn").disabled = busy;
+}
+
+function bdcAppendLog(text) {
+  const pre = document.getElementById("bdcLog"); if (!pre) return;
+  if (pre.textContent.startsWith("(")) pre.textContent = "";
+  pre.textContent += text;
+  pre.scrollTop = pre.scrollHeight;
+}
+
+function bdcUpdateCounts() {
+  document.getElementById("bdcCounts").hidden = false;
+  document.getElementById("bdcCountOk").textContent = BDC.counts.ok + " рабочих";
+  document.getElementById("bdcCountFail").textContent = BDC.counts.fail + " не сработали";
+  document.getElementById("bdcCountSkip").textContent = BDC.counts.skip + " пропущено";
+}
+
+function bdcApplyFilter() { document.querySelectorAll("#bdcTable tbody tr").forEach(bdcApplyFilterToRow); }
+function bdcApplyFilterToRow(tr) {
+  const onlyOk = document.getElementById("bdcFilterOk").checked;
+  tr.hidden = onlyOk && tr.dataset.ok !== "1";
+}
+
+function bdcHandleEvent(ev) {
+  if (!ev || !ev.type) return;
+  switch (ev.type) {
+    case "start": {
+      bdcSetStatus("инициализация (workers=" + (ev.workers || "?") + ")", true);
+      bdcAppendLog("=== ByeDPI Check начат: workers=" + (ev.workers || "?") + " tests=" + (ev.tests || "?") + " ===\n");
+      break;
+    }
+    case "resolve": {
+      bdcSetStatus("резолв " + (ev.host || "") + " → " + (ev.ip || ""), true);
+      bdcAppendLog("DoH " + (ev.host || "") + " → " + (ev.ip || "") + "\n");
+      break;
+    }
+    case "resolve_fail": {
+      bdcAppendLog("[resolve_fail] " + (ev.host || "") + "\n");
+      break;
+    }
+    case "nft_ready": {
+      bdcAppendLog("nft/hs5t готовы, начинаю перебор\n");
+      break;
+    }
+    case "generating": {
+      bdcAppendLog("генерирую стратегии (level=" + (ev.level || "?") + ")\n");
+      bdcSetStatus("генерирую стратегии…", true);
+      break;
+    }
+    case "generated": {
+      bdcAppendLog("сгенерировано стратегий: " + (ev.count || "?") + "\n");
+      bdcSetStatus("запуск воркеров…", true);
+      break;
+    }
+    case "runner_start": {
+      bdcAppendLog("runner стартует: " + (ev.cmd || "") + "\n");
+      bdcSetStatus("runner стартует…", true);
+      break;
+    }
+    case "queue": {
+      const total = parseInt(ev.total || "0", 10) || 0;
+      const bar = document.getElementById("bdcProgressBar");
+      document.getElementById("bdcProgress").hidden = false;
+      if (bar) { bar.max = total; bar.value = 0; }
+      document.getElementById("bdcProgressText").textContent = "0 / " + (ev.total || "?");
+      bdcSetStatus("тестирую " + (ev.total || "?") + " стратегий", true);
+      bdcAppendLog("В очереди: " + (ev.total || "?") + " стратегий\n");
+      break;
+    }
+    case "progress": {
+      const done = parseInt(ev.done || "0", 10), total = parseInt(ev.total || "0", 10);
+      const bar = document.getElementById("bdcProgressBar");
+      if (bar && total) { bar.max = total; bar.value = done; }
+      document.getElementById("bdcProgressText").textContent = done + " / " + total;
+      bdcSetStatus("тестирую " + done + " / " + total, true);
+      break;
+    }
+    case "strategy_start": {
+      const cur = document.getElementById("bdcCurrent");
+      if (cur) cur.textContent = "▶ " + (ev.name || "");
+      break;
+    }
+    case "strategy": {
+      bdcRenderResultsRow(ev); bdcUpdateCounts(); bdcCombinedRefresh();
+      if (BDC.lastCustomTag && ev.name === BDC.lastCustomTag) {
+        const cr = document.getElementById("bdcCustomResult");
+        if (cr) {
+          const pass = parseInt(ev.pass, 10) || 0;
+          const ok = pass > 0;
+          if (ok) {
+            cr.textContent = "✓ pass=" + pass + " · " + (ev.detail || "");
+            cr.className = "bc-custom-result ok";
+          } else {
+            cr.textContent = "✗ fail=" + (ev.fail || 0) + " · " + (ev.detail || "");
+            cr.className = "bc-custom-result fail";
+          }
+        }
+        BDC.lastCustomTag = null;
+      }
+      if ((parseInt(ev.pass, 10) || 0) > 0) {
+        bdcAppendLog("[OK] " + (ev.name || "") + " (" + (ev.proto || "") + ") — " +
+                     (ev.detail || "") + "\n");
+      }
+      break;
+    }
+    case "strategy_skip": {
+      BDC.counts.skip++; bdcUpdateCounts();
+      if (BDC.lastCustomTag && ev.name === BDC.lastCustomTag) {
+        const cr = document.getElementById("bdcCustomResult");
+        if (cr) {
+          cr.textContent = "skip: " + (ev.reason || "strategy skipped");
+          cr.title = ev.args || "";
+          cr.className = "bc-custom-result fail";
+        }
+        BDC.lastCustomTag = null;
+      }
+      break;
+    }
+    case "error": {
+      const extra = ev.runner_tail || ev.syntax_tail || ev.byedpi_tail || ev.diag || "";
+      bdcAppendLog("[error] " + (ev.msg || "") + "\n" + (extra ? extra + "\n" : ""));
+      bdcSetStatus("ошибка: " + (ev.msg || ""), false);
+      break;
+    }
+    case "end": {
+      bdcSetStatus("готово (" + BDC.counts.ok + " рабочих из " + BDC.results.length + ")", false);
+      document.getElementById("bdcDownloadBtn").disabled = false;
+      document.getElementById("bdcCurrent").textContent = "";
+      bdcAppendLog("=== ByeDPI Check завершён ===\n");
+      break;
+    }
+  }
+}
+
+function bdcCombinedRefresh() {
+  const box = document.getElementById("bdcCombinedBox"), list = document.getElementById("bdcCombinedList");
+  if (!box || !list) return;
+  const lines = [], seen = new Set();
+  BDC.results.forEach((r) => { if (parseInt(r.pass || "0", 10) > 0 && r.args && !seen.has(r.args)) { seen.add(r.args); lines.push(r.args); } });
+  if (!lines.length) { box.hidden = true; return; }
+  box.hidden = false;
+  list.innerHTML = lines.map((args) => {
+    const a = escapeAttr(args);
+    return `<div class="bc-combined-item"><textarea class="bc-combined-args" readonly>${a}</textarea><button type="button" class="primary" data-args="${a}" onclick="bdcApplyStrategy(this)">→ BYEDPI_CMD</button><button type="button" data-args="${a}" onclick="bdcCopyStrategy(this)">⧉</button></div>`;
+  }).join("");
+  document.getElementById("bdcCombinedSummary").textContent = lines.length + " вариантов";
+}
+
+function bdcRenderResultsRow(ev) {
+  const table = document.getElementById("bdcTable"), tbox = document.getElementById("bdcTableBox");
+  if (!table) return;
+  tbox.hidden = false;
+  const pass = parseInt(ev.pass || "0", 10), fail = parseInt(ev.fail || "0", 10), skip = parseInt(ev.skip || "0", 10);
+  const works = pass > 0;
+  const key = (ev.name || "") + "|" + (ev.args || "");
+  if (BDC.seenStrategies.has(key)) return;
+  BDC.seenStrategies.add(key);
+  BDC.results.push(ev);
+  if (works) BDC.counts.ok++; else if (fail > 0) BDC.counts.fail++; else BDC.counts.skip++;
+  const args = ev.args || "", a = escapeAttr(args);
+  const tr = document.createElement("tr");
+  tr.dataset.ok = works ? "1" : "0";
+  tr.dataset.pass = String(pass);
+  const apply = works ? `<button type="button" class="ghost" data-args="${a}" onclick="bdcApplyStrategy(this)">BYEDPI_CMD</button>` : "";
+  tr.innerHTML = `<td><code title="${a}">${escapeAttr(ev.name || "")}</code></td><td>${escapeAttr(ev.proto || "")}</td><td>${pass}</td><td>${fail}</td><td>${skip}</td><td><small>${escapeAttr(ev.detail || "")}</small></td><td>${args ? `<button type="button" class="ghost" data-args="${a}" onclick="bdcCopyStrategy(this)">Copy</button>${apply}` : ""}</td>`;
+  const tbody2 = table.querySelector("tbody");
+  let inserted = false;
+  for (const existing of tbody2.children) {
+    const ep = parseInt(existing.dataset.pass || "0", 10);
+    if (pass > ep) { tbody2.insertBefore(tr, existing); inserted = true; break; }
+  }
+  if (!inserted) tbody2.appendChild(tr);
+  bdcApplyFilterToRow(tr);
+}
+
+function bdcDecode(b64) { return bcDecode(b64); }
+function bdcFormValues() {
+  const tests = [];
+  if (document.getElementById("bdcTestHttp").checked) tests.push("http");
+  if (document.getElementById("bdcTestTls12").checked) tests.push("tls12");
+  if (document.getElementById("bdcTestTls13").checked) tests.push("tls13");
+  if (document.getElementById("bdcTestQuic").checked) tests.push("quic");
+  return { domains: (document.getElementById("bdcDomains").value || "").trim(), workers: parseInt(document.getElementById("bdcWorkers").value, 10) || 4, level: document.getElementById("bdcLevel").value, fakebin: document.getElementById("bdcUseFakebin").checked ? "1" : "0", hard_min_kb: parseInt(document.getElementById("bdcHardMinKb").value, 10) || 16, rnd_repeats: parseInt(document.getElementById("bdcRndRepeats").value, 10) || 2, tests };
+}
+
+function byedpiCheckCustom() {
+  const args = (document.getElementById("bdcCustomArgs").value || "").trim(), v = bdcFormValues();
+  if (!args) { alert("Введите аргументы byedpi"); return; }
+  if (!v.domains) { alert("Укажите хотя бы один домен."); return; }
+  const tests = [];
+  if (document.getElementById("bdcCustomHttp").checked) tests.push("http");
+  if (document.getElementById("bdcCustomTls12").checked) tests.push("tls12");
+  if (document.getElementById("bdcCustomTls13").checked) tests.push("tls13");
+  if (document.getElementById("bdcCustomQuic").checked) tests.push("quic");
+  if (!tests.length) { alert("Выберите хотя бы один протокол."); return; }
+  if (BDC.jobId && document.getElementById("bdcCancelBtn").disabled === false) { alert("Сначала остановите текущий ByeDPI Check."); return; }
+  BDC.offset = 0;
+  const tag = "custom_" + Date.now(); BDC.lastCustomTag = tag;
+  const cr = document.getElementById("bdcCustomResult");
+  if (cr) {
+    cr.textContent = "(тестирую " + tests.join("/") + "…)";
+    cr.className = "bc-custom-result running";
+  }
+  const body = new URLSearchParams();
+  body.set("domains_b64", btoa(unescape(encodeURIComponent(v.domains))));
+  body.set("workers", "1"); body.set("tests", tests.join(","));
+  body.set("strategies_b64", btoa(unescape(encodeURIComponent(tag + "|all|" + args + "\n"))));
+  body.set("level", v.level); body.set("hard_min_kb", String(v.hard_min_kb)); body.set("rnd_repeats", String(v.rnd_repeats));
+  bdcPostStart(body, "custom-test запущен");
+}
+
+function byedpiCheckStart() {
+  if (BDC.jobId && document.getElementById("bdcCancelBtn").disabled === false) {
+    if (!window.confirm("Уже запущен job " + BDC.jobId + ". Остановить и запустить новый?")) return;
+    byedpiCheckCancel(true);
+  }
+  const v = bdcFormValues();
+  if (!v.domains) { alert("Укажите хотя бы один домен."); return; }
+  if (!v.tests.length) { alert("Выберите хотя бы один тип теста."); return; }
+  if (BDC.pollTimer) { clearInterval(BDC.pollTimer); BDC.pollTimer = null; }
+  BDC.jobId = null; BDC.offset = 0; BDC.results = []; BDC.counts = { ok: 0, fail: 0, skip: 0 }; BDC.seenStrategies = new Set();
+  document.getElementById("bdcLog").textContent = "";
+  document.getElementById("bdcTable").querySelector("tbody").innerHTML = "";
+  document.getElementById("bdcTableBox").hidden = true; document.getElementById("bdcCounts").hidden = true; document.getElementById("bdcProgress").hidden = true; document.getElementById("bdcCurrent").textContent = ""; document.getElementById("bdcDownloadBtn").disabled = true; document.getElementById("bdcCombinedBox").hidden = true;
+  const body = new URLSearchParams();
+  body.set("domains_b64", btoa(unescape(encodeURIComponent(v.domains))));
+  body.set("workers", String(v.workers)); body.set("tests", v.tests.join(",")); body.set("level", v.level); body.set("fakebin", v.fakebin); body.set("hard_min_kb", String(v.hard_min_kb)); body.set("rnd_repeats", String(v.rnd_repeats));
+  bdcPostStart(body, "запущен");
+}
+
+function bdcPostStart(body, okText) {
+  bdcSetStatus("отправка запроса…", true);
+  fetch("/cgi-bin/byedpi-check", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: body.toString() })
+    .then(r => r.json()).then(data => {
+      if (!data.ok) { bdcSetStatus("ошибка: " + bdcDecode(data.error_b64), false); BDC.jobId = null; return; }
+      BDC.jobId = data.job_id; try { localStorage.setItem(BDC_JOB_KEY, BDC.jobId); } catch (e) {}
+      bdcSetStatus(okText + " job " + BDC.jobId, true);
+      if (BDC.pollTimer) clearInterval(BDC.pollTimer);
+      BDC.pollTimer = setInterval(byedpiCheckPoll, 700); byedpiCheckPoll();
+    }).catch(err => { bdcSetStatus("ошибка запуска: " + err, false); BDC.jobId = null; });
+}
+
+function byedpiCheckPoll() {
+  if (!BDC.jobId || BDC.pollInFlight) return;
+  BDC.pollInFlight = true;
+  fetch("/cgi-bin/byedpi-check-status?job=" + encodeURIComponent(BDC.jobId) + "&offset=" + BDC.offset)
+    .then(r => r.json()).then(data => {
+      BDC.pollInFlight = false;
+      if (!data.ok) { bdcSetStatus("job недоступен: " + (data.error || ""), false); return; }
+      BDC.offset = data.offset || BDC.offset;
+      const tail = bdcDecode(data.log_b64);
+      if (tail) tail.split(/\n/).forEach((line) => { if (!line.trim()) return; try { bdcHandleEvent(JSON.parse(line)); } catch (e) { bdcAppendLog(line + "\n"); } });
+      if (data.status === "done" || data.status === "error" || data.status === "cancelled") {
+        if (BDC.pollTimer) { clearInterval(BDC.pollTimer); BDC.pollTimer = null; }
+        document.getElementById("bdcDownloadBtn").disabled = false;
+        bdcSetStatus(data.status === "done" ? "готово" : data.status, false);
+      }
+    }).catch(err => { BDC.pollInFlight = false; bdcSetStatus("ошибка polling: " + err, false); });
+}
+
+function byedpiCheckCancel(silent) {
+  if (!BDC.jobId) return;
+  fetch("/cgi-bin/byedpi-check-cancel", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "job=" + encodeURIComponent(BDC.jobId) })
+    .finally(() => { if (BDC.pollTimer) { clearInterval(BDC.pollTimer); BDC.pollTimer = null; } if (!silent) bdcSetStatus("остановлен", false); });
+}
+function byedpiCheckDownload() { if (BDC.jobId) window.location.href = "/cgi-bin/byedpi-check-status?job=" + encodeURIComponent(BDC.jobId) + "&download=1"; }
+function bdcCopyStrategy(btn) {
+  const args = btn.dataset.args || ""; if (!args) return;
+  const ok = () => { btn.textContent = "✓"; setTimeout(() => { btn.textContent = "⧉"; }, 900); };
+  if (navigator.clipboard) navigator.clipboard.writeText(args).then(ok).catch(() => bcCopyFallback(args, ok)); else bcCopyFallback(args, ok);
+}
+function bdcApplyStrategy(btn) {
+  const args = btn.dataset.args || ""; if (!args) return;
+  const wrap = document.getElementById("byedpi"); if (!wrap) return;
+  addRow("byedpi", "BYEDPI_CMD", false);
+  const rows = [...wrap.querySelectorAll(".env-row")];
+  const input = rows[rows.length - 1]?.querySelector('input[name^="BYEDPI_CMD"]');
+  if (input) { input.value = args; input.dispatchEvent(new Event("input", { bubbles: true })); input.dispatchEvent(new Event("change", { bubbles: true })); }
+  location.hash = "#byedpi";
+}
+function bdcCopyAllCombined(ev) { _bcCopyAllText([...document.querySelectorAll('#bdcCombinedList .bc-combined-args')].map(t => t.value).join('\n'), ev.target); }
+function bdcCopyAllTable(ev) {
+  const lines = [...document.querySelectorAll('#bdcTable tbody tr')].filter(tr => !tr.hidden).map(tr => {
+    const cells = tr.querySelectorAll('td');
+    return [...cells].slice(0, 6).map(td => td.innerText.trim()).join('\t');
+  });
+  _bcCopyAllText(lines.join('\n'), ev.target);
+}
+function bdcCopyAllLog(ev) { const pre = document.getElementById('bdcLog'); _bcCopyAllText(pre ? (pre.textContent || '') : '', ev.target); }
 
 // (blockcheck1Preview removed — generated count is shown right in the
 //  level dropdown labels; running gen-strategies twice was redundant.)

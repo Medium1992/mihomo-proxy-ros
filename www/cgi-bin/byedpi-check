@@ -1,0 +1,260 @@
+#!/bin/sh
+# POST /cgi-bin/byedpi-check в†’ {ok, job_id} | {ok:false, error_b64}
+# Body (urlencoded): domains_b64, workers, tests, strategies_b64, level,
+# fakebin, hard_min_kb, rnd_repeats.
+
+echo "Content-Type: application/json; charset=utf-8"
+echo ""
+
+err() {
+  msg="$1"
+  printf '{"ok":false,"error_b64":"%s"}\n' \
+    "$(printf '%s' "$msg" | base64 -w0 2>/dev/null || printf '%s' "$msg" | base64 | tr -d '\n')"
+  exit 0
+}
+
+[ "$REQUEST_METHOD" = "POST" ] || err "POST required"
+
+MAX_BODY=1048576
+case "$CONTENT_LENGTH" in
+  ''|*[!0-9]*) CONTENT_LENGTH=0 ;;
+esac
+[ "$CONTENT_LENGTH" -gt "$MAX_BODY" ] && err "request body too large"
+
+body=$(head -c "$CONTENT_LENGTH")
+
+extract_field() {
+  printf '%s' "$body" | awk -F'&' -v key="$1" '{
+    for(i=1;i<=NF;i++) {
+      n=length(key)+1
+      if (substr($i,1,n) == key"=") { print substr($i,n+1); exit }
+    }
+  }'
+}
+urldecode() {
+  printf '%s\n' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\\x\1/g' | \
+    while IFS= read -r line; do printf '%b' "$line"; done
+}
+
+domains_b64=$(urldecode "$(extract_field domains_b64)")
+workers=$(extract_field workers)
+tests=$(urldecode "$(extract_field tests)")
+strats_b64=$(urldecode "$(extract_field strategies_b64)")
+level=$(extract_field level)
+fakebin=$(extract_field fakebin)
+hard_min_kb=$(extract_field hard_min_kb)
+rnd_repeats=$(extract_field rnd_repeats)
+
+[ -z "$domains_b64" ] && err "domains_b64 required"
+case "$workers" in
+  ''|*[!0-9]*) workers=4 ;;
+esac
+[ "$workers" -lt 1 ]  && workers=1
+[ "$workers" -gt 16 ] && workers=16
+[ -z "$tests" ] && tests="http,tls12,tls13,quic"
+# tests sanity: only alphanumerics and commas
+case "$tests" in
+  *[!a-z0-9,]*) err "tests contains invalid chars" ;;
+esac
+
+STATE_DIR=/dev/shm/mihomo-byedpi-check
+mkdir -p "$STATE_DIR" || err "cannot mkdir $STATE_DIR"
+
+# GC: оставляем 5 последних завершённых job'ов + все running. Без этого
+# tmpfs обрастает logs/result.txt после каждого запуска.
+# Имя папки = <unixts>-<pid>, сортируем по ts (числом).
+{
+  for d in "$STATE_DIR"/*; do
+    [ -d "$d" ] || continue
+    name=$(basename "$d")
+    ts="${name%%-*}"
+    case "$ts" in ''|*[!0-9]*) continue ;; esac
+    st=$(cat "$d/status" 2>/dev/null)
+    printf '%s\t%s\t%s\n' "$ts" "$st" "$d"
+  done
+} | sort -rn | awk -F'\t' '
+  $2 == "running" { next }              # running всегда оставляем
+  { kept++; if (kept > 5) print $3 }    # beyond top-5 newest в†’ delete
+' | while IFS= read -r victim; do
+  [ -n "$victim" ] || continue
+  case "$victim" in
+    "$STATE_DIR"/*-*) rm -rf "$victim" ;;
+  esac
+done
+
+BC_DIR="${BC_DIR:-/www/byedpi-check}"
+[ -f "$BC_DIR/run" ]              || err "$BC_DIR/run not found — обновите файлы www/byedpi-check/ и перезапустите контейнер"
+[ -r "$BC_DIR/lib.sh" ]           || err "$BC_DIR/lib.sh not found"
+[ -f "$BC_DIR/strategies.list" ]  || err "$BC_DIR/strategies.list not found"
+command -v openssl >/dev/null 2>&1 || err "openssl не найден"
+command -v byedpi  >/dev/null 2>&1 || err "byedpi не найден"
+command -v hs5t    >/dev/null 2>&1 || err "hs5t не найден"
+if ! { command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1; }; then
+  err "nft/iptables не найдены"
+fi
+
+# Reject if another job is active. Если pid в .lock мёртв (sigkill снаружи,
+# OOM и т.п.) — снимаем замок и заодно прибиваем оставшиеся byedpi воркеры
+# с нашими queue-номерами, иначе они продолжают есть пакеты и CPU.
+if [ -f "$STATE_DIR/.lock" ]; then
+  other=$(cat "$STATE_DIR/.lock" 2>/dev/null)
+  if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
+    err "another byedpi-check job is already running (pid=$other)"
+  fi
+  rm -f "$STATE_DIR/.lock"
+  ps -o pid,args 2>/dev/null | awk '
+    /byedpi/ && (/--port 18[0-9][0-9][0-9]/ || /--port 19[0-9][0-9][0-9]/) { print $1 }
+  ' | while IFS= read -r pid; do
+    [ -n "$pid" ] && kill -KILL "$pid" 2>/dev/null
+  done
+fi
+
+job_id="$(date +%s)-$$"
+job_dir="$STATE_DIR/$job_id"
+mkdir -p "$job_dir" || err "cannot mkdir job dir"
+
+dom_file="$job_dir/domains.txt"
+printf '%s' "$domains_b64" | base64 -d > "$dom_file" 2>/dev/null
+[ -s "$dom_file" ] || err "failed to decode domains_b64 or it is empty"
+
+strat_file="$job_dir/strategies.list"
+cgi_log="$job_dir/log.ndjson"
+
+# Sync-validation того что нельзя отложить: должно вернуться в HTTP-ответе.
+SETSID=$(command -v setsid 2>/dev/null)
+[ -n "$SETSID" ] || err "setsid не найден (util-linux отсутствует)"
+
+case "$level" in
+  quick|basic|medium|extended|full) ;;
+  *[!0-9]*|'') level=basic ;;
+esac
+[ "$fakebin" = "1" ] || fakebin=0
+
+case "$hard_min_kb" in ''|*[!0-9]*) hard_min_kb=16 ;; esac
+[ "$hard_min_kb" -lt 4   ] && hard_min_kb=4
+[ "$hard_min_kb" -gt 256 ] && hard_min_kb=256
+hard_min_bytes=$((hard_min_kb * 1024))
+
+case "$rnd_repeats" in ''|*[!0-9]*) rnd_repeats=2 ;; esac
+[ "$rnd_repeats" -lt 1 ] && rnd_repeats=1
+[ "$rnd_repeats" -gt 5 ] && rnd_repeats=5
+
+gen_args="--level=$level"
+[ "$fakebin" = "1" ] && [ -d /zapret-fakebin ] && gen_args="$gen_args --fakebin-dir=/zapret-fakebin"
+include=""
+case ",$tests," in *,http,*)  include="${include:+$include,}http"  ;; esac
+case ",$tests," in *,tls12,*) include="${include:+$include,}tls12" ;; esac
+case ",$tests," in *,tls13,*) include="${include:+$include,}tls13" ;; esac
+case ",$tests," in *,quic,*)  include="${include:+$include,}quic"  ;; esac
+[ -n "$include" ] && gen_args="$gen_args --include=$include"
+
+# Кеш gen-strategies удалён: пользователь хочет видеть свежую генерацию при
+# каждом запуске. Стоимость регенерации — 5-10s CPU на extended+fakebin,
+# приемлемо.
+
+# Раньше gen-strategies гонялся синхронно в CGI: на extended+fakebin это 5-10с,
+# и всё это время UI висел на «отправка запроса…», пользователь думал что
+# зависло. Теперь весь prep (decode strategies_b64 / gen-strategies / запуск
+# runner) уехал в bg-скрипт _prep.sh, а CGI возвращает job_id сразу — клиент
+# подхватывает события `generating`/`generated` через обычный polling ndjson.
+printf 'preparing\n' > "$job_dir/status"
+
+prep_script="$job_dir/_prep.sh"
+cat > "$prep_script" <<'PREP_EOF'
+#!/bin/sh
+# Background prep: decode strategies / run gen-strategies / exec runner.
+# Все входы передаются через env (см. блок ниже).
+
+printf '%s\n' "$$" > "$PID_FILE"
+
+_emit() {
+  _t=$1; shift
+  _ts=$(date +%s)
+  _extra=""
+  for _kv in "$@"; do
+    _k=${_kv%%=*}
+    _v=${_kv#*=}
+    _v=$(printf '%s' "$_v" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    _extra="$_extra,\"$_k\":\"$_v\""
+  done
+  printf '{"ts":%s,"type":"%s"%s}\n' "$_ts" "$_t" "$_extra" >> "$CGI_LOG"
+}
+
+if [ -n "$STRATS_B64" ]; then
+  printf '%s' "$STRATS_B64" | base64 -d > "$STRAT_FILE" 2>/dev/null
+  if [ ! -s "$STRAT_FILE" ]; then
+    _emit error "msg=failed to decode strategies_b64"
+    printf 'error\n' > "$STATUS_FILE"
+    exit 1
+  fi
+else
+  _emit generating "level=$GEN_LEVEL" "fakebin=$GEN_FAKEBIN" "include=$GEN_INCLUDE"
+  if [ -f "$BC_DIR/gen-strategies" ]; then
+    sh "$BC_DIR/gen-strategies" $GEN_ARGS > "$STRAT_FILE" 2>/dev/null
+  fi
+  if [ ! -s "$STRAT_FILE" ] && [ -s "$BC_DIR/strategies.list" ]; then
+    cp "$BC_DIR/strategies.list" "$STRAT_FILE"
+  fi
+  _count=$(wc -l < "$STRAT_FILE" 2>/dev/null | tr -d ' ')
+  _emit generated "count=$_count"
+fi
+
+if [ ! -s "$STRAT_FILE" ]; then
+  _emit error "msg=пустой список стратегий"
+  printf 'error\n' > "$STATUS_FILE"
+  exit 1
+fi
+
+if ! sh -n "$BC_DIR/lib.sh" >"$SYNTAX_LOG" 2>&1; then
+  errtail=$(tail -c 800 "$SYNTAX_LOG" 2>/dev/null | tr '\n\r\t' '   ')
+  _emit error "msg=lib.sh syntax check failed" "syntax_tail=$errtail"
+  printf 'error\n' > "$STATUS_FILE"
+  exit 2
+fi
+if ! sh -n "$BC_DIR/run" >"$SYNTAX_LOG" 2>&1; then
+  errtail=$(tail -c 800 "$SYNTAX_LOG" 2>/dev/null | tr '\n\r\t' '   ')
+  _emit error "msg=run syntax check failed" "syntax_tail=$errtail"
+  printf 'error\n' > "$STATUS_FILE"
+  exit 2
+fi
+
+_emit runner_start "cmd=sh $BC_DIR/run" "workers=$WORKERS"
+env \
+  BC_HARD_MIN_BYTES="$BC_HARD_MIN_BYTES" \
+  BC_PROBE_RND_REPEATS="$BC_PROBE_RND_REPEATS" \
+  sh "$BC_DIR/run" \
+    --job="$JOB_ID" \
+    --workers="$WORKERS" \
+    --domains="$DOM_FILE" \
+    --tests="$TESTS" \
+    --strategies="$STRAT_FILE"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  errtail=$(tail -c 800 "$RUNNER_LOG" 2>/dev/null | tr '\n\r\t' '   ')
+  _emit error "msg=runner exited rc=$rc" "runner_tail=$errtail"
+  printf 'error\n' > "$STATUS_FILE"
+fi
+exit "$rc"
+PREP_EOF
+
+JOB_ID="$job_id" \
+WORKERS="$workers" \
+TESTS="$tests" \
+DOM_FILE="$dom_file" \
+STRAT_FILE="$strat_file" \
+STATUS_FILE="$job_dir/status" \
+PID_FILE="$job_dir/.pid" \
+CGI_LOG="$cgi_log" \
+RUNNER_LOG="$job_dir/runner.log" \
+SYNTAX_LOG="$job_dir/syntax.log" \
+BC_DIR="$BC_DIR" \
+STRATS_B64="$strats_b64" \
+GEN_LEVEL="$level" \
+GEN_FAKEBIN="$fakebin" \
+GEN_INCLUDE="$include" \
+GEN_ARGS="$gen_args" \
+BC_HARD_MIN_BYTES="$hard_min_bytes" \
+BC_PROBE_RND_REPEATS="$rnd_repeats" \
+  nohup "$SETSID" sh "$prep_script" >>"$job_dir/runner.log" 2>&1 </dev/null &
+
+printf '{"ok":true,"job_id":"%s"}\n' "$job_id"

@@ -1,0 +1,36 @@
+#!/bin/sh
+# POST /cgi-bin/byedpi-check-cancel  body: job=ID
+echo "Content-Type: application/json; charset=utf-8"
+echo ""
+
+STATE_DIR=/dev/shm/mihomo-byedpi-check
+
+case "$CONTENT_LENGTH" in
+  ''|*[!0-9]*) CONTENT_LENGTH=0 ;;
+esac
+[ "$CONTENT_LENGTH" -gt 4096 ] && { printf '{"ok":false,"error":"body too large"}\n'; exit 0; }
+body=$(head -c "$CONTENT_LENGTH")
+job=$(printf '%s' "$body" | awk -F'&' '{
+  for(i=1;i<=NF;i++) if (substr($i,1,4) == "job=") { print substr($i,5); exit }
+}')
+case "$job" in
+  ''|*/*|*..*) printf '{"ok":false,"error":"invalid job id"}\n'; exit 0 ;;
+esac
+
+job_dir="$STATE_DIR/$job"
+if [ ! -d "$job_dir" ]; then
+  printf '{"ok":false,"error":"job not found"}\n'; exit 0
+fi
+
+pidf="$job_dir/.pid"
+if [ -f "$pidf" ]; then
+  pid=$(cat "$pidf" 2>/dev/null)
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    # Runner стартует через setsid → PGID == PID. Шлём всей группе,
+    # чтобы фоновые subshells-диспетчеры тоже получили TERM.
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+    printf '{"ok":true,"signaled":%s}\n' "$pid"
+    exit 0
+  fi
+fi
+printf '{"ok":true,"signaled":0,"note":"job not running"}\n'
