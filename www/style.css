@@ -1172,6 +1172,135 @@ pre {
   min-height: 560px;
 }
 
+.tools-browser {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.tool-panes {
+  min-width: 0;
+}
+
+.tool-pane {
+  display: grid;
+  gap: 14px;
+}
+
+.tool-pane[hidden] {
+  display: none;
+}
+
+.tool-status {
+  min-height: 20px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tool-status-ok { color: var(--accent); }
+.tool-status-bad { color: var(--warn); }
+
+.tool-regex-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.tool-regex-row {
+  display: grid;
+  grid-template-columns: 86px 44px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.tool-regex-row.match {
+  border-left-color: var(--accent);
+}
+
+.tool-regex-row.no-match {
+  border-left-color: var(--warn);
+}
+
+.tool-regex-row span {
+  color: var(--muted);
+  font-weight: 800;
+  font-size: 11px;
+}
+
+.tool-regex-row.match span {
+  color: var(--accent);
+}
+
+.tool-regex-row.no-match span {
+  color: var(--warn);
+}
+
+.tool-regex-row code {
+  color: var(--muted);
+}
+
+.tool-regex-row pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.tool-hidden-copy {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tool-link-list {
+  display: grid;
+  gap: 10px;
+}
+
+.tool-link-card {
+  display: grid;
+  grid-template-columns: minmax(130px, 190px) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 12px;
+}
+
+.tool-link-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tool-link-meta b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-link-meta span,
+.tool-link-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tool-link-card code {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
+}
+
 .groups-browser {
   display: grid;
   grid-template-columns: 250px minmax(0, 1fr);
@@ -1442,7 +1571,9 @@ pre {
   .top { align-items: flex-start; }
   .top-actions { justify-content: flex-start; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .grid, .split, .map, .mounts, .tools, .yaml-browser, .groups-browser, .group-pane-head, .command-grid, .dns-policy-grid, .dns-policy-head { grid-template-columns: 1fr; }
+  .grid, .split, .map, .mounts, .tools, .yaml-browser, .tools-browser, .groups-browser, .group-pane-head, .command-grid, .dns-policy-grid, .dns-policy-head { grid-template-columns: 1fr; }
+  .tool-regex-row { grid-template-columns: 1fr; }
+  .tool-link-card { grid-template-columns: 1fr; }
   .final-rule-row { grid-template-columns: 1fr; }
   .group-pane-head > .field { grid-column: 1; grid-row: auto; padding-right: 0; }
   .group-delete { grid-column: 1; grid-row: auto; justify-self: stretch; }

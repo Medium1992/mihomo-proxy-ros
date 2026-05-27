@@ -1640,22 +1640,77 @@ EOF
 }
 
 tools_page() {
-  section_start "Черновик инструментов" "Страница оставлена как расширяемая зона для конверторов и быстрых генераторов."
+  section_start "Инструменты" "Конверторы и быстрые проверки для конфигов, подписок и строк прокси."
   cat <<'EOF'
-<div class="tools">
-  <article>
-    <h3>Base64 rule-set</h3>
-    <textarea id="plainRules" placeholder="DOMAIN,example.com&#10;DOMAIN-SUFFIX,example.org"></textarea>
-    <input id="rulesName" placeholder="name">
-    <button type="button" onclick="document.getElementById('b64Rules').value=btoa(unescape(encodeURIComponent(document.getElementById('plainRules').value)))+'#'+(document.getElementById('rulesName').value||'custom')">Собрать RULE_SET*_BASE64</button>
-    <textarea id="b64Rules" readonly></textarea>
-  </article>
-  <article>
-    <h3>RouterOS value escape</h3>
-    <textarea id="rawValue" placeholder="Любое значение env"></textarea>
-    <button type="button" onclick="document.getElementById('escapedValue').value='&quot;'+mtEscape(document.getElementById('rawValue').value)+'&quot;'">Экранировать</button>
-    <textarea id="escapedValue" readonly></textarea>
-  </article>
+<div class="tools-browser">
+  <aside class="group-list tools-list" aria-label="Инструменты">
+    <button type="button" class="active" data-tool-tab="b64enc"><b>Base64 encode</b><small>текст → base64</small></button>
+    <button type="button" data-tool-tab="b64dec"><b>Base64 decode</b><small>base64 → текст</small></button>
+    <button type="button" data-tool-tab="regex"><b>Regex test</b><small>проверка строк</small></button>
+    <button type="button" data-tool-tab="xray"><b>Xray outbounds</b><small>JSON → proxy URI</small></button>
+  </aside>
+  <div class="tool-panes">
+    <article class="tool-pane active" data-tool-pane="b64enc">
+      <div class="group-pane-head">
+        <label class="field"><span><b>Исходный текст</b><em>UTF-8</em></span><textarea id="toolB64Plain" rows="12" spellcheck="false" placeholder="Любой текст"></textarea></label>
+      </div>
+      <div class="bc-actions">
+        <button type="button" onclick="toolCopy('toolB64Encoded', this)">Скопировать</button>
+      </div>
+      <label class="field field-wide"><span><b>Base64</b><em>результат</em></span><textarea id="toolB64Encoded" rows="8" readonly spellcheck="false"></textarea></label>
+    </article>
+    <article class="tool-pane" data-tool-pane="b64dec" hidden>
+      <div class="group-pane-head">
+        <label class="field"><span><b>Base64</b><em>standard / URL-safe</em></span><textarea id="toolB64Input" rows="10" spellcheck="false" placeholder="SGVsbG8="></textarea></label>
+      </div>
+      <div class="bc-actions">
+        <button type="button" onclick="toolCopy('toolB64Decoded', this)">Скопировать</button>
+      </div>
+      <label class="field field-wide"><span><b>Текст</b><em>UTF-8</em></span><textarea id="toolB64Decoded" rows="10" readonly spellcheck="false"></textarea></label>
+      <div class="tool-status" id="toolB64DecodeStatus"></div>
+    </article>
+    <article class="tool-pane" data-tool-pane="regex" hidden>
+      <label class="field field-wide"><span><b>Regex</b><em>/pattern/flags или просто pattern</em></span><input id="toolRegexSource" spellcheck="false" placeholder="/^(https?:\/\/)?([a-z0-9-]+\.)*[a-z0-9-]+\.video(\/.*)?$/i"></label>
+      <label class="field field-wide"><span><b>Строки для проверки</b><em>по одной в строке</em></span><textarea id="toolRegexText" rows="12" spellcheck="false" placeholder="Hong Kong 01&#10;Japan test&#10;RU direct"></textarea></label>
+      <div class="tool-regex-rows" id="toolRegexRows"></div>
+      <div class="tool-status" id="toolRegexStatus"></div>
+    </article>
+    <article class="tool-pane" data-tool-pane="xray" hidden>
+      <details class="bc-tier-info">
+        <summary>Пример вставки</summary>
+        <div class="bc-tier-info-body">
+          <p>Вставьте JSON целиком или объект с секцией <code>outbounds</code>. Конвертер берёт только <code>outbounds</code> и пробует собрать share-ссылки для поддерживаемых протоколов.</p>
+          <pre><code>{
+  "outbounds": [
+    {
+      "tag": "vless-reality",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [{
+          "address": "example.com",
+          "port": 443,
+          "users": [{ "id": "UUID", "encryption": "none", "flow": "xtls-rprx-vision" }]
+        }]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": { "serverName": "www.microsoft.com", "fingerprint": "chrome", "publicKey": "PUBLIC_KEY", "shortId": "SHORT_ID" }
+      }
+    }
+  ]
+}</code></pre>
+        </div>
+      </details>
+      <label class="field field-wide"><span><b>Xray JSON</b><em>outbounds</em></span><textarea id="toolXrayJson" rows="18" spellcheck="false"></textarea></label>
+      <div class="bc-actions">
+        <button type="button" onclick="toolCopy('toolXrayLinks', this)">Скопировать все</button>
+      </div>
+      <textarea id="toolXrayLinks" class="tool-hidden-copy" readonly spellcheck="false"></textarea>
+      <div class="tool-link-list" id="toolXrayCards"></div>
+      <label class="field field-wide"><span><b>Диагностика</b><em>пропущенные outbounds и замечания</em></span><textarea id="toolXrayDiag" rows="8" readonly spellcheck="false"></textarea></label>
+    </article>
+  </div>
 </div>
 EOF
   section_end

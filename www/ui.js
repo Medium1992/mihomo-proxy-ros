@@ -34,7 +34,7 @@ function pageKey(name) { return "mihomo-page:" + name; }
 // `invalid` тоже включён: маркеры невалидных значений нужно гонять на сервер,
 // иначе после browser-clear localStorage бейджи валидации остаются пустыми
 // пока пользователь не зайдёт на проблемную страницу и не запустит валидатор.
-const DRAFT_KEYS_RE = /^mihomo-(env|original|page|tab|theme|command-env-list|invalid|bc-form|bc1-form|bdc-form):/;
+const DRAFT_KEYS_RE = /^mihomo-(env|original|page|tab|theme|command-env-list|invalid|bc-form|bc1-form|bdc-form|tool):/;
 let draftSyncTimer = null;
 let draftLoadInFlight = false;
 function draftCollect() {
@@ -258,6 +258,536 @@ function copyCommands() {
   copyText(el ? el.value : "", el);
 }
 
+function initToolsPage() {
+  document.querySelectorAll(".tools-list [data-tool-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => switchToolPane(btn.dataset.toolTab));
+  });
+  toolRestoreInputs();
+  [
+    ["toolB64Plain", toolBase64Encode],
+    ["toolB64Input", toolBase64Decode],
+    ["toolRegexSource", toolRegexTest],
+    ["toolRegexText", toolRegexTest],
+    ["toolXrayJson", toolXrayConvert]
+  ].forEach(([id, fn]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", () => {
+      toolSaveInput(el);
+      fn();
+    });
+  });
+  toolBase64Encode();
+  toolBase64Decode();
+  toolRegexTest();
+  toolXrayConvert();
+}
+
+function switchToolPane(id) {
+  document.querySelectorAll(".tools-list [data-tool-tab]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.toolTab === id);
+  });
+  document.querySelectorAll(".tool-pane").forEach((pane) => {
+    const active = pane.dataset.toolPane === id;
+    pane.classList.toggle("active", active);
+    pane.hidden = !active;
+  });
+}
+
+function toolSetStatus(id, text, ok) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("tool-status-ok", !!ok);
+  el.classList.toggle("tool-status-bad", !!text && !ok);
+}
+
+function toolStorageKey(id) {
+  return `mihomo-tool:${id}`;
+}
+
+function toolSaveInput(el) {
+  if (!el || !el.id || el.readOnly) return;
+  try {
+    localStorage.setItem(toolStorageKey(el.id), el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value);
+    draftSaveDebounced();
+  } catch (e) {}
+}
+
+function toolRestoreInputs() {
+  document.querySelectorAll(".tool-pane input[id], .tool-pane textarea[id], .tool-pane select[id]").forEach((el) => {
+    if (el.readOnly) return;
+    try {
+      const key = toolStorageKey(el.id);
+      if (!localStorage.getItem(key)) return;
+      if (el.type === "checkbox") el.checked = localStorage.getItem(key) === "1";
+      else el.value = localStorage.getItem(key);
+    } catch (e) {}
+  });
+}
+
+function toolUtf8ToBase64(text) {
+  let bin = "";
+  for (const b of new TextEncoder().encode(text)) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+function toolBase64ToUtf8(text) {
+  let s = String(text || "").trim().replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+}
+
+function toolBase64Encode() {
+  const src = document.getElementById("toolB64Plain");
+  const out = document.getElementById("toolB64Encoded");
+  try {
+    if (out) out.value = toolUtf8ToBase64(src ? src.value : "");
+  } catch (e) {
+    if (out) out.value = "";
+  }
+}
+
+function toolBase64Decode() {
+  const src = document.getElementById("toolB64Input");
+  const out = document.getElementById("toolB64Decoded");
+  try {
+    if (out) out.value = toolBase64ToUtf8(src ? src.value : "");
+    toolSetStatus("toolB64DecodeStatus", "Готово", true);
+  } catch (e) {
+    if (out) out.value = "";
+    toolSetStatus("toolB64DecodeStatus", "Ошибка Base64: " + e.message, false);
+  }
+}
+
+function toolParseRegex(src) {
+  const raw = String(src || "").trim();
+  if (!raw) return { pattern: "", flags: "" };
+  if (raw[0] !== "/") return { pattern: raw, flags: "" };
+  let escaped = false;
+  let inClass = false;
+  for (let i = 1; i < raw.length; i++) {
+    const ch = raw[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === "[" && !inClass) {
+      inClass = true;
+      continue;
+    }
+    if (ch === "]" && inClass) {
+      inClass = false;
+      continue;
+    }
+    if (ch === "/" && !inClass) {
+      return { pattern: raw.slice(1, i), flags: raw.slice(i + 1) };
+    }
+  }
+  return { pattern: raw, flags: "" };
+}
+
+function toolCleanRegexFlags(flagsRaw) {
+  const allowed = new Set("dgimsuvy".split(""));
+  const out = [];
+  for (const ch of String(flagsRaw || "")) {
+    if (allowed.has(ch) && !out.includes(ch)) out.push(ch);
+  }
+  return out.join("");
+}
+
+function toolRegexTest() {
+  const source = document.getElementById("toolRegexSource")?.value || "";
+  const text = document.getElementById("toolRegexText")?.value || "";
+  const rows = document.getElementById("toolRegexRows");
+  try {
+    const parsed = toolParseRegex(source);
+    const flags = toolCleanRegexFlags(parsed.flags).replace(/g/g, "");
+    if (!parsed.pattern) {
+      if (rows) rows.innerHTML = "";
+      toolSetStatus("toolRegexStatus", "Введите regex", true);
+      return;
+    }
+    const re = new RegExp(parsed.pattern, flags);
+    const lines = text.split(/\r?\n/);
+    let matches = 0;
+    const resultRows = [];
+    lines.forEach((line, idx) => {
+      const m = re.test(line);
+      if (m) matches++;
+      resultRows.push(`<div class="tool-regex-row ${m ? "match" : "no-match"}"><span>${m ? "СОВПАЛО" : "НЕ СОВПАЛО"}</span><code>${String(idx + 1).padStart(3, " ")}</code><pre>${escapeAttr(line)}</pre></div>`);
+    });
+    if (rows) rows.innerHTML = resultRows.join("");
+    toolSetStatus("toolRegexStatus", `Совпадений: ${matches} / ${lines.length}`, true);
+  } catch (e) {
+    if (rows) rows.innerHTML = "";
+    toolSetStatus("toolRegexStatus", "Ошибка regex: " + e.message, false);
+  }
+}
+
+function toolCopy(id, btn) {
+  const el = document.getElementById(id);
+  copyText(el ? el.value : "", el);
+  if (btn) {
+    const old = btn.textContent;
+    btn.textContent = "Скопировано";
+    setTimeout(() => { btn.textContent = old; }, 900);
+  }
+}
+
+function toolParam(params, key, value) {
+  if (value === undefined || value === null || value === "") return;
+  params.set(key, String(value));
+}
+
+function toolFirst(obj, keys) {
+  for (const k of keys) {
+    if (obj && obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
+  }
+  return "";
+}
+
+function toolHostPort(host, port) {
+  const h = String(host || "");
+  return h.includes(":") && !h.startsWith("[") ? `[${h}]:${port || ""}` : `${h}:${port || ""}`;
+}
+
+function toolTag(ob, fallback) {
+  return ob.tag || ob.ps || ob.remark || ob.name || fallback || "proxy";
+}
+
+function toolUriScheme(uri) {
+  const m = String(uri || "").match(/^([a-z0-9+.-]+):\/\//i);
+  return m ? m[1].toUpperCase() : "URI";
+}
+
+function toolParseJsonString(value) {
+  if (typeof value !== "string") return value;
+  const s = value.trim();
+  if (!s || !"[{".includes(s[0])) return value;
+  try { return JSON.parse(s); } catch (e) { return value; }
+}
+
+function toolNormalizeJson(value, depth = 0) {
+  if (depth > 8) return value;
+  value = toolParseJsonString(value);
+  if (Array.isArray(value)) return value.map((x) => toolNormalizeJson(x, depth + 1));
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  Object.keys(value).forEach((k) => { out[k] = toolNormalizeJson(value[k], depth + 1); });
+  return out;
+}
+
+function toolLooksLikeOutbound(ob) {
+  if (!ob || typeof ob !== "object" || Array.isArray(ob)) return false;
+  if (ob.protocol || ob.settings || ob.streamSettings) return true;
+  if (ob.vnext || ob.servers || ob.address || ob.server || ob.id || ob.password || ob.method) return true;
+  return false;
+}
+
+function toolFindOutbounds(root) {
+  const found = [];
+  const seen = new Set();
+  function add(ob, path) {
+    const norm = toolNormalizeOutbound(ob);
+    if (!toolLooksLikeOutbound(norm)) return;
+    if (seen.has(norm)) return;
+    seen.add(norm);
+    found.push({ ob: norm, path });
+  }
+  function walk(node, path, insideOutbounds) {
+    node = toolNormalizeJson(node);
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach((item, idx) => {
+        if (insideOutbounds && toolLooksLikeOutbound(toolNormalizeJson(item))) add(item, `${path}[${idx}]`);
+        walk(item, `${path}[${idx}]`, false);
+      });
+      return;
+    }
+    if (insideOutbounds && toolLooksLikeOutbound(node)) add(node, path);
+    Object.keys(node).forEach((key) => {
+      const val = node[key];
+      if (key === "outbounds") walk(val, `${path}.outbounds`, true);
+      else if (key === "outbound") {
+        if (toolLooksLikeOutbound(toolNormalizeJson(val))) add(val, `${path}.outbound`);
+        walk(val, `${path}.outbound`, false);
+      } else {
+        walk(val, `${path}.${key}`, false);
+      }
+    });
+  }
+  if (Array.isArray(root)) walk(root, "$", true);
+  else walk(root, "$", false);
+  return found;
+}
+
+function toolInferProtocol(ob) {
+  const proto = String(ob.protocol || ob.type || "").toLowerCase();
+  if (proto) return proto;
+  const label = String(ob.tag || ob.ps || ob.remark || ob.name || "").toLowerCase();
+  if (label.includes("vless")) return "vless";
+  if (label.includes("vmess")) return "vmess";
+  if (label.includes("trojan")) return "trojan";
+  if (label.includes("hysteria2") || label.includes("hy2")) return "hysteria2";
+  if (label.includes("shadowsocks") || /\bss\b/.test(label)) return "shadowsocks";
+  const s = ob.settings || ob;
+  const streamSec = String((ob.streamSettings || {}).security || "").toLowerCase();
+  if (s.vnext) {
+    const u = s.vnext?.[0]?.users?.[0] || {};
+    if (u.encryption === "none" || u.flow || streamSec === "reality") return "vless";
+    return "vmess";
+  }
+  if (s.servers) {
+    const srv = s.servers?.[0] || {};
+    if (srv.method) return "shadowsocks";
+    if (srv.password) return "trojan";
+  }
+  if (s.id && (s.encryption === "none" || s.flow || streamSec === "reality")) return "vless";
+  if (s.id) return "vmess";
+  if (s.method && s.password) return "shadowsocks";
+  if (s.password || s.auth) return "trojan";
+  return "";
+}
+
+function toolFinalMaskParams(params, finalmask) {
+  if (!finalmask || typeof finalmask !== "object" || Array.isArray(finalmask)) return;
+  if (Object.keys(finalmask).length) toolParam(params, "fm", JSON.stringify(finalmask));
+}
+
+function toolApplyHy2Salamander(params, finalmask) {
+  if (!finalmask || typeof finalmask !== "object") return;
+  const masks = Array.isArray(finalmask.udp) ? finalmask.udp : [];
+  for (const raw of masks) {
+    const mask = raw || {};
+    if (mask.type !== "salamander") continue;
+    const settings = mask.settings || {};
+    if (settings.password) {
+      toolParam(params, "obfs", "salamander");
+      toolParam(params, "obfs-password", settings.password);
+      break;
+    }
+  }
+}
+
+function toolNormalizeOutbound(ob) {
+  ob = toolNormalizeJson(ob || {});
+  if (!ob || typeof ob !== "object") return {};
+  const out = Object.assign({}, ob);
+  out.settings = toolNormalizeJson(out.settings || {});
+  out.streamSettings = toolNormalizeJson(out.streamSettings || out.stream || {});
+  out.protocol = toolInferProtocol(out);
+  return out;
+}
+
+function toolStreamParams(params, stream) {
+  stream = stream || {};
+  const net = stream.network || "tcp";
+  const sec = stream.security || "";
+  toolParam(params, "type", net);
+  if (sec && sec !== "none") toolParam(params, "security", sec);
+  const tls = stream.tlsSettings || {};
+  const reality = stream.realitySettings || {};
+  const realityInner = reality.settings || {};
+  const ws = stream.wsSettings || {};
+  const http = stream.httpSettings || {};
+  const httpup = stream.httpupgradeSettings || {};
+  const xhttp = stream.xhttpSettings || stream.splithttpSettings || {};
+  const grpc = stream.grpcSettings || {};
+  const kcp = stream.kcpSettings || {};
+  const tcp = stream.tcpSettings || {};
+  toolParam(params, "sni", tls.serverName || reality.serverName || (Array.isArray(reality.serverNames) ? reality.serverNames[0] : reality.serverNames));
+  toolParam(params, "fp", tls.fingerprint || reality.fingerprint || realityInner.fingerprint);
+  toolParam(params, "alpn", Array.isArray(tls.alpn) ? tls.alpn.join(",") : tls.alpn);
+  toolParam(params, "pbk", reality.publicKey || reality.public_key || reality.password || realityInner.publicKey || realityInner.public_key || realityInner.password);
+  toolParam(params, "sid", reality.shortId || reality.short_id || (Array.isArray(reality.shortIds) ? reality.shortIds[0] : reality.shortIds));
+  toolParam(params, "spx", reality.spiderX);
+  toolParam(params, "path", ws.path || http.path || httpup.path || xhttp.path);
+  toolParam(params, "host", (ws.headers && (ws.headers.Host || ws.headers.host)) || (httpup.headers && (httpup.headers.Host || httpup.headers.host)) || (xhttp.headers && (xhttp.headers.Host || xhttp.headers.host)) || xhttp.host);
+  toolParam(params, "mode", xhttp.mode);
+  toolParam(params, "x_padding_bytes", xhttp.xPaddingBytes || xhttp.x_padding_bytes);
+  if (xhttp && Object.keys(xhttp).some((k) => !["path", "host", "mode", "headers", "xPaddingBytes", "x_padding_bytes"].includes(k))) {
+    toolParam(params, "extra", JSON.stringify(xhttp));
+  }
+  toolParam(params, "serviceName", grpc.serviceName);
+  toolParam(params, "seed", kcp.seed);
+  if (kcp.header && kcp.header.type) toolParam(params, "headerType", kcp.header.type);
+  if (tcp.header && tcp.header.request && tcp.header.request.headers && tcp.header.request.headers.Host) {
+    const hosts = tcp.header.request.headers.Host;
+    toolParam(params, "host", Array.isArray(hosts) ? hosts.join(",") : hosts);
+  }
+  toolFinalMaskParams(params, stream.finalmask);
+}
+
+function toolVnextEndpoint(settings) {
+  const v = settings?.vnext?.[0] || settings || {};
+  const u = v?.users?.[0] || settings?.users?.[0] || settings || {};
+  return { v, u };
+}
+
+function toolBuildVless(ob, notes) {
+  const { v, u } = toolVnextEndpoint(ob.settings);
+  const id = u.id || ob.settings?.id;
+  const host = v.address || ob.settings?.address || ob.address || ob.server;
+  const port = v.port || ob.settings?.port || ob.port || 443;
+  if (!host || !id) return null;
+  const params = new URLSearchParams();
+  toolParam(params, "encryption", u.encryption || ob.settings?.encryption || "none");
+  toolParam(params, "flow", u.flow || ob.settings?.flow);
+  toolStreamParams(params, ob.streamSettings);
+  if (!params.has("security")) params.set("security", "none");
+  return `vless://${encodeURIComponent(id)}@${toolHostPort(host, port)}?${params.toString()}#${encodeURIComponent(toolTag(ob, host))}`;
+}
+
+function toolBuildTrojan(ob) {
+  const s = ob.settings?.servers?.[0] || ob.settings || {};
+  const host = s.address || s.server || ob.address || ob.server;
+  const port = s.port || ob.port || 443;
+  const password = s.password || ob.password;
+  if (!host || !password) return null;
+  const params = new URLSearchParams();
+  toolStreamParams(params, ob.streamSettings);
+  if (!params.has("security")) params.set("security", "none");
+  return `trojan://${encodeURIComponent(password)}@${toolHostPort(host, port)}?${params.toString()}#${encodeURIComponent(toolTag(ob, host))}`;
+}
+
+function toolBuildVmess(ob) {
+  const { v, u } = toolVnextEndpoint(ob.settings);
+  const id = u.id || ob.settings?.id;
+  const host = v.address || ob.settings?.address || ob.address || ob.server;
+  const port = v.port || ob.settings?.port || ob.port || 443;
+  if (!host || !id) return null;
+  const stream = ob.streamSettings || {};
+  const ws = stream.wsSettings || {};
+  const tls = stream.tlsSettings || {};
+  const payload = {
+    v: "2",
+    ps: toolTag(ob, host),
+    add: host,
+    port: String(port || ""),
+    id,
+    aid: String(u.alterId || 0),
+    scy: u.security || "auto",
+    net: stream.network || "tcp",
+    type: "none",
+    host: (ws.headers && (ws.headers.Host || ws.headers.host)) || tls.serverName || "",
+    path: ws.path || "",
+    tls: stream.security === "tls" ? "tls" : "",
+    sni: tls.serverName || "",
+    alpn: Array.isArray(tls.alpn) ? tls.alpn.join(",") : (tls.alpn || ""),
+    fp: tls.fingerprint || ""
+  };
+  return "vmess://" + toolUtf8ToBase64(JSON.stringify(payload));
+}
+
+function toolBuildShadowsocks(ob) {
+  const s = ob.settings?.servers?.[0] || ob.settings || {};
+  const host = s.address || s.server || ob.address || ob.server;
+  const port = s.port || ob.port || 8388;
+  const method = s.method || ob.method;
+  const password = s.password || ob.password;
+  if (!method || !password || !host) return null;
+  const user = toolUtf8ToBase64(`${method}:${password}`).replace(/=+$/g, "");
+  const params = new URLSearchParams();
+  toolStreamParams(params, ob.streamSettings);
+  return `ss://${user}@${toolHostPort(host, port)}${params.toString() ? "?" + params.toString() : ""}#${encodeURIComponent(toolTag(ob, host))}`;
+}
+
+function toolBuildHy2(ob) {
+  const s = ob.settings?.servers?.[0] || ob.settings?.server || ob.settings || {};
+  const host = s.address || s.server;
+  const port = s.port;
+  const password = s.password || s.auth || ob.settings?.password || ob.settings?.auth;
+  if (!host || !password) return null;
+  const params = new URLSearchParams();
+  const tls = ob.streamSettings?.tlsSettings || {};
+  toolParam(params, "sni", tls.serverName || s.serverName);
+  toolParam(params, "alpn", Array.isArray(tls.alpn) ? tls.alpn.join(",") : tls.alpn);
+  toolParam(params, "insecure", tls.allowInsecure ? "1" : "");
+  toolParam(params, "obfs", ob.settings?.obfs || s.obfs);
+  toolApplyHy2Salamander(params, ob.streamSettings?.finalmask);
+  toolFinalMaskParams(params, ob.streamSettings?.finalmask);
+  const scheme = String(ob.settings?.version || ob.version || "2") === "1" ? "hysteria" : "hysteria2";
+  return `${scheme}://${encodeURIComponent(password)}@${toolHostPort(host, port)}?${params.toString()}#${encodeURIComponent(toolTag(ob, host))}`;
+}
+
+function toolOutboundToUri(ob, idx, notes) {
+  ob = toolNormalizeOutbound(ob);
+  const proto = String(ob.protocol || "").toLowerCase();
+  try {
+    if (proto === "vless") return toolBuildVless(ob, notes);
+    if (proto === "vmess") return toolBuildVmess(ob, notes);
+    if (proto === "trojan") return toolBuildTrojan(ob, notes);
+    if (proto === "shadowsocks") return toolBuildShadowsocks(ob, notes);
+    if (proto === "hysteria" || proto === "hysteria2" || proto === "hy2") return toolBuildHy2(ob, notes);
+    notes.push(`#${idx + 1} ${toolTag(ob, "outbound")} skipped: protocol ${proto || "(empty)"}`);
+    return null;
+  } catch (e) {
+    notes.push(`#${idx + 1} ${toolTag(ob, "outbound")} error: ${e.message}`);
+    return null;
+  }
+}
+
+function toolRenderXrayCards(links) {
+  const wrap = document.getElementById("toolXrayCards");
+  if (!wrap) return;
+  if (!links.length) {
+    wrap.innerHTML = '<div class="tool-link-empty">Нет сконвертированных ссылок</div>';
+    return;
+  }
+  wrap.innerHTML = links.map((item, idx) => `
+    <div class="tool-link-card">
+      <div class="tool-link-meta"><b>${escapeAttr(item.name)}</b><span>${escapeAttr(item.scheme)} · #${idx + 1}</span></div>
+      <code>${escapeAttr(item.uri)}</code>
+      <button type="button" onclick="toolCopy('toolXrayLink${idx}', this)">Скопировать</button>
+      <textarea id="toolXrayLink${idx}" class="tool-hidden-copy" readonly>${escapeAttr(item.uri)}</textarea>
+    </div>
+  `).join("");
+}
+
+function toolXrayConvert() {
+  const input = document.getElementById("toolXrayJson")?.value || "";
+  const out = document.getElementById("toolXrayLinks");
+  const diag = document.getElementById("toolXrayDiag");
+  const notes = [];
+  if (!input.trim()) {
+    if (out) out.value = "";
+    if (diag) diag.value = "";
+    toolRenderXrayCards([]);
+    return;
+  }
+  try {
+    const json = toolNormalizeJson(JSON.parse(input));
+    const outbounds = toolFindOutbounds(json);
+    if (!outbounds.length) throw new Error("не найдены outbounds или похожие outbound-объекты");
+    const links = [];
+    outbounds.forEach((item, idx) => {
+      const uri = toolOutboundToUri(item.ob || {}, idx, notes);
+      if (uri) links.push({ uri, name: toolTag(item.ob || {}, `outbound-${idx + 1}`), scheme: toolUriScheme(uri) });
+      else notes.push(`#${idx + 1} path: ${item.path}`);
+    });
+    if (out) out.value = links.map((x) => x.uri).join("\n");
+    toolRenderXrayCards(links);
+    if (diag) diag.value = [
+      `found: ${outbounds.length}`,
+      `converted: ${links.length}`,
+      notes.length ? "" : "diagnostics: ok",
+      ...notes
+    ].filter(Boolean).join("\n");
+  } catch (e) {
+    if (out) out.value = "";
+    toolRenderXrayCards([]);
+    if (diag) diag.value = "Ошибка JSON: " + e.message;
+  }
+}
+
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   if (document.body) document.body.dataset.theme = theme;
@@ -277,7 +807,8 @@ function resetUiDraft() {
     if (key.startsWith("mihomo-env:") ||
         key.startsWith("mihomo-original:") ||
         key.startsWith("mihomo-page:") ||
-        key.startsWith("mihomo-tab:")) {
+        key.startsWith("mihomo-tab:") ||
+        key.startsWith("mihomo-tool:")) {
       localStorage.removeItem(key);
     }
   });
@@ -290,6 +821,10 @@ function resetCurrentPageDraft() {
   const path = location.pathname;
   [...Array(localStorage.length)].map((_, i) => localStorage.key(i)).forEach((key) => {
     if (!key) return;
+    if (document.querySelector(".tools-browser") && key.startsWith("mihomo-tool:")) {
+      localStorage.removeItem(key);
+      return;
+    }
     if (key.startsWith("mihomo-page:") && localStorage.getItem(key) === path) names.add(key.slice("mihomo-page:".length));
   });
   names.forEach((name) => {
@@ -3244,6 +3779,7 @@ function bootstrapUI() {
   initPageTabs();
   initSocksEditor();
   initFieldValidators();
+  initToolsPage();
   initBlockcheck();
   initBlockcheck1();
   initByedpiCheck();
