@@ -123,17 +123,33 @@ DIAG="$JOB_DIR/doh.diag"
 : > "$DIAG"
 export BC_DOH_DIAG="$DIAG"
 
+bc_append_resolved() {
+  local host="$1" path="$2" mode="$3" ip diag_tail
+  [ -z "$host" ] && return 1
+  ip=$(bc_doh_resolve "$host" | head -n1)
+  if [ -z "$ip" ]; then
+    diag_tail=$(tail -c 300 "$DIAG" 2>/dev/null | tr '\n\r\t' '   ')
+    bc_event resolve_fail "host=$host" "diag=$diag_tail"
+    return 1
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$host" "$ip" "$path" "$mode" >> "$RESOLVED"
+  bc_nft_add_target "$ip" 2>>"$LOG"
+  bc_event resolve "host=$host" "ip=$ip" "path=$path" "mode=$mode"
+}
+
 while IFS= read -r raw || [ -n "$raw" ]; do
   raw=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/\r$//')
   [ -z "$raw" ] && continue
   case "$raw" in \#*) continue ;; esac
   mode=""
+  youtube_full=0
   case "$raw" in
     '@full '*|'@full	'*)
       rest=$(printf '%s' "$raw" | sed 's/^@full[[:space:]]*//')
       case "$rest" in https://*) rest="${rest#https://}" ;; http://*) rest="${rest#http://}" ;; esac
       case "$rest" in */*) host="${rest%%/*}"; path="/${rest#*/}" ;; *) host="$rest"; path="/" ;; esac
       mode="throughput"
+      case "$host/$path" in *.googlevideo.com/*/videoplayback*) youtube_full=1; mode="youtube_throughput" ;; esac
       ;;
     *)
       case "$raw" in https://*) raw="${raw#https://}" ;; http://*) raw="${raw#http://}" ;; esac
@@ -142,15 +158,12 @@ while IFS= read -r raw || [ -n "$raw" ]; do
       ;;
   esac
   [ -z "$host" ] && continue
-  ip=$(bc_doh_resolve "$host" | head -n1)
-  if [ -z "$ip" ]; then
-    diag_tail=$(tail -c 300 "$DIAG" 2>/dev/null | tr '\n\r\t' '   ')
-    bc_event resolve_fail "host=$host" "diag=$diag_tail"
-    continue
+  if [ "$youtube_full" = 1 ]; then
+    bc_append_resolved "www.youtube.com" "" "youtube_support" || true
+    bc_append_resolved "redirector.googlevideo.com" "" "youtube_support" || true
+    bc_append_resolved "i.ytimg.com" "" "youtube_support" || true
   fi
-  printf '%s\t%s\t%s\t%s\n' "$host" "$ip" "$path" "$mode" >> "$RESOLVED"
-  bc_nft_add_target "$ip" 2>>"$LOG"
-  bc_event resolve "host=$host" "ip=$ip" "path=$path" "mode=$mode"
+  bc_append_resolved "$host" "$path" "$mode" || continue
 done < "$DOM_FILE"
 
 if [ ! -s "$RESOLVED" ]; then
@@ -221,11 +234,26 @@ run_strategy() {
   hard_kb=$((BC_HARD_MIN_BYTES / 1024))
   while IFS=$(printf '\t') read -r host ip path mode; do
     [ -z "$host" ] && continue
-    if [ "$mode" = "throughput" ]; then
-      bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
+    if [ "$mode" = "youtube_support" ]; then
+      bc_repeat_probe "$reps" bc_probe_tls "$k" "$host" "$ip" tls1_3 || bc_repeat_probe "$reps" bc_probe_tls "$k" "$host" "$ip" tls1_2
+      ok=$?
       case "$ok" in
-        1) pass=$((pass + 1)); detail="${detail:+$detail,}$host/throughput=ok" ;;
-        0) fail=$((fail + 1)); detail="${detail:+$detail,}$host/throughput=fail" ;;
+        0) pass=$((pass + 1)); detail="${detail:+$detail,}$host/youtube-hs=ok" ;;
+        *) fail=$((fail + 1)); detail="${detail:+$detail,}$host/youtube-hs=fail" ;;
+      esac
+      continue
+    fi
+    if [ "$mode" = "throughput" ] || [ "$mode" = "youtube_throughput" ]; then
+      if [ "$mode" = "youtube_throughput" ]; then
+        BC_THROUGHPUT_BYTES=2097152 bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
+        thr_tag="youtube-480p-2048k/5s"
+      else
+        bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
+        thr_tag="throughput"
+      fi
+      case "$ok" in
+        1) pass=$((pass + 1)); detail="${detail:+$detail,}$host/$thr_tag=ok" ;;
+        0) fail=$((fail + 1)); detail="${detail:+$detail,}$host/$thr_tag=fail" ;;
       esac
       continue
     fi

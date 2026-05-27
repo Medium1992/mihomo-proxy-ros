@@ -5065,12 +5065,13 @@ function bdcCombinedRefresh() {
   const box = document.getElementById("bdcCombinedBox"), list = document.getElementById("bdcCombinedList");
   if (!box || !list) return;
   const lines = [], seen = new Set();
-  BDC.results.forEach((r) => { if (parseInt(r.pass || "0", 10) > 0 && r.args && !seen.has(r.args)) { seen.add(r.args); lines.push(r.args); } });
+  BDC.results.forEach((r) => { if (parseInt(r.pass || "0", 10) > 0 && r.args && !seen.has(r.args)) { seen.add(r.args); lines.push({ args: r.args, name: r.name || "strategy" }); } });
   if (!lines.length) { box.hidden = true; return; }
   box.hidden = false;
-  list.innerHTML = lines.map((args) => {
-    const a = escapeAttr(args);
-    return `<div class="bc-combined-item"><textarea class="bc-combined-args" readonly>${a}</textarea><button type="button" class="primary" data-args="${a}" onclick="bdcApplyStrategy(this)">→ BYEDPI_CMD</button><button type="button" data-args="${a}" onclick="bdcCopyStrategy(this)">⧉</button></div>`;
+  list.innerHTML = lines.map((item) => {
+    const a = escapeAttr(item.args);
+    const n = escapeAttr(item.name);
+    return `<div class="bc-combined-item"><textarea class="bc-combined-args" readonly>${a}</textarea><button type="button" class="primary" data-args="${a}" data-name="${n}" onclick="bdcApplyStrategy(this)">→ BYEDPI_CMD</button><button type="button" data-args="${a}" onclick="bdcCopyStrategy(this)">⧉</button></div>`;
   }).join("");
   document.getElementById("bdcCombinedSummary").textContent = lines.length + " вариантов";
 }
@@ -5199,13 +5200,31 @@ function bdcCopyStrategy(btn) {
   if (navigator.clipboard) navigator.clipboard.writeText(args).then(ok).catch(() => bcCopyFallback(args, ok)); else bcCopyFallback(args, ok);
 }
 function bdcApplyStrategy(btn) {
-  const args = btn.dataset.args || ""; if (!args) return;
-  const wrap = document.getElementById("byedpi"); if (!wrap) return;
+  const args = btn.dataset.args || "";
+  const name = btn.dataset.name || "strategy";
+  if (!args || typeof addRow !== "function") return;
+  const wrap = document.getElementById("byedpi");
+  if (!wrap) return;
+
+  const before = new Set([...wrap.querySelectorAll(".env-row")].map(r => r));
   addRow("byedpi", "BYEDPI_CMD", false);
-  const rows = [...wrap.querySelectorAll(".env-row")];
-  const input = rows[rows.length - 1]?.querySelector('input[name^="BYEDPI_CMD"]');
-  if (input) { input.value = args; input.dispatchEvent(new Event("input", { bubbles: true })); input.dispatchEvent(new Event("change", { bubbles: true })); }
-  location.hash = "#byedpi";
+
+  let target = null;
+  for (const r of wrap.querySelectorAll(".env-row")) {
+    if (!before.has(r)) { target = r; break; }
+  }
+  if (!target) target = wrap.querySelector(".env-row:last-child");
+  if (!target) return;
+
+  const input = target.querySelector('input[name^="BYEDPI_CMD"]');
+  if (!input) return;
+  input.value = args;
+  input.dispatchEvent(new Event("input",  { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+
+  if (typeof showToast === "function") {
+    showToast("Стратегия «" + name + "» добавлена в BYEDPI_CMD. Сохраните, чтобы применить.");
+  }
 }
 function bdcCopyAllCombined(ev) { _bcCopyAllText([...document.querySelectorAll('#bdcCombinedList .bc-combined-args')].map(t => t.value).join('\n'), ev.target); }
 function bdcCopyAllTable(ev) {

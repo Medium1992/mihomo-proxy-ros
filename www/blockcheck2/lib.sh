@@ -473,9 +473,9 @@ bc_probe_throughput() {
   [ -z "$path" ] && path="/"
 
   local out_file="${BC_STATE_DIR:-/dev/shm/mihomo-blockcheck2}/.thr_w${k}.$$"
-  printf 'GET %s HTTP/1.0\r\nHost: %s\r\nRange: bytes=0-%s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n' \
+  printf 'GET %s HTTP/1.1\r\nHost: %s\r\nRange: bytes=0-%s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n' \
     "$path" "$host" "$((bytes - 1))" \
-  | timeout -k 2 "$max" openssl s_client -tls1_3 -quiet -ign_eof \
+  | timeout -k 2 "$max" openssl s_client -tls1_3 -quiet -ign_eof -alpn http/1.1 \
       -bind "0.0.0.0:$port" -connect "$ip:443" -servername "$host" \
       2>/dev/null > "$out_file"
 
@@ -485,8 +485,8 @@ bc_probe_throughput() {
   status=$(head -c 32 "$out_file" 2>/dev/null | awk 'NR==1 {print $2; exit}')
 
   if [ -n "$BC_STATE_DIR" ]; then
-    printf 'size=%s status=%s port=%s host=%s path=%.200s\n' \
-      "$size" "$status" "$port" "$host" "$path" \
+    printf 'size=%s need=%s max_sec=%s status=%s port=%s host=%s path=%.200s\n' \
+      "$size" "$bytes" "$max" "$status" "$port" "$host" "$path" \
       > "${BC_STATE_DIR}/.thr_diag_w${k}" 2>/dev/null
   fi
   rm -f "$out_file"

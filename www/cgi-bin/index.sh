@@ -858,6 +858,14 @@ EOF
 discord.com
 google.com/search?q=test"></textarea>
   </label>
+  <details class="bc-tier-info">
+    <summary>YouTube / googlevideo</summary>
+    <div class="bc-tier-info-body">
+      <p>Контейнер не извлекает <code>youtube.com/watch</code> в прямые потоки. Можно попробовать получить прямую ссылку на видеопоток внешним инструментом <a class="doc-link" href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp/yt-dlp</a>.</p>
+      <p>Пример строки для поля <b>Домены</b>: <code>@full https://...googlevideo.com/videoplayback?...</code></p>
+      <p><code>@full</code> для <code>googlevideo.com/videoplayback</code> включает YouTube-комплект: <code>www.youtube.com</code>, <code>redirector.googlevideo.com</code>, <code>i.ytimg.com</code> и сам видеопоток. Поток должен отдать 2 МБ за 5 секунд — ориентир для 480p. Та же googlevideo-ссылка без <code>@full</code> проверяет только видеопоток.</p>
+    </div>
+  </details>
   <div class="grid bc-grid">
     <label class="field"><span><b>Воркеров</b><em>1-16, параллелизм. Каждый воркер поднимает временные byedpi и hs5t</em></span>
       <input id="bdcWorkers" type="number" min="1" max="16" value="4">
@@ -981,6 +989,14 @@ EOF
 discord.com
 google.com/search?q=test"></textarea>
   </label>
+  <details class="bc-tier-info">
+    <summary>YouTube / googlevideo</summary>
+    <div class="bc-tier-info-body">
+      <p>Контейнер не извлекает <code>youtube.com/watch</code> в прямые потоки. Можно попробовать получить прямую ссылку на видеопоток внешним инструментом <a class="doc-link" href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp/yt-dlp</a>.</p>
+      <p>Пример строки для поля <b>Домены</b>: <code>@full https://...googlevideo.com/videoplayback?...</code></p>
+      <p><code>@full</code> для <code>googlevideo.com/videoplayback</code> включает YouTube-комплект: <code>www.youtube.com</code>, <code>redirector.googlevideo.com</code>, <code>i.ytimg.com</code> и сам видеопоток. Поток должен отдать 2 МБ за 5 секунд — ориентир для 480p. Та же googlevideo-ссылка без <code>@full</code> проверяет только видеопоток.</p>
+    </div>
+  </details>
   <div class="grid bc-grid">
     <label class="field"><span><b>Воркеров</b><em>1-32, параллелизм. Каждый воркер ≈ 5 МБ RAM</em></span>
       <input id="bc1Workers" type="number" min="1" max="32" value="4">
@@ -1113,6 +1129,14 @@ EOF
 discord.com
 google.com/search?q=test"></textarea>
   </label>
+  <details class="bc-tier-info">
+    <summary>YouTube / googlevideo</summary>
+    <div class="bc-tier-info-body">
+      <p>Контейнер не извлекает <code>youtube.com/watch</code> в прямые потоки. Можно попробовать получить прямую ссылку на видеопоток внешним инструментом <a class="doc-link" href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp/yt-dlp</a>.</p>
+      <p>Пример строки для поля <b>Домены</b>: <code>@full https://...googlevideo.com/videoplayback?...</code></p>
+      <p><code>@full</code> для <code>googlevideo.com/videoplayback</code> включает YouTube-комплект: <code>www.youtube.com</code>, <code>redirector.googlevideo.com</code>, <code>i.ytimg.com</code> и сам видеопоток. Поток должен отдать 2 МБ за 5 секунд — ориентир для 480p. Та же googlevideo-ссылка без <code>@full</code> проверяет только видеопоток.</p>
+    </div>
+  </details>
   <div class="grid bc-grid">
     <label class="field"><span><b>Воркеров</b><em>1-32, параллелизм. Каждый воркер ≈ 5 МБ RAM</em></span>
       <input id="bcWorkers" type="number" min="1" max="32" value="4">

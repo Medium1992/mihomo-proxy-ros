@@ -1,8 +1,18 @@
 #!/bin/sh
 
-sleep 1
-
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
+
+SHUTTING_DOWN=0
+graceful_shutdown() {
+  trap - TERM INT
+  [ "$SHUTTING_DOWN" = 1 ] && exit 0
+  SHUTTING_DOWN=1
+  log "Stop signal received, exiting..."
+  exit 0
+}
+trap graceful_shutdown TERM INT
+
+sleep 1
 
 if ! lsmod | grep nf_tables >/dev/null 2>&1; then
   if ! apk info -e iptables iptables-legacy >/dev/null 2>&1; then
@@ -3768,7 +3778,9 @@ run() {
   for item in assets templates favicon.png style.css ui.js; do
     [ -e "/www/$item" ] && ln -sfn "/www/$item" "$WEBROOT/$item"
   done
-  WWW_DIR="$WEBROOT" /bin/sh /www/render_static.sh >/dev/null 2>&1 || true
+  WWW_DIR="$WEBROOT" /bin/sh /www/render_static.sh >/dev/null 2>&1 &
+  RENDER_PID=$!
+  wait "$RENDER_PID" 2>/dev/null || true
   httpd -f -p 80 -h "$WEBROOT" >/dev/null 2>&1 &
 
   wait $MIHOMO_PID

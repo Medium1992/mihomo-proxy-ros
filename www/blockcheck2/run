@@ -150,6 +150,27 @@ DIAG="$JOB_DIR/doh.diag"
 : > "$RESOLVED"
 : > "$DIAG"
 export BC_DOH_DIAG="$DIAG"
+
+bc_append_resolved() {
+  local host="$1" path="$2" mode="$3" ip diag_tail
+  [ -z "$host" ] && return 1
+  ip=$(bc_doh_resolve "$host" | head -n1)
+  if [ -z "$ip" ]; then
+    diag_tail=$(tail -c 300 "$DIAG" 2>/dev/null | tr '\n\r\t' '   ')
+    bc_event resolve_fail "host=$host" "diag=$diag_tail"
+    return 1
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$host" "$ip" "$path" "$mode" >> "$RESOLVED"
+  bc_nft_add_target "$ip" 2>>"$LOG"
+  if [ -n "$mode" ]; then
+    bc_event resolve "host=$host" "ip=$ip" "path=$path" "mode=$mode"
+  elif [ -n "$path" ]; then
+    bc_event resolve "host=$host" "ip=$ip" "path=$path"
+  else
+    bc_event resolve "host=$host" "ip=$ip"
+  fi
+}
+
 # Форматы: `host[/path]`, `scheme://host[/path]`, `@full <URL>` (throughput-режим).
 # Авто-throughput: `*.googlevideo.com/videoplayback*`.
 while IFS= read -r raw || [ -n "$raw" ]; do
@@ -157,6 +178,7 @@ while IFS= read -r raw || [ -n "$raw" ]; do
   [ -z "$raw" ] && continue
   case "$raw" in \#*) continue ;; esac
   mode=""
+  youtube_full=0
   case "$raw" in
     '@full '*|'@full	'*)
       rest=$(printf '%s' "$raw" | sed 's/^@full[[:space:]]*//')
@@ -169,6 +191,7 @@ while IFS= read -r raw || [ -n "$raw" ]; do
         *)   host="$rest";       path="/"           ;;
       esac
       mode="throughput"
+      case "$host/$path" in *.googlevideo.com/*/videoplayback*) youtube_full=1; mode="youtube_throughput" ;; esac
       ;;
     *)
       case "$raw" in
@@ -187,21 +210,12 @@ while IFS= read -r raw || [ -n "$raw" ]; do
       ;;
   esac
   [ -z "$host" ] && continue
-  ip=$(bc_doh_resolve "$host" | head -n1)
-  if [ -z "$ip" ]; then
-    diag_tail=$(tail -c 300 "$DIAG" 2>/dev/null | tr '\n\r\t' '   ')
-    bc_event resolve_fail "host=$host" "diag=$diag_tail"
-    continue
+  if [ "$youtube_full" = 1 ]; then
+    bc_append_resolved "www.youtube.com" "" "youtube_support" || true
+    bc_append_resolved "redirector.googlevideo.com" "" "youtube_support" || true
+    bc_append_resolved "i.ytimg.com" "" "youtube_support" || true
   fi
-  printf '%s\t%s\t%s\t%s\n' "$host" "$ip" "$path" "$mode" >> "$RESOLVED"
-  bc_nft_add_target "$ip" 2>>"$LOG"
-  if [ -n "$mode" ]; then
-    bc_event resolve "host=$host" "ip=$ip" "path=$path" "mode=$mode"
-  elif [ -n "$path" ]; then
-    bc_event resolve "host=$host" "ip=$ip" "path=$path"
-  else
-    bc_event resolve "host=$host" "ip=$ip"
-  fi
+  bc_append_resolved "$host" "$path" "$mode" || continue
 done < "$DOM_FILE"
 if [ ! -s "$RESOLVED" ]; then
   diag_full=$(tail -c 500 "$DIAG" 2>/dev/null | tr '\n\r\t' '   ')
@@ -303,9 +317,23 @@ run_strategy() {
   tp_sec="${BC_THROUGHPUT_MAX_SEC:-5}"
   while IFS=$(printf '\t') read -r host ip path mode; do
     [ -z "$host" ] && continue
-    if [ "$mode" = "throughput" ]; then
-      bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
-      thr_tag="throughput-${tp_kb}k/${tp_sec}s"
+    if [ "$mode" = "youtube_support" ]; then
+      bc_repeat_probe "$reps" bc_probe_tls "$k" "$host" "$ip" tls1_3 || bc_repeat_probe "$reps" bc_probe_tls "$k" "$host" "$ip" tls1_2
+      ok=$?
+      case "$ok" in
+        0) pass=$((pass + 1)); detail="${detail:+$detail,}$host/youtube-hs=ok" ;;
+        *) fail=$((fail + 1)); detail="${detail:+$detail,}$host/youtube-hs=fail" ;;
+      esac
+      continue
+    fi
+    if [ "$mode" = "throughput" ] || [ "$mode" = "youtube_throughput" ]; then
+      if [ "$mode" = "youtube_throughput" ]; then
+        BC_THROUGHPUT_BYTES=2097152 bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
+        thr_tag="youtube-480p-2048k/${tp_sec}s"
+      else
+        bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
+        thr_tag="throughput-${tp_kb}k/${tp_sec}s"
+      fi
       case "$ok" in
         1) pass=$((pass + 1)); detail="${detail:+$detail,}$host/$thr_tag=ok" ;;
         0) fail=$((fail + 1)); detail="${detail:+$detail,}$host/$thr_tag=fail" ;;
