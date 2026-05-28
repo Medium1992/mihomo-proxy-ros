@@ -235,6 +235,25 @@ if [ "$want_http" = 1 ]; then
   done
 fi
 
+# ---- HTTP chained payloads ---------------------------------------------
+if [ "$want_http" = 1 ] && [ "$TIER" -ge 2 ]; then
+  for sf in multisplit multidisorder; do
+    for pos in host+1 method+2; do
+      poss=$(safe "$pos")
+      emit "http_syndata_${sf}_${poss}" http \
+        "--filter-tcp=80 --lua-desync=syndata:blob=fake_default_http --payload=http_req --lua-desync=${sf}:pos=${pos}:badsum"
+      emit "http_oob_${sf}_${poss}" http \
+        "--filter-tcp=80 --lua-desync=oob --payload=http_req --lua-desync=${sf}:pos=${pos}:badsum"
+    done
+  done
+  if [ "$TIER" -ge 3 ]; then
+    emit "http_hostcase_syndata_multisplit" http \
+      "--filter-tcp=80 --payload=http_req --lua-desync=http_hostcase --lua-desync=syndata:blob=fake_default_http --lua-desync=multisplit:pos=host+1:badsum"
+    emit "http_domcase_oob_multidisorder" http \
+      "--filter-tcp=80 --payload=http_req --lua-desync=http_domcase --lua-desync=oob --lua-desync=multidisorder:pos=method+2:tcp_md5"
+  fi
+fi
+
 # ---- TLS splitter strategies (с tls_mod axis) --------------------------
 # tls_mod — параметр функции `fake`, не сплиттера. Поэтому tls_mod-фан-аут
 # имеет смысл только в pre_fake=on. При pref=off — одна стратегия на
@@ -268,6 +287,28 @@ if [ "$want_tls" = 1 ]; then
       done
     done
   done
+fi
+
+# ---- TLS chained payloads ----------------------------------------------
+if [ "$want_tls" = 1 ] && [ "$TIER" -ge 2 ]; then
+  for sf in multisplit multidisorder fakedsplit; do
+    for pos in 1 midsld sld+1; do
+      poss=$(safe "$pos")
+      emit "tls_syndata_${sf}_${poss}" tls \
+        "--filter-tcp=0-65535 --lua-desync=syndata:blob=fake_default_tls --payload=tls_client_hello --lua-desync=${sf}:pos=${pos}:badsum"
+      emit "tls_oob_${sf}_${poss}" tls \
+        "--filter-tcp=0-65535 --lua-desync=oob --payload=tls_client_hello --lua-desync=${sf}:pos=${pos}:tcp_md5"
+    done
+  done
+  if [ "$TIER" -ge 3 ]; then
+    for pos in 1 midsld sld+1; do
+      poss=$(safe "$pos")
+      emit "tls_tcpseg_drop_${poss}" tls \
+        "--filter-tcp=0-65535 --payload=tls_client_hello --lua-desync=tcpseg:pos=0,${pos}:seqovl=1 --lua-desync=drop"
+      emit "tls_prefake_syndata_multisplit_${poss}" tls \
+        "--filter-tcp=0-65535 --lua-desync=fake:blob=0x00000000:badsum:repeats=1 --lua-desync=syndata:blob=fake_default_tls --payload=tls_client_hello --lua-desync=multisplit:pos=${pos}:badsum"
+    done
+  fi
 fi
 
 # ---- TLS seqovl variants (с patterns) ----------------------------------
@@ -364,6 +405,12 @@ if [ "$want_quic" = 1 ]; then
     for mn in 1200 1400; do
       emit "quic_udplen_min${mn}" quic \
         "--filter-udp=0-65535 --payload=quic_initial --lua-desync=udplen:min=${mn}"
+    done
+    for pos in 8 16 24; do
+      emit "quic_ipfrag_${pos}" quic \
+        "--filter-udp=0-65535 --payload=quic_initial --lua-desync=send:ipfrag:ipfrag_pos_udp=${pos} --lua-desync=drop"
+      emit "quic_fake_ipfrag_${pos}" quic \
+        "--filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=${QUIC_FAKE_DEFAULT}:repeats=11 --lua-desync=send:ipfrag:ipfrag_pos_udp=${pos} --lua-desync=drop"
     done
   fi
   # QUIC fake с разными "tls_mod" значениями (для clone-формата)

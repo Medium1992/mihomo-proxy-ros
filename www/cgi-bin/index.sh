@@ -1003,11 +1003,11 @@ google.com/search?q=test"></textarea>
     </label>
     <label class="field"><span><b>Уровень</b><em>сколько стратегий перебрать</em></span>
       <select id="bc1Level">
-        <option value="quick">quick (~15)</option>
-        <option value="basic" selected>basic (~320, рекомендуется)</option>
-        <option value="medium">medium (~920)</option>
-        <option value="extended">extended (~1500)</option>
-        <option value="full">full (~1900)</option>
+        <option value="quick">quick (~13)</option>
+        <option value="basic" selected>basic (~350, рекомендуется)</option>
+        <option value="medium">medium (~980)</option>
+        <option value="extended">extended (~1600)</option>
+        <option value="full">full (~1800)</option>
       </select>
     </label>
   </div>
@@ -1015,10 +1015,10 @@ google.com/search?q=test"></textarea>
     <summary>Что добавляется в каждом уровне</summary>
     <div class="bc-tier-info-body">
       <p><b>quick</b> — sanity-check инфраструктуры. 1 splitter (<code>multisplit</code>), 2 fooling (<code>badsum</code>, <code>md5sig</code>), базовые позиции <code>1</code> / <code>host+1</code>. Без композитных модов, seqovl, cutoff.</p>
-      <p><b>basic</b> (+к quick) — стартовый рабочий набор. Сплиттеры <code>multidisorder</code>, <code>fakedsplit</code>; <b>композитные modes</b> (<code>fake,multisplit</code>, <code>fake,multidisorder</code>); foolings <code>badseq</code>, <code>datanoack</code>, <code>ts</code> + композит <code>ts,badsum</code>; seqovl <code>1, 681</code>; <code>fake-tls-mod=rnd,dupsid</code>; ещё позиции TLS.</p>
-      <p><b>medium</b> (+к basic) — расширение для типичных кейсов. Сплиттеры <code>fakeddisorder</code>, <code>hostfakesplit</code>; композит <code>fake,fakedsplit</code>; <b>cutoff</b> <code>n3/n4</code> (лимит обрабатываемых пакетов); <b>badseq-increment</b> <code>0/2</code>; seqovl <code>652, 726</code>; составной fooling <code>badsum,badseq</code>; длинные позиции (<code>sld+1</code>, <code>1,sld+1,endsld-2</code>).</p>
-      <p><b>extended</b> (+к medium) — глубокий поиск. Сплиттер <code>ipfrag2</code>; композит <code>syndata,multisplit</code>; fooling <code>hopbyhop</code>; seqovl <code>654, 1200</code>; супер-цепочка позиций TLS; HTTP позиция <code>endhost-1</code>.</p>
-      <p><b>full</b> (+к extended) — последний километр. seqovl <code>1500</code>; cutoff <code>n5</code>; badseq-inc <code>1000</code>; HTTP позиции <code>endhost-1/+1</code>.</p>
+      <p><b>basic</b> (+к quick) — стартовый рабочий набор. Сплиттеры <code>multidisorder</code>, <code>fakedsplit</code>; <b>композитные modes</b> (<code>fake,multisplit</code>, <code>fake,multidisorder</code>); <b>цепочки</b> <code>dup → multisplit</code> с <code>md5sig/badsum/badseq</code>; QUIC <code>ipfrag2</code> и <code>fake,ipfrag2</code>; seqovl <code>1, 681</code>; <code>fake-tls-mod=rnd,dupsid</code>; ещё позиции TLS.</p>
+      <p><b>medium</b> (+к basic) — расширение для типичных кейсов. Сплиттеры <code>fakeddisorder</code>, <code>hostfakesplit</code>; композит <code>fake,fakedsplit</code>; <b>TTL/autottl fake-цепочки</b>; <b>cutoff</b> <code>n3/n4</code>; <b>badseq-increment</b> <code>0/2</code>; seqovl <code>652, 726</code>; составной fooling <code>badsum,badseq</code>; длинные позиции (<code>sld+1</code>, <code>1,sld+1,endsld-2</code>).</p>
+      <p><b>extended</b> (+к medium) — глубокий поиск. Сплиттер <code>ipfrag2</code>; композит <code>syndata,multisplit</code>; fooling <code>hopbyhop</code>; seqovl <code>654, 1200</code>; супер-цепочка позиций TLS; HTTP позиция <code>endhost-1</code>; больше составных split/fake вариантов.</p>
+      <p><b>full</b> (+к extended) — последний километр. seqovl <code>1500</code>; cutoff <code>n5</code>; badseq-inc <code>1000</code>; HTTP позиции <code>endhost-1/+1</code>; максимум цепочек без ухода в заведомо мусорные флаги.</p>
     </div>
   </details>
   <div class="socks-toggles bc-tests" aria-label="Типы тестов">
@@ -1144,10 +1144,10 @@ google.com/search?q=test"></textarea>
     <label class="field"><span><b>Уровень</b><em>сколько стратегий перебрать</em></span>
       <select id="bcLevel">
         <option value="quick">quick (~20)</option>
-        <option value="basic" selected>basic (~400, рекомендуется)</option>
-        <option value="medium">medium (~1300)</option>
-        <option value="extended">extended (~3500)</option>
-        <option value="full">full (~8000)</option>
+        <option value="basic" selected>basic (~410, рекомендуется)</option>
+        <option value="medium">medium (~1390)</option>
+        <option value="extended">extended (~2900)</option>
+        <option value="full">full (~6200)</option>
       </select>
     </label>
   </div>
@@ -1155,9 +1155,9 @@ google.com/search?q=test"></textarea>
     <summary>Что добавляется в каждом уровне</summary>
     <div class="bc-tier-info-body">
       <p><b>quick</b> — sanity-check инфраструктуры. 2 сплиттера (<code>multidisorder</code>, <code>multisplit</code>), 2 fooling (<code>badsum</code>, <code>tcp_ts=-1000</code>), <code>tls_mod=rnd,dupsid</code>, без pre-fake.</p>
-      <p><b>basic</b> (+к quick) — типичный рабочий набор. Сплиттеры <code>fakedsplit</code>, <code>fakeddisorder</code>; <b>pre-fake on</b> (fake-цепочка перед split); foolings <code>tcp_ack=-66000:tcp_ts_up</code>, <code>tcp_md5</code>; tls_mod <code>rnd</code>; seqovl <code>1, -1, 681</code>; позиции <code>1,midsld,1220</code>, <code>host+1</code>, <code>sld+1</code>.</p>
-      <p><b>medium</b> (+к basic) — расширение. Сплиттер <code>hostfakesplit</code>; foolings <code>tcp_seq=-3000</code>, <code>tcp_nop_del</code>; tls_mod <code>dupsid</code>; seqovl <code>652, 726</code>; позиции <code>1,sniext+1</code>, <code>sniext+1,midsld</code>, <code>1,sld+1,endsld-2</code>; HTTP <code>method+4</code>, <code>host+5</code>.</p>
-      <p><b>extended</b> (+к medium) — глубокий поиск. Сплиттер <code>tcpseg</code>; foolings <code>ip_id=rnd</code>, <code>ip_id=zero</code>, композит <code>badsum:tcp_md5</code>; tls_mod <code>rndsni</code>; seqovl <code>-2, 1200</code>; супер-цепочка позиций TLS; HTTP <code>endhost-1</code>.</p>
+      <p><b>basic</b> (+к quick) — типичный рабочий набор. Сплиттеры <code>fakedsplit</code>, <code>fakeddisorder</code>; <b>pre-fake on</b> (fake-цепочка перед split); <b>lua-цепочки</b> <code>syndata/oob → multisplit/multidisorder</code>; foolings <code>tcp_ack=-66000:tcp_ts_up</code>, <code>tcp_md5</code>; tls_mod <code>rnd</code>; seqovl <code>1, -1, 681</code>; позиции <code>1,midsld,1220</code>, <code>host+1</code>, <code>sld+1</code>.</p>
+      <p><b>medium</b> (+к basic) — расширение. Сплиттер <code>hostfakesplit</code>; <b>TLS цепочки</b> <code>tcpseg → drop</code> и <code>fake → syndata → multisplit</code>; QUIC <code>send:ipfrag → drop</code> и <code>fake → ipfrag → drop</code>; foolings <code>tcp_seq=-3000</code>, <code>tcp_nop_del</code>; tls_mod <code>dupsid</code>; seqovl <code>652, 726</code>; позиции <code>1,sniext+1</code>, <code>sniext+1,midsld</code>, <code>1,sld+1,endsld-2</code>.</p>
+      <p><b>extended</b> (+к medium) — глубокий поиск. Сплиттер <code>tcpseg</code>; foolings <code>ip_id=rnd</code>, <code>ip_id=zero</code>, композит <code>badsum:tcp_md5</code>; tls_mod <code>rndsni</code>; seqovl <code>-2, 1200</code>; супер-цепочка позиций TLS; HTTP <code>endhost-1</code>; больше длинных lua-комбинаций.</p>
       <p><b>full</b> (+к extended) — всё, включая редкие. Сплиттер <code>multidisorder_legacy</code>; foolings <code>tcp_seq=-1000</code>, <code>ip_id=seq</code>, композит <code>tcp_ts=-1000:badsum</code>; seqovl <code>1500</code>; ещё позиции TLS/HTTP; <b>специальные lua-функции</b>: <code>synhide</code> (скрытие SYN), <code>wsize</code>/<code>wssize</code> (window-манипуляция), <code>tls_client_hello_clone</code>, <code>synack_split</code>, QUIC <code>udplen</code>.</p>
     </div>
   </details>

@@ -3926,7 +3926,7 @@ function initBlockcheck() {
   // Сценарий: пользователь нажал Запустить, gen-strategies генерит ~5-10с,
   // закрыл браузер до того как client успел сделать setItem(JOB_KEY).
   // Сервер job уже создал и запустил — UI должен подобрать.
-  fetch("/cgi-bin/blockcheck1-status?discover=1")
+  fetch("/cgi-bin/blockcheck2-status?discover=1")
     .then(r => r.json()).then(data => {
       if (data && data.ok && data.job_id) {
         try { localStorage.setItem(BC_JOB_KEY, data.job_id); } catch (e) {}
@@ -4109,11 +4109,6 @@ function bcCombinedRefresh() {
   const wins = BC.results.filter(r => (parseInt(r.pass, 10) || 0) > 0);
   const https = wins.filter(r => r.proto === "http");
   const tlss  = wins.filter(r => r.proto === "tls" || r.proto === "tls12" || r.proto === "tls13");
-  const quics = wins.filter(r => r.proto === "quic");
-  // Also pull every quic strategy from BC.results irrespective of pass —
-  // quic probe is currently always skipped, but the user still wants quic
-  // options available in the combined cross-product.
-  const quicCandidates = BC.results.filter(r => r.proto === "quic");
   // De-dupe by args (in case the same args got reported twice).
   const dedup = arr => {
     const seen = new Set(); const out = [];
@@ -4122,15 +4117,14 @@ function bcCombinedRefresh() {
   };
   const H = dedup(https);
   const T = dedup(tlss);
-  let Q = dedup(quicCandidates);
-  // Always include a default-quic fallback option (named so), regardless of
-  // probes — it's a valid combined component on its own.
+  const realQ = dedup(wins.filter(r => r.proto === "quic"));
+  if (!H.length && !T.length) { box.hidden = true; return; }
   const DEFAULT_Q = {
     name: "(QUIC по умолчанию)",
     proto: "quic",
     args: "--filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=20",
   };
-  if (!Q.find(q => q.args === DEFAULT_Q.args)) Q = [DEFAULT_Q].concat(Q);
+  const Q = realQ.length ? realQ : [DEFAULT_Q];
   // Also allow "no QUIC at all" as a valid choice (HTTP+TLS only combo).
   const NO_Q = { name: "(без QUIC)", proto: null, args: null };
   const qOptions = [NO_Q].concat(Q);
@@ -4431,7 +4425,7 @@ function blockcheck2Custom() {
   body.set("hard_min_kb",    String(v.hard_min_kb));
   body.set("rnd_repeats",    String(v.rnd_repeats));
 
-  fetch("/cgi-bin/blockcheck1", {
+  fetch("/cgi-bin/blockcheck2", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -4491,7 +4485,7 @@ function blockcheck2Start() {
   body.set("hard_min_kb", String(v.hard_min_kb));
   body.set("rnd_repeats", String(v.rnd_repeats));
 
-  fetch("/cgi-bin/blockcheck1", {
+  fetch("/cgi-bin/blockcheck2", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -4520,7 +4514,7 @@ function blockcheck2Poll() {
   // тормозящем сервере очередь fetch'ей растёт, страница виснет.
   if (BC.pollInFlight) return;
   BC.pollInFlight = true;
-  fetch("/cgi-bin/blockcheck1-status?job=" + encodeURIComponent(BC.jobId) + "&offset=" + BC.offset)
+  fetch("/cgi-bin/blockcheck2-status?job=" + encodeURIComponent(BC.jobId) + "&offset=" + BC.offset)
     .then(r => r.json()).then(data => {
       if (!data.ok) {
         // Job dir gone (server restart, manual cleanup) → reset.
@@ -4620,7 +4614,7 @@ function blockcheck2Poll() {
 function blockcheck2Cancel(silent) {
   if (!BC.jobId) return;
   const body = new URLSearchParams(); body.set("job", BC.jobId);
-  fetch("/cgi-bin/blockcheck1-cancel", {
+  fetch("/cgi-bin/blockcheck2-cancel", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -4632,7 +4626,7 @@ function blockcheck2Cancel(silent) {
 
 function blockcheck2Download() {
   if (!BC.jobId) return;
-  window.location.href = "/cgi-bin/blockcheck1-status?job=" + encodeURIComponent(BC.jobId) + "&download=1";
+  window.location.href = "/cgi-bin/blockcheck2-status?job=" + encodeURIComponent(BC.jobId) + "&download=1";
 }
 
 // (blockcheck2Preview removed — generated count is shown right in the
@@ -4715,7 +4709,7 @@ function initBlockcheck1() {
   // Сценарий: пользователь нажал Запустить, gen-strategies генерит ~5-10с,
   // закрыл браузер до того как client успел сделать setItem(JOB_KEY).
   // Сервер job уже создал и запустил — UI должен подобрать.
-  fetch("/cgi-bin/blockcheck2-status?discover=1")
+  fetch("/cgi-bin/blockcheck1-status?discover=1")
     .then(r => r.json()).then(data => {
       if (data && data.ok && data.job_id) {
         try { localStorage.setItem(BC1_JOB_KEY, data.job_id); } catch (e) {}
@@ -4898,11 +4892,6 @@ function bc1CombinedRefresh() {
   const wins = BC1.results.filter(r => (parseInt(r.pass, 10) || 0) > 0);
   const https = wins.filter(r => r.proto === "http");
   const tlss  = wins.filter(r => r.proto === "tls" || r.proto === "tls12" || r.proto === "tls13");
-  const quics = wins.filter(r => r.proto === "quic");
-  // Also pull every quic strategy from BC1.results irrespective of pass —
-  // quic probe is currently always skipped, but the user still wants quic
-  // options available in the combined cross-product.
-  const quicCandidates = BC1.results.filter(r => r.proto === "quic");
   // De-dupe by args (in case the same args got reported twice).
   const dedup = arr => {
     const seen = new Set(); const out = [];
@@ -4911,9 +4900,8 @@ function bc1CombinedRefresh() {
   };
   const H = dedup(https);
   const T = dedup(tlss);
-  let Q = dedup(quicCandidates);
-  // Always include a default-quic fallback option (named so), regardless of
-  // probes — it's a valid combined component on its own.
+  const realQ = dedup(wins.filter(r => r.proto === "quic"));
+  if (!H.length && !T.length) { box.hidden = true; return; }
   // BC1 = nfqws v1 синтаксис, не lua. Дефолтная QUIC-стратегия отличается
   // от BC2 — здесь --dpi-desync=fake без lua-цепочки.
   const DEFAULT_Q = {
@@ -4921,7 +4909,7 @@ function bc1CombinedRefresh() {
     proto: "quic",
     args: "--filter-udp=0-65535 --dpi-desync=fake --dpi-desync-repeats=20",
   };
-  if (!Q.find(q => q.args === DEFAULT_Q.args)) Q = [DEFAULT_Q].concat(Q);
+  const Q = realQ.length ? realQ : [DEFAULT_Q];
   // Also allow "no QUIC at all" as a valid choice (HTTP+TLS only combo).
   const NO_Q = { name: "(без QUIC)", proto: null, args: null };
   const qOptions = [NO_Q].concat(Q);
@@ -5219,7 +5207,7 @@ function blockcheck1Custom() {
   body.set("hard_min_kb",    String(v.hard_min_kb));
   body.set("rnd_repeats",    String(v.rnd_repeats));
 
-  fetch("/cgi-bin/blockcheck2", {
+  fetch("/cgi-bin/blockcheck1", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -5279,7 +5267,7 @@ function blockcheck1Start() {
   body.set("hard_min_kb", String(v.hard_min_kb));
   body.set("rnd_repeats", String(v.rnd_repeats));
 
-  fetch("/cgi-bin/blockcheck2", {
+  fetch("/cgi-bin/blockcheck1", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -5308,7 +5296,7 @@ function blockcheck1Poll() {
   // тормозящем сервере очередь fetch'ей растёт, страница виснет.
   if (BC1.pollInFlight) return;
   BC1.pollInFlight = true;
-  fetch("/cgi-bin/blockcheck2-status?job=" + encodeURIComponent(BC1.jobId) + "&offset=" + BC1.offset)
+  fetch("/cgi-bin/blockcheck1-status?job=" + encodeURIComponent(BC1.jobId) + "&offset=" + BC1.offset)
     .then(r => r.json()).then(data => {
       if (!data.ok) {
         // Job dir gone (server restart, manual cleanup) → reset.
@@ -5408,7 +5396,7 @@ function blockcheck1Poll() {
 function blockcheck1Cancel(silent) {
   if (!BC1.jobId) return;
   const body = new URLSearchParams(); body.set("job", BC1.jobId);
-  fetch("/cgi-bin/blockcheck2-cancel", {
+  fetch("/cgi-bin/blockcheck1-cancel", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -5420,7 +5408,7 @@ function blockcheck1Cancel(silent) {
 
 function blockcheck1Download() {
   if (!BC1.jobId) return;
-  window.location.href = "/cgi-bin/blockcheck2-status?job=" + encodeURIComponent(BC1.jobId) + "&download=1";
+  window.location.href = "/cgi-bin/blockcheck1-status?job=" + encodeURIComponent(BC1.jobId) + "&download=1";
 }
 
 // ===== ByeDPI Check =====

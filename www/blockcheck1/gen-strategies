@@ -154,11 +154,9 @@ if [ "$want_http" = 1 ]; then
   emit http_hostcase     http "$(filter_for http) --hostcase"
   emit http_hostspell    http "$(filter_for http) --hostspell=hoSt"
   emit http_hostnospace  http "$(filter_for http) --hostnospace"
-  emit http_methodspace  http "$(filter_for http) --methodspace"
+  emit http_domcase      http "$(filter_for http) --domcase"
   if [ "$TIER" -ge 2 ]; then
-    emit http_hostpad      http "$(filter_for http) --hostpad=1024"
     emit http_methodeol    http "$(filter_for http) --methodeol"
-    emit http_unixeol      http "$(filter_for http) --unixeol"
   fi
 fi
 
@@ -227,6 +225,57 @@ if [ "$want_tls" = 1 ] && [ -n "$SEQOVL_VALUES" ]; then
         "$fil --dpi-desync=multisplit --dpi-desync-split-pos=$pos --dpi-desync-split-seqovl=$so"
     done
   done
+  if [ "$TIER" -ge 3 ] && [ -n "$TLS_BLOBS" ]; then
+    for so in 1 681; do
+      sos=$(safe "$so")
+      for pos in 1 midsld sld+1; do
+        poss=$(safe "$pos")
+        for b in $TLS_BLOBS; do
+          bs=$(safe "$(basename "${b%.bin}")")
+          emit "tls_seqovl_pat_${sos}_${poss}_${bs}" tls \
+            "$fil --dpi-desync=multisplit --dpi-desync-split-pos=$pos --dpi-desync-split-seqovl=$so --dpi-desync-split-seqovl-pattern=$b"
+        done
+      done
+    done
+  fi
+fi
+
+# ---- TCP dup + desync chains -------------------------------------------
+# nfqws v1 умеет одновременно слать dup-пакеты и desync-цепочку. Это даёт
+# полезные варианты, которых простые split/fake часто не покрывают.
+if [ "$TIER" -ge 2 ]; then
+  for proto in http tls; do
+    [ "$proto" = http ] && [ "$want_http" != 1 ] && continue
+    [ "$proto" = tls ] && [ "$want_tls" != 1 ] && continue
+    fil=$(filter_for "$proto")
+    pos_list="$POS_HTTP"; [ "$proto" = tls ] && pos_list="$POS_TLS"
+    for df in md5sig badsum badseq; do
+      dfs=$(safe "$df")
+      for pos in $pos_list; do
+        poss=$(safe "$pos")
+        emit "${proto}_dup_${dfs}_multisplit_${poss}" "$proto" \
+          "$fil --dup=1 --dup-cutoff=n2 --dup-fooling=$df --dpi-desync=multisplit --dpi-desync-split-pos=$pos --dpi-desync-fooling=badsum"
+      done
+    done
+  done
+fi
+
+# ---- TTL/autottl fake chains -------------------------------------------
+if [ "$TIER" -ge 3 ]; then
+  for proto in http tls; do
+    [ "$proto" = http ] && [ "$want_http" != 1 ] && continue
+    [ "$proto" = tls ] && [ "$want_tls" != 1 ] && continue
+    fil=$(filter_for "$proto")
+    fakearg="--dpi-desync-fake-http=0x00000000"
+    [ "$proto" = tls ] && fakearg="--dpi-desync-fake-tls=0x1603"
+    for delta in 1 2 3; do
+      for fl in badsum md5sig; do
+        fls=$(safe "$fl")
+        emit "${proto}_fake_autottl_${delta}_${fls}" "$proto" \
+          "$fil --dpi-desync=fake $fakearg --dpi-desync-fooling=$fl --dpi-desync-repeats=6 --dpi-desync-ttl=1 --dpi-desync-autottl=-${delta}"
+      done
+    done
+  done
 fi
 
 # ---- TLS pure-fake strategies (с blob fan-out + cutoff + mod) ----------
@@ -292,6 +341,12 @@ if [ "$want_quic" = 1 ]; then
     for r in 6 11 20 30; do
       [ "$r" = "6" ] && continue   # уже эмиттнули выше
       emit "quic_default_r${r}" quic "$fil --dpi-desync=fake --dpi-desync-repeats=$r"
+    done
+    for frag in 8 16 24; do
+      emit "quic_ipfrag_${frag}" quic \
+        "$fil --dpi-desync=ipfrag2 --dpi-desync-ipfrag-pos-udp=$frag"
+      emit "quic_fake_ipfrag_${frag}" quic \
+        "$fil --dpi-desync=fake,ipfrag2 --dpi-desync-repeats=11 --dpi-desync-ipfrag-pos-udp=$frag"
     done
   fi
   if [ "$TIER" -ge 2 ] && [ -n "$QUIC_BLOBS" ]; then
