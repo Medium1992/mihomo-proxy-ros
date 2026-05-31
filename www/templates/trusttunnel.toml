@@ -1,0 +1,31 @@
+# Endpoint host name, used for TLS/SNI.
+hostname = "trust.example.com"
+
+# Endpoint addresses, first one is used by mihomo.
+addresses = ["1.2.3.4:443"]
+
+username = "user"
+password = "pass"
+
+# Optional custom TLS SNI. If empty, hostname is used.
+custom_sni = ""
+
+skip_verification = false
+
+# Optional endpoint certificate chain from the original client config.
+# It is not emitted as mihomo proxy `certificate` because that field is
+# a client certificate/key pair, not a server CA pin.
+# certificate = """
+# -----BEGIN CERTIFICATE-----
+# MIIB...example
+# -----END CERTIFICATE-----
+# """
+
+# http2 maps to regular TrustTunnel, http3 maps to quic: true.
+upstream_protocol = "http2"
+
+# Not used by mihomo parser yet, kept here for source config compatibility.
+upstream_fallback_protocol = ""
+anti_dpi = false
+client_random = ""
+dns_upstreams = []

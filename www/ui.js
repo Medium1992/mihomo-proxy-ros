@@ -1752,7 +1752,7 @@ function deleteRuleSetFile(btn) {
 let proxyEditName = "";
 
 function yamlAnchorForFile(name) {
-  return name.replace(/\.conf$/, '.yaml');
+  return name.replace(/\.(conf|ovpn|toml)$/i, '.yaml');
 }
 
 function addProxyFileRow(name, size) {
@@ -2197,6 +2197,229 @@ function deleteAwgFile(btn) {
     })
     .catch((e) => alert('Ошибка сети: ' + e));
 }
+
+// ===== TrustTunnel/OpenVPN mounted config editors =====
+
+const mountedConfigMeta = {
+  trusttunnel: {
+    rowClass: "trusttunnel-file",
+    linksId: "trusttunnel-mount-links",
+    editModalId: "trusttunnelEditModal",
+    editTitleId: "trusttunnelEditTitle",
+    editNameId: "trusttunnelEditName",
+    editPlainId: "trusttunnelEditPlain",
+    templateRowId: "trusttunnelTemplateRow",
+    uploadId: "trustTunnelUpload",
+    ext: ".toml",
+    extRe: /\.toml$/i,
+    stripRe: /\.toml$/i,
+    templateUrl: "templates/trusttunnel.toml",
+    titleNew: "Новый TrustTunnel config",
+    expected: "Ожидается файл с расширением .toml"
+  },
+  openvpn: {
+    rowClass: "openvpn-file",
+    linksId: "openvpn-mount-links",
+    editModalId: "openvpnEditModal",
+    editTitleId: "openvpnEditTitle",
+    editNameId: "openvpnEditName",
+    editPlainId: "openvpnEditPlain",
+    templateRowId: "openvpnTemplateRow",
+    uploadId: "openVpnUpload",
+    ext: ".ovpn",
+    extRe: /\.(ovpn|conf)$/i,
+    stripRe: /\.(ovpn|conf)$/i,
+    templateUrl: "templates/openvpn.conf",
+    titleNew: "Новый OpenVPN config",
+    expected: "Ожидается файл с расширением .ovpn или .conf"
+  }
+};
+const mountedConfigEditName = { trusttunnel: "", openvpn: "" };
+
+function addMountedConfigRow(type, name, size) {
+  const meta = mountedConfigMeta[type];
+  const wrap = document.getElementById(meta.linksId);
+  if (!wrap) return;
+  const empty = wrap.querySelector(".empty");
+  if (empty) empty.remove();
+  const existing = wrap.querySelector("." + meta.rowClass + '[data-file="' + name.replace(/"/g, '\\"') + '"]');
+  if (existing) existing.remove();
+  const div = document.createElement("div");
+  div.className = "mount-link " + meta.rowClass;
+  div.dataset.file = name;
+  const anchor = yamlAnchorForFile(name);
+  div.dataset.anchor = anchor;
+  const displayName = name.replace(meta.stripRe, "");
+  div.innerHTML = `<a class="mount-link-title" href="yaml.html#${encodeURIComponent(anchor)}"><span>${escapeAttr(displayName)}</span><small>${size} bytes</small></a><div class="file-actions"><button type="button" onclick="${type === "trusttunnel" ? "editTrustTunnelFile" : "editOpenVpnFile"}(this)" title="Редактировать">&#10002;</button><button type="button" onclick="${type === "trusttunnel" ? "deleteTrustTunnelFile" : "deleteOpenVpnFile"}(this)" title="Удалить">&#10005;</button></div>`;
+  wrap.appendChild(div);
+}
+
+function uploadMountedConfig(type) {
+  const meta = mountedConfigMeta[type];
+  const input = document.getElementById(meta.uploadId);
+  if (!input || !input.files || !input.files.length) return;
+  const file = input.files[0];
+  if (!meta.extRe.test(file.name)) {
+    alert(meta.expected);
+    input.value = ""; return;
+  }
+  const reader = new FileReader();
+  reader.onload = function () {
+    const data = String(reader.result || "");
+    const idx = data.indexOf(",");
+    const b64 = idx >= 0 ? data.slice(idx + 1) : "";
+    if (!b64) { alert("Не удалось прочитать файл"); return; }
+    fetch('/cgi-bin/list-files?type=' + encodeURIComponent(type)).then((r) => r.json()).then((listData) => {
+      const existing = (listData && listData.files) || [];
+      if (existing.some((f) => f.file === file.name) && !window.confirm("Файл " + file.name + " существует. Перезаписать?")) {
+        input.value = ""; return;
+      }
+      return fetch('/cgi-bin/save-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'file=' + encodeURIComponent(file.name) + '&b64=' + encodeURIComponent(b64) + '&type=' + encodeURIComponent(type)
+      })
+        .then((r) => r.text())
+        .then((text) => {
+          if (text.trim() === "OK") {
+            addMountedConfigRow(type, file.name, file.size);
+            input.value = "";
+          } else {
+            alert('Ошибка загрузки: ' + text);
+          }
+        });
+    }).catch((e) => alert('Ошибка сети: ' + e));
+  };
+  reader.onerror = function () { alert("Ошибка чтения файла"); };
+  reader.readAsDataURL(file);
+}
+
+function editMountedConfigFile(type, btn) {
+  const meta = mountedConfigMeta[type];
+  const row = btn.closest("." + meta.rowClass);
+  if (!row) return;
+  mountedConfigEditName[type] = row.dataset.file;
+  const displayName = mountedConfigEditName[type].replace(meta.stripRe, "");
+  const titleEl = document.getElementById(meta.editTitleId);
+  if (titleEl) titleEl.textContent = displayName;
+  const nameEl = document.getElementById(meta.editNameId);
+  if (nameEl) { nameEl.value = displayName; nameEl.readOnly = true; }
+  const tplRow = document.getElementById(meta.templateRowId);
+  if (tplRow) tplRow.style.display = "none";
+  fetch('/cgi-bin/read-file?file=' + encodeURIComponent(mountedConfigEditName[type]) + '&type=' + encodeURIComponent(type))
+    .then((r) => { if (!r.ok) throw new Error(r.statusText); return r.text(); })
+    .then((text) => {
+      const plainEl = document.getElementById(meta.editPlainId);
+      if (plainEl) plainEl.value = text;
+      document.getElementById(meta.editModalId).hidden = false;
+    })
+    .catch((e) => alert('Не удалось прочитать файл: ' + e.message));
+}
+
+function createMountedConfigFile(type) {
+  const meta = mountedConfigMeta[type];
+  mountedConfigEditName[type] = "";
+  const titleEl = document.getElementById(meta.editTitleId);
+  if (titleEl) titleEl.textContent = meta.titleNew;
+  const nameEl = document.getElementById(meta.editNameId);
+  if (nameEl) { nameEl.value = ""; nameEl.readOnly = false; nameEl.focus(); }
+  const plainEl = document.getElementById(meta.editPlainId);
+  if (plainEl) plainEl.value = "";
+  const tplRow = document.getElementById(meta.templateRowId);
+  if (tplRow) tplRow.style.display = "";
+  document.getElementById(meta.editModalId).hidden = false;
+}
+
+function closeMountedConfigModal(type) {
+  const meta = mountedConfigMeta[type];
+  document.getElementById(meta.editModalId).hidden = true;
+  mountedConfigEditName[type] = "";
+}
+
+function loadMountedConfigTemplate(type) {
+  const meta = mountedConfigMeta[type];
+  const plainEl = document.getElementById(meta.editPlainId);
+  if (!plainEl) return;
+  if (plainEl.value.trim() && !window.confirm("Заменить текущее содержимое шаблоном?")) return;
+  fetch(meta.templateUrl)
+    .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+    .then((text) => { plainEl.value = text; })
+    .catch((e) => alert('Не удалось загрузить шаблон: ' + e.message));
+}
+
+function saveMountedConfigModal(type) {
+  const meta = mountedConfigMeta[type];
+  const nameEl = document.getElementById(meta.editNameId);
+  const plainEl = document.getElementById(meta.editPlainId);
+  if (!plainEl || !nameEl) return;
+  const name = nameEl.value.trim();
+  if (!name) { alert("Укажите имя файла"); return; }
+  const fileName = meta.extRe.test(name) ? name : name + meta.ext;
+  const isNew = !nameEl.readOnly;
+  const checkPromise = isNew
+    ? fetch('/cgi-bin/list-files?type=' + encodeURIComponent(type)).then((r) => r.json()).then((data) => {
+        const existing = (data && data.files) || [];
+        if (existing.some((f) => f.file === fileName)) {
+          throw new Error("Файл с именем " + fileName + " уже существует");
+        }
+      })
+    : Promise.resolve();
+
+  checkPromise
+    .then(() => {
+      const b64 = btoa(unescape(encodeURIComponent(plainEl.value)));
+      return fetch('/cgi-bin/save-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'file=' + encodeURIComponent(fileName) + '&b64=' + encodeURIComponent(b64) + '&type=' + encodeURIComponent(type)
+      }).then((r) => r.text());
+    })
+    .then((text) => {
+      if (text.trim() === "OK") {
+        closeMountedConfigModal(type);
+        if (isNew) {
+          const size = new Blob([plainEl.value]).size;
+          addMountedConfigRow(type, fileName, size);
+        }
+      } else {
+        alert('Ошибка сохранения: ' + text);
+      }
+    })
+    .catch((e) => alert(e.message || String(e)));
+}
+
+function deleteMountedConfigFile(type, btn) {
+  const meta = mountedConfigMeta[type];
+  const row = btn.closest("." + meta.rowClass);
+  if (!row) return;
+  const name = row.dataset.file;
+  if (!window.confirm("Удалить файл " + name.replace(meta.stripRe, "") + "?")) return;
+  row.remove();
+  fetch('/cgi-bin/delete-file?file=' + encodeURIComponent(name) + '&type=' + encodeURIComponent(type))
+    .then((r) => r.text())
+    .then((text) => {
+      if (text.trim() !== "OK") {
+        alert('Ошибка удаления: ' + text);
+      }
+    })
+    .catch((e) => alert('Ошибка сети: ' + e));
+}
+
+function uploadTrustTunnelToml() { uploadMountedConfig("trusttunnel"); }
+function editTrustTunnelFile(btn) { editMountedConfigFile("trusttunnel", btn); }
+function createTrustTunnelFile() { createMountedConfigFile("trusttunnel"); }
+function closeTrustTunnelFileModal() { closeMountedConfigModal("trusttunnel"); }
+function loadTrustTunnelTemplate() { loadMountedConfigTemplate("trusttunnel"); }
+function saveTrustTunnelFileModal() { saveMountedConfigModal("trusttunnel"); }
+function deleteTrustTunnelFile(btn) { deleteMountedConfigFile("trusttunnel", btn); }
+
+function uploadOpenVpnConfig() { uploadMountedConfig("openvpn"); }
+function editOpenVpnFile(btn) { editMountedConfigFile("openvpn", btn); }
+function createOpenVpnFile() { createMountedConfigFile("openvpn"); }
+function closeOpenVpnFileModal() { closeMountedConfigModal("openvpn"); }
+function loadOpenVpnTemplate() { loadMountedConfigTemplate("openvpn"); }
+function saveOpenVpnFileModal() { saveMountedConfigModal("openvpn"); }
+function deleteOpenVpnFile(btn) { deleteMountedConfigFile("openvpn", btn); }
 
 // ===== /zapret-fakebin (binary upload) =====
 

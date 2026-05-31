@@ -60,12 +60,14 @@ EXTERNAL_UI_URL="${EXTERNAL_UI_URL:-https://github.com/MetaCubeX/metacubexd/arch
 UI_SECRET="${UI_SECRET:-}"
 CONFIG_DIR="/root/.config/mihomo"
 AWG_DIR="$CONFIG_DIR/awg"
+TRUSTTUNNEL_DIR="$CONFIG_DIR/trusttunnel"
+OPENVPN_DIR="$CONFIG_DIR/openvpn"
 PROXIES_DIR="$CONFIG_DIR/proxies_mount"
 AMNEZIA_PREMIUM_DIR="$CONFIG_DIR/amnezia_premium"
 RULE_SET_DIR="$CONFIG_DIR/rule_set_list"
 # Runtime artifacts (regenerated on every container start) live in RAM
 # to avoid wearing out the underlying flash storage. Mounted user files
-# (AWG_DIR, PROXIES_DIR, RULE_SET_DIR) and mihomo's own downloads
+# (AWG_DIR, TRUSTTUNNEL_DIR, OPENVPN_DIR, PROXIES_DIR, RULE_SET_DIR) and mihomo's own downloads
 # (geosite, geoip, external-ui) stay in CONFIG_DIR on flash.
 RUNTIME_DIR="/dev/shm/mihomo"
 HS5T_DIR="/dev/shm/hs5t"
@@ -1305,8 +1307,8 @@ emit_vpn_openvpn_proxy() {
   local ovpn_file="$1"
   local name="$2"
   local tmp_prefix="$3"
-  local server="" port="" proto="" dev="" cipher="" auth="" mtu="" username="" password=""
-  local ca_file cert_file key_file tls_file auth_user_file tls_source=""
+  local server="" port="" proto="" dev="" cipher="" auth="" mtu="" username="" password="" comp_lzo=""
+  local ca_file cert_file key_file tls_file auth_user_file tls_source="" cipher_item=""
 
   grep -q '^[[:space:]]*remote[[:space:]]' "$ovpn_file" 2>/dev/null || return 1
   grep -q '^[[:space:]]*<ca>[[:space:]]*$' "$ovpn_file" 2>/dev/null || return 1
@@ -1319,6 +1321,7 @@ emit_vpn_openvpn_proxy() {
   cipher=$(ovpn_directive_value "$ovpn_file" "cipher" 2)
   [ -n "$cipher" ] || cipher=$(ovpn_directive_value "$ovpn_file" "data-ciphers" 2)
   auth=$(ovpn_directive_value "$ovpn_file" "auth" 2)
+  comp_lzo=$(ovpn_directive_value "$ovpn_file" "comp-lzo" 2)
   mtu=$(ovpn_directive_value "$ovpn_file" "tun-mtu" 2)
   [ -n "$mtu" ] || mtu=$(ovpn_directive_value "$ovpn_file" "mtu" 2)
 
@@ -1333,7 +1336,23 @@ emit_vpn_openvpn_proxy() {
     *) proto="udp" ;;
   esac
   [ -n "$dev" ] || dev="tun"
+  auth=$(printf '%s' "$auth" | tr '[:lower:]' '[:upper:]')
+  [ "$auth" = "SHA-1" ] && auth="SHA1"
   [ -n "$auth" ] || auth="SHA256"
+
+  if [ -n "$cipher" ]; then
+    for cipher_item in $(printf '%s' "$cipher" | tr ':,' '  '); do
+      cipher_item=$(printf '%s' "$cipher_item" | tr '[:lower:]' '[:upper:]')
+      [ "$cipher_item" = "AES-CBC" ] && cipher_item="AES-128-CBC"
+      case "$cipher_item" in
+        AES-128-GCM|AES-192-GCM|AES-256-GCM|AES-128-CBC|AES-192-CBC|AES-256-CBC|CHACHA20-POLY1305)
+          cipher="$cipher_item"
+          break
+          ;;
+      esac
+    done
+  fi
+  comp_lzo=$(printf '%s' "$comp_lzo" | tr '[:upper:]' '[:lower:]')
 
   ca_file="${tmp_prefix}.ca"
   cert_file="${tmp_prefix}.cert"
@@ -1348,8 +1367,6 @@ emit_vpn_openvpn_proxy() {
     tls_source="tls-crypt"
   elif ovpn_extract_pem_block "$ovpn_file" "tls-auth" "$tls_file"; then
     tls_source="tls-auth"
-  else
-    return 1
   fi
 
   if ovpn_extract_block "$ovpn_file" "auth-user-pass" "$auth_user_file"; then
@@ -1372,18 +1389,243 @@ emit_vpn_openvpn_proxy() {
   emit_yaml_block_file "ca" "$ca_file"
   [ -s "$cert_file" ] && emit_yaml_block_file "cert" "$cert_file"
   [ -s "$key_file" ] && emit_yaml_block_file "key" "$key_file"
-  emit_yaml_block_file "tls-crypt" "$tls_file"
+  [ -s "$tls_file" ] && emit_yaml_block_file "tls-crypt" "$tls_file"
   echo "    dev: $dev"
   case "$cipher" in
-    AES-128-GCM|AES-256-GCM|CHACHA20-POLY1305) echo "    cipher: $cipher" ;;
+    AES-128-GCM|AES-192-GCM|AES-256-GCM|AES-128-CBC|AES-192-CBC|AES-256-CBC|CHACHA20-POLY1305) echo "    cipher: $cipher" ;;
   esac
-  [ "$auth" = "SHA256" ] && echo "    auth: $auth"
+  case "$auth" in
+    MD5|SHA1|SHA256|SHA384|SHA512) echo "    auth: $auth" ;;
+  esac
+  case "$comp_lzo" in
+    yes|no|adaptive) echo "    comp-lzo: \"$comp_lzo\"" ;;
+  esac
   [ -n "$mtu" ] && echo "    mtu: $mtu"
   echo ""
 
   [ "$tls_source" = "tls-auth" ] && log "Warning: $name OpenVPN uses <tls-auth>; emitted it as tls-crypt for mihomo compatibility" >&2
-  [ "$auth" != "SHA256" ] && log "Warning: $name OpenVPN auth '$auth' skipped; mihomo supports SHA256 only" >&2
   return 0
+}
+
+toml_string_value() {
+  local file="$1"
+  local key="$2"
+
+  awk -v key="$key" '
+    /^[[:space:]]*($|#)/ { next }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (line !~ "^[[:space:]]*" key "[[:space:]]*=") next
+      sub(/^[^=]*=[[:space:]]*/, "", line)
+      if (line ~ /^"""/) next
+      if (line ~ /^"/) {
+        sub(/^"/, "", line)
+        sub(/"[[:space:]]*(#.*)?$/, "", line)
+        print line
+        exit
+      }
+      sub(/[[:space:]]*(#.*)?$/, "", line)
+      print line
+      exit
+    }
+  ' "$file"
+}
+
+toml_bool_value() {
+  local file="$1"
+  local key="$2"
+
+  toml_string_value "$file" "$key" | tr '[:upper:]' '[:lower:]'
+}
+
+toml_first_array_string() {
+  local file="$1"
+  local key="$2"
+
+  awk -v key="$key" '
+    /^[[:space:]]*($|#)/ { next }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (line !~ "^[[:space:]]*" key "[[:space:]]*=") next
+      sub(/^[^=]*=[[:space:]]*/, "", line)
+      if (match(line, /"[^"]+"/)) {
+        out = substr(line, RSTART + 1, RLENGTH - 2)
+        print out
+        exit
+      }
+    }
+  ' "$file"
+}
+
+toml_multiline_string_file() {
+  local file="$1"
+  local key="$2"
+  local out_file="$3"
+
+  awk -v key="$key" '
+    /^[[:space:]]*($|#)/ && !in_block { next }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (!in_block) {
+        if (line !~ "^[[:space:]]*" key "[[:space:]]*=") next
+        sub(/^[^=]*=[[:space:]]*/, "", line)
+        if (line !~ /^"""/) next
+        sub(/^"""/, "", line)
+        in_block = 1
+        if (line == "") next
+      }
+      if (in_block) {
+        if (line ~ /"""/) {
+          sub(/""".*$/, "", line)
+          if (line != "") print line
+          exit
+        }
+        print line
+      }
+    }
+  ' "$file" > "$out_file"
+  [ -s "$out_file" ]
+}
+
+split_host_port() {
+  local addr="$1"
+  local host_file="$2"
+  local port_file="$3"
+  local host="" port=""
+
+  case "$addr" in
+    \[*\]:*)
+      host="${addr%%]:*}"
+      host="${host#[}"
+      port="${addr##*:}"
+      ;;
+    *:*)
+      host="${addr%:*}"
+      port="${addr##*:}"
+      ;;
+    *)
+      host="$addr"
+      port=""
+      ;;
+  esac
+
+  printf '%s' "$host" > "$host_file"
+  printf '%s' "$port" > "$port_file"
+}
+
+emit_trusttunnel_proxy() {
+  local toml_file="$1"
+  local name="$2"
+  local tmp_prefix="$3"
+  local hostname="" address="" server="" port="" username="" password="" skip_verify="" protocol="" custom_sni=""
+  local host_file="${tmp_prefix}.host"
+  local port_file="${tmp_prefix}.port"
+
+  hostname=$(toml_string_value "$toml_file" "hostname")
+  address=$(toml_first_array_string "$toml_file" "addresses")
+  username=$(toml_string_value "$toml_file" "username")
+  password=$(toml_string_value "$toml_file" "password")
+  custom_sni=$(toml_string_value "$toml_file" "custom_sni")
+  skip_verify=$(toml_bool_value "$toml_file" "skip_verification")
+  protocol=$(toml_string_value "$toml_file" "upstream_protocol" | tr '[:upper:]' '[:lower:]')
+
+  [ -n "$address" ] || address="$hostname:443"
+  split_host_port "$address" "$host_file" "$port_file"
+  server=$(cat "$host_file" 2>/dev/null)
+  port=$(cat "$port_file" 2>/dev/null)
+  [ -n "$server" ] || server="$hostname"
+  [ -n "$port" ] || port="443"
+
+  [ -n "$server" ] || return 1
+  [ -n "$username" ] || return 1
+  [ -n "$password" ] || return 1
+
+  echo "  - name: \"$name\""
+  echo "    type: trusttunnel"
+  echo "    server: $server"
+  echo "    port: $port"
+  printf '    username: %s\n' "$(printf '%s' "$username" | yaml_quote)"
+  printf '    password: %s\n' "$(printf '%s' "$password" | yaml_quote)"
+  if [ -n "$custom_sni" ]; then
+    printf '    sni: %s\n' "$(printf '%s' "$custom_sni" | yaml_quote)"
+  elif [ -n "$hostname" ] && [ "$hostname" != "$server" ]; then
+    printf '    sni: %s\n' "$(printf '%s' "$hostname" | yaml_quote)"
+  fi
+  [ "$skip_verify" = "true" ] && echo "    skip-cert-verify: true"
+  [ "$protocol" = "http3" ] && echo "    quic: true"
+  echo "    health-check: true"
+  echo "    udp: true"
+  echo ""
+}
+
+generate_trusttunnel_providers() {
+  local tt_providers=""
+  if ls "$TRUSTTUNNEL_DIR"/*.toml >/dev/null 2>&1; then
+    for conf in "$TRUSTTUNNEL_DIR"/*.toml; do
+      [ ! -f "$conf" ] && continue
+      local tt_name=$(basename "$conf" .toml)
+      local tt_yaml="${RUNTIME_DIR}/${tt_name}.yaml"
+
+      if {
+        echo "proxies:"
+        emit_trusttunnel_proxy "$conf" "$tt_name" "${RUNTIME_DIR}/${tt_name}.trusttunnel"
+      } > "$tt_yaml"; then
+
+        cat >> "$CONFIG_YAML" <<EOF
+  ${tt_name}:
+    type: file
+    path: $RUNTIME_DIR/${tt_name}.yaml
+EOF
+emit_provider_override "$tt_name" >> "$CONFIG_YAML"
+        if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+          cat >> "$CONFIG_YAML" <<EOF
+$(health_check_block)
+EOF
+        fi
+        tt_providers="${tt_providers} ${tt_name}"
+      else
+        rm -f "$tt_yaml"
+      fi
+    done
+  fi
+  echo "$tt_providers"
+}
+
+generate_openvpn_providers() {
+  local ovpn_providers=""
+  if ls "$OPENVPN_DIR"/*.ovpn >/dev/null 2>&1 || ls "$OPENVPN_DIR"/*.conf >/dev/null 2>&1; then
+    for conf in "$OPENVPN_DIR"/*.ovpn "$OPENVPN_DIR"/*.conf; do
+      [ ! -f "$conf" ] && continue
+      local ovpn_name=$(basename "$conf" .ovpn)
+      [ "$ovpn_name" = "$(basename "$conf")" ] && ovpn_name=$(basename "$conf" .conf)
+      local ovpn_yaml="${RUNTIME_DIR}/${ovpn_name}.yaml"
+
+      if {
+        echo "proxies:"
+        emit_vpn_openvpn_proxy "$conf" "$ovpn_name" "${RUNTIME_DIR}/${ovpn_name}.openvpn"
+      } > "$ovpn_yaml"; then
+
+        cat >> "$CONFIG_YAML" <<EOF
+  ${ovpn_name}:
+    type: file
+    path: $RUNTIME_DIR/${ovpn_name}.yaml
+EOF
+emit_provider_override "$ovpn_name" >> "$CONFIG_YAML"
+        if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+          cat >> "$CONFIG_YAML" <<EOF
+$(health_check_block)
+EOF
+        fi
+        ovpn_providers="${ovpn_providers} ${ovpn_name}"
+      else
+        rm -f "$ovpn_yaml"
+      fi
+    done
+  fi
+  echo "$ovpn_providers"
 }
 
 vpn_json_is_amnezia_premium() {
@@ -2697,6 +2939,12 @@ EOF
   providers="${providers}${awg_provs}"
   dns_other="${dns_other}${awg_provs}"
 
+  # TrustTunnel / OpenVPN mounted configs
+  tt_provs=$(generate_trusttunnel_providers)
+  providers="${providers}${tt_provs}"
+  ovpn_provs=$(generate_openvpn_providers)
+  providers="${providers}${ovpn_provs}"
+
 # SOCKS5
   socks_envs="$CONFIG_DIR/.socks_envs"
   env | grep -E '^SOCKS[0-9]+=' | sort -V > "$socks_envs" || true
@@ -3710,7 +3958,7 @@ wait_for_meta() {
 }
 
 run() {
-  mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$PROXIES_DIR" "$RULE_SET_DIR"
+  mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$TRUSTTUNNEL_DIR" "$OPENVPN_DIR" "$PROXIES_DIR" "$RULE_SET_DIR"
   # Wipe runtime dirs on every start — everything here is regenerated below.
   rm -rf "$RUNTIME_DIR" "$HS5T_DIR"
   mkdir -p "$RUNTIME_DIR" "$HS5T_DIR"

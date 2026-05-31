@@ -17,6 +17,8 @@ case "$dir_type" in
   ruleset) TARGET_DIR="$CONFIG_DIR/rule_set_list" ;;
   proxy)   TARGET_DIR="$CONFIG_DIR/proxies_mount" ;;
   awg)     TARGET_DIR="$CONFIG_DIR/awg" ;;
+  trusttunnel) TARGET_DIR="$CONFIG_DIR/trusttunnel" ;;
+  openvpn) TARGET_DIR="$CONFIG_DIR/openvpn" ;;
   fakebin) TARGET_DIR="/zapret-fakebin" ;;
   zlist)   TARGET_DIR="/zapret-lists" ;;
   *) echo "Error: invalid type"; exit 1 ;;

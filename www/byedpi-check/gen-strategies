@@ -35,7 +35,21 @@ case ",$INCLUDE," in *,http,*|*,tls,*|*,tls12,*|*,tls13,*) want_tcp=1 ;; esac
 case ",$INCLUDE," in *,quic,*|*,udp,*) want_udp=1 ;; esac
 
 safe() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/_/g; s/__*/_/g; s/^_//; s/_$//'; }
-emit() { printf '%s|%s|%s\n' "$1" "$2" "$3"; }
+
+SEEN_FILE="${TMPDIR:-/tmp}/byedpi-gen-seen.$$"
+: >"$SEEN_FILE" 2>/dev/null || SEEN_FILE=""
+[ -n "$SEEN_FILE" ] && trap 'rm -f "$SEEN_FILE"' EXIT HUP INT TERM
+
+emit() {
+  # Keep the first name for each proto+args pair. APK-derived families and
+  # seed families overlap a lot; dedup keeps the output useful instead of noisy.
+  if [ -n "$SEEN_FILE" ]; then
+    key="$2|$3"
+    grep -Fqx -- "$key" "$SEEN_FILE" 2>/dev/null && return 0
+    printf '%s\n' "$key" >>"$SEEN_FILE" 2>/dev/null || true
+  fi
+  printf '%s|%s|%s\n' "$1" "$2" "$3"
+}
 emit_all()  { emit "$(safe "$1")" all  "$2"; }
 emit_tls()  { emit "$(safe "$1")" tls  "$2"; }
 emit_quic() { emit "$(safe "$1")" quic "$2"; }
@@ -43,10 +57,13 @@ emit_http() { emit "$(safe "$1")" http "$2"; }
 
 udp_ladder="--proto=udp --udp-fake 1 --auto=none --disorder 1 --split 1+s --disorder 3+s --split 6+s --disorder 9+s --split 12+s --disorder 15+s --split 20+s --disorder 25+s --split 30+s --disorder 35+s"
 tcp_ladder="--disorder 1 --split 1+s --disorder 3+s --split 6+s --disorder 9+s --split 12+s --disorder 15+s --split 20+s --disorder 25+s --split 30+s --disorder 35+s"
+tcp_alt_ladder="--disorder 1 --split 1+s --disorder 1+s --split 3+s --disorder 6+s --split 12+s --disorder 14+s --split 20+s --disorder 24+s --split 30+s"
 auto_all="--auto=torst,redirect,ssl_err"
 auto_tls="--auto=ssl_err"
 auto_rst="--auto=torst"
 auto_redir="--auto=redirect"
+auto_none="--auto=none"
+sni_pool="yandex.ru mail.ru rutube.ru ya.ru m.vk.com google.com"
 
 # ---- fakebin categorisation ------------------------------------------------
 tls_bins=""
@@ -84,6 +101,11 @@ if [ "$TIER" -ge 1 ]; then
     emit_all "quick_${sn}_fake_md5_ladder" "--timeout 5 $udp_ladder $auto_all $auto_tls --fake -1 --md5sig --fake-sni $sni"
     emit_all "quick_${sn}_tlsrec_oob"      "--timeout 5 $auto_all --tlsrec 3+s --split 1+s --disorder 3+s --oob 1 --udp-fake 1 $auto_tls --fake -1 --md5sig --fake-sni $sni"
   done
+  # Compact families seen in the Android TV APK list: not copied wholesale,
+  # but useful as low-cost probes for fake/ttl/oob/drop-sack combinations.
+  emit_all "quick_apk_fake_ttl8"       "--timeout 5 --fake -1 --ttl 8 --split 1+s --disorder 3+s --udp-fake 1"
+  emit_all "quick_apk_oob_auto_fake"   "--timeout 5 --oob 1 --udp-fake 1 $auto_all --fake -1 --udp-fake 1 $auto_rst --tlsrec 1+s --fake -1 --ttl 6 --udp-fake 1"
+  emit_all "quick_apk_drop_sack_chain" "--timeout 5 --split 1 --disoob 1 --drop-sack --udp-fake 1 $auto_all --fake -1 --tlsrec 1+s --udp-fake 1"
   if [ -n "$FAKEBIN_DIR" ] && [ -d "$FAKEBIN_DIR" ]; then
     fake_seen=""
     fake_count=0
@@ -125,6 +147,41 @@ if [ "$TIER" -ge 2 ]; then
   for buf in 1024 1500 4096 8192 16384; do
     emit_all "buf_${buf}_ladder" "--timeout 5 --buf-size $buf $udp_ladder $auto_all --split 1 --disoob 1 $auto_tls --fake -1 --md5sig"
   done
+
+  # Android APK-inspired, but generated as valid long options. These cover
+  # offset flags (+sm/+se/+hm), fake-offset, round windows, oob byte changes,
+  # tlsminor and auto-mode; the previous generator barely touched these axes.
+  for sni in $sni_pool; do
+    sn=$(safe "$sni")
+    emit_tls "apk_sni_${sn}_fake_offset" "--timeout 5 $auto_tls --fake -1 --fake-offset 1+sm --md5sig --fake-sni $sni --tlsrec 1+s"
+    emit_tls "apk_sni_${sn}_round_fake"  "--timeout 5 --round 1-3 $auto_tls --fake -1 --md5sig --fake-sni $sni --split 1+sm"
+    emit_tls "apk_sni_${sn}_rand_mid"    "--timeout 5 $auto_tls --fake -205 --fake-sni $sni --fake-tls-mod rand --split 1:3+sm --disoob 7 --oob 2"
+  done
+
+  for pos in 0+sm 1+sm 2+sm 3+sm 5+sm 1+se 2+se 1+hm 3+hm 1:3+sm 1:5+sm 2:7+s; do
+    ps=$(safe "$pos")
+    emit_tls  "offset_tls_split_${ps}"  "--timeout 5 $auto_tls --split $pos --fake -1 --md5sig --tlsrec 1+s"
+    emit_all  "offset_all_oob_${ps}"    "--timeout 5 $auto_all --oob $pos --split 1+s --udp-fake 1"
+    emit_http "offset_http_mod_${ps}"   "--timeout 5 --proto=http --mod-http h,d,r --split $pos --disorder 1"
+  done
+
+  for off in 1 2 4 1+s 1+sm 2+sm 4+sm; do
+    os=$(safe "$off")
+    emit_tls "fake_offset_${os}" "--timeout 5 $auto_tls --fake -1 --fake-offset $off --md5sig --fake-sni yandex.ru --tlsrec 1+s"
+  done
+
+  for m in 1 2 3 4; do
+    emit_tls "tlsminor_${m}_fake" "--timeout 5 $auto_tls --tlsminor $m --fake -1 --md5sig --tlsrec 1+s"
+  done
+
+  for ch in a X 1 .; do
+    cs=$(safe "$ch")
+    emit_all "oob_data_${cs}" "--timeout 5 $auto_all --oob 1+s --oob-data $ch --split 1+s --udp-fake 1"
+  done
+
+  emit_all "auto_mode_sort_chain"      "--timeout 5 --auto-mode sort --split 1 --disoob 1 --udp-fake 1 $auto_redir --split 5 --oob 1+s $auto_rst --fake -1 --tlsrec 1+s $auto_tls --split 1 --oob 1+s --split -1"
+  emit_all "auto_mode_onreconn_chain"  "--timeout 5 --auto-mode onreconn --split 1 --disorder 1 --udp-fake 1 $auto_rst --oob 1 $auto_tls --fake -1 --md5sig --tlsrec 1+s"
+  emit_all "auto_mode_noreconn_chain"  "--timeout 5 --auto-mode noreconn --fake -1 --md5sig --fake-sni yandex.ru $auto_all --split 1+s --disorder 3+s --udp-fake 1"
 
   if [ -n "$FAKEBIN_DIR" ] && [ -d "$FAKEBIN_DIR" ]; then
     fake_seen=""
@@ -171,6 +228,8 @@ if [ "$TIER" -ge 2 ]; then
     emit_tls "tls_fake_sni_google"        "--timeout 5 $auto_tls --fake -1 --md5sig --fake-sni google.com"
     emit_tls "tls_drop_sack"              "--timeout 5 $auto_tls --drop-sack --fake -1 --md5sig"
     emit_tls "tls_tfo"                    "--timeout 5 $auto_tls --tfo --fake -1 --md5sig"
+    emit_tls "tls_drop_sack_ladder"       "--timeout 5 --drop-sack $tcp_alt_ladder $auto_tls --fake -1 --md5sig --tlsrec 1+s"
+    emit_tls "tls_fake_ttl_offset"        "--timeout 5 $auto_tls --fake -1 --fake-offset 1+s --ttl 8 --md5sig --tlsrec 1+s"
   fi
 
   if [ "$want_udp" = 1 ]; then
@@ -183,6 +242,9 @@ if [ "$TIER" -ge 2 ]; then
     emit_quic "quic_udp_fake_2"            "--timeout 5 --proto=udp --udp-fake 2 --auto=none --split 1+s --disorder 3"
     emit_quic "quic_udp_fake_3"            "--timeout 5 --proto=udp --udp-fake 3 --auto=none --split 1+s --disorder 3"
     emit_quic "quic_oob"                   "--timeout 5 --proto=udp --udp-fake 1 --auto=none --oob 1 --split 1+s"
+    for n in 1 2 3 5 7; do
+      emit_quic "quic_fake_count_${n}_ttl"  "--timeout 5 --proto=udp --udp-fake $n --auto=none --ttl 5 --split 1+s --disorder 3+s"
+    done
   fi
 fi
 
@@ -195,8 +257,23 @@ if [ "$TIER" -ge 3 ]; then
     "$udp_ladder $auto_all --fake -1 --tlsrec 1+s --udp-fake 1 $auto_all --split 1 --oob 1+s --split -1 --udp-fake 1 $auto_tls --fake -1 --md5sig --fake-sni rutube.ru --oob 25000+s" \
     "$tcp_ladder $auto_all --split 1 --disoob 1 $auto_all --split 5 --oob 20+s $auto_all --oob 1 --disorder 1 --tlsrec 1+s --ttl 10 --buf-size 1024" \
     "--drop-sack $tcp_ladder $auto_all --fake -1 --md5sig --fake-offset 5 --tlsrec 1+s --udp-fake 1" \
+    "$tcp_alt_ladder --drop-sack $auto_redir --split 5 --oob 1+s $auto_tls --fake -1 --tlsrec 1+s --udp-fake 1" \
     "--tfo --def-ttl 128 $auto_all --tlsrec 9+s --split 50+s --oob 23 --udp-fake 2"; do
     emit_all "combo_$(safe "$combo")" "--timeout 5 $combo"
+  done
+
+  for sni in yandex.ru mail.ru rutube.ru ya.ru; do
+    sn=$(safe "$sni")
+    emit_all "apk_combo_${sn}_fake205" "--timeout 5 --fake-sni $sni --fake-tls-mod rand --fake -205 --udp-fake 1 $auto_tls --split 1:3+sm --udp-fake 1 $auto_tls --split 5:8+sm --udp-fake 1 $auto_tls --disorder 3 --disoob 7 --oob 2 --fake -43 --fake -85 --tlsrec 5 --mod-http h --udp-fake 1"
+    emit_all "apk_combo_${sn}_fake204" "--timeout 5 --fake-sni $sni --fake-tls-mod rand --fake -204 --split 1:5+sm --udp-fake 1 $auto_tls --disorder 1 --split 3+s --split 5+s --disoob 7 --udp-fake 1 $auto_tls --oob 2 --fake -43 --udp-fake 1 $auto_tls --tlsrec 5 --mod-http h --split 1:5+s --split 3:7+sm --udp-fake 1"
+    emit_tls "apk_tls_${sn}_round_mix" "--timeout 5 --fake-sni $sni --fake-tls-mod rand --fake 209 --split 1+sm --round 1-3 --udp-fake 1"
+  done
+
+  for chain in \
+    "--split 1 --oob 1 --udp-fake 1 $auto_redir --oob 1 $auto_rst --fake -1 --tlsrec 1+s $auto_tls --split 1 --oob 1+s --split -1 --udp-fake 1" \
+    "--split 1 --disoob 1 --udp-fake 1 $auto_redir --split 5 --oob 2 $auto_rst --fake -1 --tlsrec 1+s $auto_tls --split 1 --oob 1+s --split -1 --udp-fake 1" \
+    "--split 1 --disorder 1 --tlsrec 1+s --udp-fake 1 $auto_redir --oob 1 $auto_rst --fake -1 --tlsrec 1+s --udp-fake 1"; do
+    emit_all "apk_chain_$(safe "$chain")" "--timeout 5 $chain"
   done
 fi
 
@@ -207,6 +284,7 @@ if [ "$TIER" -ge 4 ]; then
   for sni in google.com yandex.ru mail.ru rutube.ru ya.ru vk.com; do
     sn=$(safe "$sni")
     emit_all "extended_${sn}_dual_ladder" "--timeout 5 --proto=udp --udp-fake 1 --auto=none $tcp_ladder $auto_all --split 1 --disoob 1 $auto_all --split 5 --oob 25000+s $auto_all --fake -1 --md5sig --fake-sni $sni --fake-tls-mod rand"
+    emit_all "extended_${sn}_offset_ladder" "--timeout 5 --fake-sni $sni --fake-tls-mod rand --fake -1 --fake-offset 1+sm --md5sig --drop-sack $tcp_alt_ladder $auto_tls --tlsrec 1+s --udp-fake 1"
   done
   for f in $tls_bins; do
     bn=$(safe "$(basename "$f")")

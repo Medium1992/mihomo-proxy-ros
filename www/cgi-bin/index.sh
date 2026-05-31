@@ -3,6 +3,8 @@
 CONFIG_DIR="${CONFIG_DIR:-/root/.config/mihomo}"
 RUNTIME_DIR="${RUNTIME_DIR:-/dev/shm/mihomo}"
 AWG_DIR="$CONFIG_DIR/awg"
+TRUSTTUNNEL_DIR="$CONFIG_DIR/trusttunnel"
+OPENVPN_DIR="$CONFIG_DIR/openvpn"
 PROXIES_DIR="$CONFIG_DIR/proxies_mount"
 RULE_SET_DIR="$CONFIG_DIR/rule_set_list"
 CONTAINER_NAME="${CONTAINER_NAME:-mihomo-proxy-ros}"
@@ -54,7 +56,7 @@ env_attr() {
 yaml_link_name() {
   base="$(basename "$1")"
   case "$base" in
-    *.conf) printf '%s.yaml' "${base%.*}" ;;
+    *.conf|*.ovpn|*.toml) printf '%s.yaml' "${base%.*}" ;;
     *) printf '%s' "$base" ;;
   esac
 }
@@ -705,7 +707,7 @@ EOF
   echo '</div>'
   section_end
 
-  section_start_tab mounted "Mounted providers" "Файлы, которые entrypoint читает из каталогов: AWG configs, proxies_mount."
+  section_start_tab mounted "Mounted providers" "Файлы, которые entrypoint читает из каталогов: AWG configs, TrustTunnel configs, OpenVPN configs, proxies_mount."
   yaml_url="$(page_url yaml)"
   echo '<div class="mounts">'
   printf '<article><b>AWG configs</b><div class="mount-links" id="awg-mount-links">'
@@ -729,6 +731,57 @@ EOF
   <label class="ghost upload-label" tabindex="0">
     <input type="file" id="awgUpload" accept=".conf" hidden onchange="uploadAwgConf()">
     <span>Загрузить .conf</span>
+  </label>
+</div>
+EOF
+  fi
+  printf '</article><article><b>TrustTunnel configs</b><div class="mount-links" id="trusttunnel-mount-links">'
+  if [ -d "$TRUSTTUNNEL_DIR" ]; then
+    for f in "$TRUSTTUNNEL_DIR"/*; do
+      [ -f "$f" ] || continue
+      base="$(basename "$f")"
+      size="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
+      display="${base%.toml}"
+      anchor="$(yaml_link_name "$base")"
+      printf '<div class="mount-link trusttunnel-file" data-file="%s" data-anchor="%s"><a class="mount-link-title" href="%s#%s"><span>%s</span><small>%s bytes</small></a><div class="file-actions"><button type="button" onclick="editTrustTunnelFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteTrustTunnelFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$anchor" | h)" "$yaml_url" "$(printf '%s' "$anchor" | h)" "$(printf '%s' "$display" | h)" "$size"
+    done
+  else
+    echo '<div class="empty">Каталог TrustTunnel не смонтирован.</div>'
+  fi
+  printf '</div>'
+  if [ -d "$TRUSTTUNNEL_DIR" ]; then
+    cat <<'EOF'
+<div class="mount-actions">
+  <button type="button" class="ghost" onclick="createTrustTunnelFile()">Новый файл</button>
+  <label class="ghost upload-label" tabindex="0">
+    <input type="file" id="trustTunnelUpload" accept=".toml" hidden onchange="uploadTrustTunnelToml()">
+    <span>Загрузить .toml</span>
+  </label>
+</div>
+EOF
+  fi
+  printf '</article><article><b>OpenVPN configs</b><div class="mount-links" id="openvpn-mount-links">'
+  if [ -d "$OPENVPN_DIR" ]; then
+    for f in "$OPENVPN_DIR"/*; do
+      [ -f "$f" ] || continue
+      base="$(basename "$f")"
+      size="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
+      display="${base%.ovpn}"
+      display="${display%.conf}"
+      anchor="$(yaml_link_name "$base")"
+      printf '<div class="mount-link openvpn-file" data-file="%s" data-anchor="%s"><a class="mount-link-title" href="%s#%s"><span>%s</span><small>%s bytes</small></a><div class="file-actions"><button type="button" onclick="editOpenVpnFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteOpenVpnFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$anchor" | h)" "$yaml_url" "$(printf '%s' "$anchor" | h)" "$(printf '%s' "$display" | h)" "$size"
+    done
+  else
+    echo '<div class="empty">Каталог OpenVPN не смонтирован.</div>'
+  fi
+  printf '</div>'
+  if [ -d "$OPENVPN_DIR" ]; then
+    cat <<'EOF'
+<div class="mount-actions">
+  <button type="button" class="ghost" onclick="createOpenVpnFile()">Новый файл</button>
+  <label class="ghost upload-label" tabindex="0">
+    <input type="file" id="openVpnUpload" accept=".ovpn,.conf" hidden onchange="uploadOpenVpnConfig()">
+    <span>Загрузить .ovpn/.conf</span>
   </label>
 </div>
 EOF
@@ -824,6 +877,40 @@ EOF
     </footer>
   </div>
 </div>
+<div class="modal" id="trusttunnelEditModal" hidden>
+  <div class="modal-backdrop" onclick="closeTrustTunnelFileModal()"></div>
+  <div class="modal-content">
+    <header><b id="trusttunnelEditTitle">TrustTunnel config</b><button type="button" onclick="closeTrustTunnelFileModal()">&#10005;</button></header>
+    <div class="modal-body">
+      <label><span>Имя файла (.toml будет добавлено)</span><input id="trusttunnelEditName" placeholder="my-trusttunnel"></label>
+      <div class="template-row" id="trusttunnelTemplateRow">
+        <button type="button" class="ghost" onclick="loadTrustTunnelTemplate()">Загрузить шаблон TOML</button>
+      </div>
+      <label><span>Содержимое (.toml)</span><textarea id="trusttunnelEditPlain" rows="18" placeholder='hostname = "example.com"'></textarea></label>
+    </div>
+    <footer class="modal-footer">
+      <button type="button" class="ghost" onclick="closeTrustTunnelFileModal()">Отмена</button>
+      <button type="button" class="primary" onclick="saveTrustTunnelFileModal()">Сохранить</button>
+    </footer>
+  </div>
+</div>
+<div class="modal" id="openvpnEditModal" hidden>
+  <div class="modal-backdrop" onclick="closeOpenVpnFileModal()"></div>
+  <div class="modal-content">
+    <header><b id="openvpnEditTitle">OpenVPN config</b><button type="button" onclick="closeOpenVpnFileModal()">&#10005;</button></header>
+    <div class="modal-body">
+      <label><span>Имя файла (.ovpn будет добавлено)</span><input id="openvpnEditName" placeholder="my-openvpn"></label>
+      <div class="template-row" id="openvpnTemplateRow">
+        <button type="button" class="ghost" onclick="loadOpenVpnTemplate()">Загрузить шаблон .ovpn</button>
+      </div>
+      <label><span>Содержимое (.ovpn/.conf)</span><textarea id="openvpnEditPlain" rows="18" placeholder="client"></textarea></label>
+    </div>
+    <footer class="modal-footer">
+      <button type="button" class="ghost" onclick="closeOpenVpnFileModal()">Отмена</button>
+      <button type="button" class="primary" onclick="saveOpenVpnFileModal()">Сохранить</button>
+    </footer>
+  </div>
+</div>
 EOF
 }
 
@@ -872,22 +959,22 @@ google.com/search?q=test"></textarea>
     </label>
     <label class="field"><span><b>Уровень</b><em>сколько стратегий перебрать</em></span>
       <select id="bdcLevel">
-        <option value="quick">quick (~15)</option>
-        <option value="basic" selected>basic (~70, рекомендуется)</option>
-        <option value="medium">medium (~120)</option>
-        <option value="extended">extended (~220)</option>
-        <option value="full">full (~300+)</option>
+        <option value="quick">quick (~18)</option>
+        <option value="basic" selected>basic (~210, рекомендуется)</option>
+        <option value="medium">medium (~230)</option>
+        <option value="extended">extended (~240)</option>
+        <option value="full">full (~250)</option>
       </select>
     </label>
   </div>
   <details class="bc-tier-info">
     <summary>Что добавляется в каждом уровне</summary>
     <div class="bc-tier-info-body">
-      <p><b>quick</b> — sanity-check инфраструктуры. Базовые <code>fake</code>, <code>split</code>, <code>disorder</code>, <code>tlsrec</code>, UDP fake и короткие ladder-варианты.</p>
-      <p><b>basic</b> (+к quick) — стартовый рабочий набор. TTL/def-ttl, SNI fake, <code>fake-tls-mod</code>, HTTP mod, позиции <code>1+s</code> / <code>3+s</code> / <code>host</code>-смещения, а при включённом fakebin — <code>--fake-data &lt;file&gt;</code>.</p>
-      <p><b>medium</b> (+к basic) — расширение для типичных кейсов. <code>auto=torst,redirect,ssl_err</code>, <code>oob</code>/<code>disoob</code>, смешанные TCP/UDP цепочки и более длинные ladder-комбинации.</p>
-      <p><b>extended</b> (+к medium) — глубокий поиск. Больше SNI, dual-ladder варианты, fake-data по TLS/HTTP категориям.</p>
-      <p><b>full</b> (+к extended) — последний километр. QUIC fake-data из fakebin, дополнительные UDP fake counts и самые тяжёлые варианты.</p>
+      <p><b>quick</b> — sanity-check инфраструктуры. Базовые <code>fake</code>, <code>split</code>, <code>disorder</code>, <code>tlsrec</code>, UDP fake, короткие ladder-варианты и несколько лёгких цепочек из Android TV набора.</p>
+      <p><b>basic</b> (+к quick) — стартовый рабочий набор. TTL/def-ttl, SNI fake, <code>fake-tls-mod</code>, HTTP mod, fakebin, чистые HTTP/TLS/QUIC семейства, <code>fake-offset</code>, <code>round</code>, <code>tlsminor</code>, <code>oob-data</code>, <code>auto-mode</code>, <code>drop-sack</code> и смещения <code>+sm/+se/+hm</code>.</p>
+      <p><b>medium</b> (+к basic) — расширение для типичных кейсов. <code>auto=torst,redirect,ssl_err</code>, <code>oob</code>/<code>disoob</code>, смешанные TCP/UDP цепочки, альтернативные ladder-комбинации и Android TV inspired цепочки без прямого копирования всего списка.</p>
+      <p><b>extended</b> (+к medium) — глубокий поиск. Больше SNI, dual-ladder варианты, offset-ladder, fake-data по TLS/HTTP категориям.</p>
+      <p><b>full</b> (+к extended) — последний километр. QUIC fake-data из fakebin, дополнительные UDP fake counts и самые тяжёлые варианты. Одинаковые <code>proto+args</code> отбрасываются генератором.</p>
     </div>
   </details>
   <div class="socks-toggles bc-tests" aria-label="Типы тестов">
