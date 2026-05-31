@@ -111,6 +111,7 @@ add doh-servers=https://dns.google/dns-query name=Google
 add doh-servers=https://cloudflare-dns.com/dns-query name=CloudFlare
 add dns-servers=9.9.9.9,149.112.112.112 name=Quad9
 add dns-servers=111.88.96.50,111.88.96.51 name=XBOX
+add doh-servers=https://xbox-dns.ru/dns-query name=XBOX-DOH
 add dns-servers=77.88.8.8,77.88.8.1 name=Yandex verify-doh-cert=no
 add dns-servers=8.8.8.8 name=Google8 verify-doh-cert=no
 /certificate/settings/set builtin-trust-anchors=not-trusted
@@ -124,8 +125,7 @@ add address=104.16.248.249 comment="DNS CloudFlare" name=cloudflare-dns.com type
 add address=104.16.249.249 comment="DNS CloudFlare" name=cloudflare-dns.com type=A
 add address=9.9.9.9 comment="DNS Quad9" name=dns.quad9.net type=A
 add address=149.112.112.112 comment="DNS Quad9" name=dns.quad9.net type=A
-add address=176.99.11.77 comment="XBOX DNS" name=xbox-dns.ru type=A
-add address=185.46.11.181 comment="XBOX DNS" name=xbox-dns.ru type=A
+add address=111.88.96.55 comment="XBOX DNS" name=xbox-dns.ru type=A
 /system ntp client
 set enabled=yes
 /system ntp client servers
