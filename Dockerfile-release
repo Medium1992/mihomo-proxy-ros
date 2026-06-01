@@ -4,10 +4,22 @@ ARG TARGETARCH
 ARG TARGETVARIANT
 ARG AMD64VERSION
 ARG TAG
+ARG GO_VERSION=1.26
 ARG VERSION_OVERRIDE=""
 ARG WITH_GVISOR=1
 ARG BUILDTIME
-RUN apk add --no-cache curl jq gzip tar unzip git make python3 go
+RUN apk add --no-cache curl jq gzip tar unzip git make python3
+
+RUN case "$(apk --print-arch)" in \
+        x86_64) GO_BUILD_ARCH=amd64 ;; \
+        aarch64) GO_BUILD_ARCH=arm64 ;; \
+        *) echo "Unsupported Go build arch: $(apk --print-arch)" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/MetaCubeX/go/releases/download/build/go${GO_VERSION}.linux-${GO_BUILD_ARCH}.tar.gz" | \
+    tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:${PATH}" \
+    GOTOOLCHAIN=local
+RUN go version
 
 RUN mkdir -p /final 
 
