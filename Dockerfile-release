@@ -5,6 +5,7 @@ ARG TARGETVARIANT
 ARG AMD64VERSION
 ARG TAG
 ARG GO_VERSION=1.26
+ARG MIHOMO_CUSTOM_PATCHES=1
 ARG VERSION_OVERRIDE=""
 ARG WITH_GVISOR=1
 ARG BUILDTIME
@@ -30,47 +31,60 @@ WORKDIR /src
 # Переключаемся на нужный тэг
 RUN git fetch --all --tags --prune && git switch --detach "$TAG" 2>/dev/null || git switch "$TAG"
 
-RUN VERSION_FOR_BUILD="${TAG}" && \
-    if [ -n "${VERSION_OVERRIDE}" ]; then VERSION_FOR_BUILD="${VERSION_OVERRIDE}"; fi && \
-    echo "Patching version/updater for fork TAG=${TAG} VERSION=${VERSION_FOR_BUILD} BUILDTIME=${BUILDTIME}" && \
-    sed -i "s|Version\\s*=.*|Version = \"${VERSION_FOR_BUILD}-mihomo-proxy-ros\"|" constant/version.go && \
-    sed -i "s|BuildTime\\s*=.*|BuildTime = \"${BUILDTIME}\"|" constant/version.go && \
-    sed -i 's|MihomoName = "mihomo"|MihomoName = "mihomo-proxy-ros"|' constant/version.go && \
-    sed -i 's|baseReleaseURL    = "https://github.com/MetaCubeX/mihomo/releases/latest/download/"|baseReleaseURL    = "https://github.com/Medium1992/mihomo-proxy-ros/releases/latest/download/"|' component/updater/update_core.go && \
-    sed -i 's|versionReleaseURL = "https://github.com/MetaCubeX/mihomo/releases/latest/download/version.txt"|versionReleaseURL = "https://github.com/Medium1992/mihomo-proxy-ros/releases/latest/download/version.txt"|' component/updater/update_core.go && \
-    sed -i 's|if latestVersion == C.Version && !force {|if strings.TrimSuffix(C.Version, "-mihomo-proxy-ros") == latestVersion \&\& !force {|' component/updater/update_core.go
+RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ]; then \
+        echo "Applying mihomo-proxy-ros updater patches"; \
+        sed -i 's|baseReleaseURL    = "https://github.com/MetaCubeX/mihomo/releases/latest/download/"|baseReleaseURL    = "https://github.com/Medium1992/mihomo-proxy-ros/releases/latest/download/"|' component/updater/update_core.go; \
+        sed -i 's|versionReleaseURL = "https://github.com/MetaCubeX/mihomo/releases/latest/download/version.txt"|versionReleaseURL = "https://github.com/Medium1992/mihomo-proxy-ros/releases/latest/download/version.txt"|' component/updater/update_core.go; \
+        sed -i 's|if latestVersion == C.Version && !force {|if strings.TrimSuffix(C.Version, "-mihomo-proxy-ros") == latestVersion \&\& !force {|' component/updater/update_core.go; \
+    else \
+        echo "Skipping mihomo-proxy-ros updater patches"; \
+    fi
 
-RUN sed -i '/^import (/a\    "github.com/metacubex/mihomo/log"' \
-    adapter/provider/provider.go
+RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ]; then \
+        sed -i '/^import (/a\    "github.com/metacubex/mihomo/log"' \
+            adapter/provider/provider.go; \
+    fi
 
-RUN sed -i 's@return nil, fmt.Errorf("proxy %d error: %w", idx, err)@name, _ := mapping["name"].(string)\n                log.Warnln("[Provider %s] skip invalid proxy (idx=%d, name=%q): %v", pdName, idx, name, err)\n                continue@g' \
-    adapter/provider/provider.go
+RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ]; then \
+        sed -i 's@return nil, fmt.Errorf("proxy %d error: %w", idx, err)@name, _ := mapping["name"].(string)\n                log.Warnln("[Provider %s] skip invalid proxy (idx=%d, name=%q): %v", pdName, idx, name, err)\n                continue@g' \
+            adapter/provider/provider.go; \
+    fi
   
 # Формируем список build tags и собираем
-RUN BUILD_TAGS="" && \
+RUN VERSION_FOR_BUILD="${TAG}" && \
+    if [ -n "${VERSION_OVERRIDE}" ]; then VERSION_FOR_BUILD="${VERSION_OVERRIDE}"; fi && \
+    if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ]; then \
+        VERSION_FOR_BUILD="${VERSION_FOR_BUILD}-mihomo-proxy-ros"; \
+        MIHOMO_NAME="mihomo-proxy-ros"; \
+    else \
+        MIHOMO_NAME="mihomo"; \
+    fi && \
+    LD_FLAGS="-w -s -buildid= -X 'github.com/metacubex/mihomo/constant.Version=${VERSION_FOR_BUILD}' -X 'github.com/metacubex/mihomo/constant.BuildTime=${BUILDTIME}' -X 'github.com/metacubex/mihomo/constant.MihomoName=${MIHOMO_NAME}'" && \
+    echo "Building TAG=${TAG} VERSION=${VERSION_FOR_BUILD} MIHOMO_CUSTOM_PATCHES=${MIHOMO_CUSTOM_PATCHES}" && \
+    BUILD_TAGS="" && \
     if [ "$WITH_GVISOR" = "1" ]; then BUILD_TAGS="with_gvisor"; fi && \
     echo "Building with tags: $BUILD_TAGS" && \
     if [ "$TARGETARCH" = "amd64" ]; then \
         echo "Setting GOAMD64=$AMD64VERSION for amd64"; \
         CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOAMD64=$AMD64VERSION \
-        go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
+        go build -tags "$BUILD_TAGS" -trimpath -ldflags "$LD_FLAGS" -o /final/mihomo .; \
     elif [ "$TARGETARCH" = "arm" ]; then \
         if [ "$TARGETVARIANT" = "v5" ]; then \
             echo "Building for ARMv5 (GOARM=5)"; \
             CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=arm GOARM=5 \
-            go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
+            go build -tags "$BUILD_TAGS" -trimpath -ldflags "$LD_FLAGS" -o /final/mihomo .; \
         elif [ "$TARGETVARIANT" = "v7" ]; then \
             echo "Building for ARMv7 (GOARM=7)"; \
             CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=arm GOARM=7 \
-            go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
+            go build -tags "$BUILD_TAGS" -trimpath -ldflags "$LD_FLAGS" -o /final/mihomo .; \
         else \
             echo "Unknown ARM variant, defaulting to GOARM=7"; \
             CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=arm GOARM=7 \
-            go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
+            go build -tags "$BUILD_TAGS" -trimpath -ldflags "$LD_FLAGS" -o /final/mihomo .; \
         fi; \
     else \
         CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-        go build -tags "$BUILD_TAGS" -trimpath -ldflags "-w -s -buildid=" -o /final/mihomo .; \
+        go build -tags "$BUILD_TAGS" -trimpath -ldflags "$LD_FLAGS" -o /final/mihomo .; \
     fi
     
 FROM scratch AS export

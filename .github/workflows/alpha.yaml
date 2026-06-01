@@ -5,6 +5,9 @@ on:
     - cron: "0 */12 * * *"
   workflow_dispatch:
 
+env:
+  MIHOMO_CUSTOM_PATCHES: "1"
+
 jobs:
   alpha-check:
     runs-on: ubuntu-latest
@@ -157,6 +160,7 @@ jobs:
             --build-arg TAG=${{ needs.alpha-check.outputs.upstream_ref }} \
             --build-arg VERSION_OVERRIDE=${{ needs.alpha-check.outputs.version_tag }} \
             --build-arg AMD64VERSION=${{ matrix.amd64 }} \
+            --build-arg MIHOMO_CUSTOM_PATCHES=${{ env.MIHOMO_CUSTOM_PATCHES }} \
             --build-arg BUILDTIME="$(date)" \
             --output type=local,dest=out \
             .
