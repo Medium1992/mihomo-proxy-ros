@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  MIHOMO_CUSTOM_PATCHES: "1"
+  MIHOMO_CUSTOM_PATCHES: "0"
 
 jobs:
   release-check:
