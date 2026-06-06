@@ -44,6 +44,17 @@ env_raw() {
   printenv "$1" 2>/dev/null || true
 }
 
+ORIGINAL_ENV_FILE="${ORIGINAL_ENV_FILE:-/dev/shm/mihomo-original-envs}"
+
+env_exists() {
+  name="$1"
+  if [ -f "$ORIGINAL_ENV_FILE" ]; then
+    grep -qx "$name" "$ORIGINAL_ENV_FILE" 2>/dev/null
+  else
+    [ -n "$(env_raw "$name")" ]
+  fi
+}
+
 env_default() {
   val="$(env_raw "$1")"
   [ -n "$val" ] && printf '%s' "$val" || printf '%s' "$2"
@@ -71,7 +82,7 @@ mounted_file_links() {
 }
 
 is_set() {
-  [ -n "$(env_raw "$1")" ] && printf 'set' || printf 'default'
+  env_exists "$1" && printf 'set' || printf 'default'
 }
 
 checked() {
@@ -88,7 +99,12 @@ count_env() {
 }
 
 env_names() {
-  printenv | grep -E "$1" | cut -d= -f1 | sort -V
+  pattern="$1"
+  if [ -f "$ORIGINAL_ENV_FILE" ]; then
+    sed 's/$/=/' "$ORIGINAL_ENV_FILE" | grep -E "$pattern" | sed 's/=$//' | sort -V
+  else
+    printenv | grep -E "$pattern" | cut -d= -f1 | sort -V
+  fi
 }
 
 sanitize_rule_group_name() {
@@ -938,12 +954,12 @@ EOF
 
   section_start_tab byedpicheck "Подбор стратегий ByeDPI Check — для byedpi" "Параллельный перебор стратегий byedpi против заданных доменов. Использует DoH (через openssl) для резолва, изолированные nft/iptables-правила и пул воркеров. TCP проверяется через временный byedpi transparent, UDP/QUIC — через byedpi SOCKS + hs5t; у каждого воркера свой src-порт / mark / route table. Может работать рядом с основными BYEDPI_CMD*, потому что использует отдельные тестовые порты и таблицы."
   cat <<'EOF'
-<div class="notice notice-warn"><b>Результаты в RAM</b><span>Логи и отчёты хранятся в <code>/dev/shm/mihomo-byedpi-check/</code> и пропадают после перезагрузки контейнера. Скачайте отчёт или примените стратегию в <code>BYEDPI_CMD</code>, если нужно надолго.</span></div>
+<div class="notice notice-warn"><b>Результаты в RAM</b><span>Логи и отчёты хранятся в <code>/dev/shm/mihomo-byedpi-check/</code> и пропадают после перезагрузки контейнера. Скачайте отчёт или примените стратегию в <code>BYEDPI_CMD</code> envs в MikroTik, чтобы не потерять результаты. При повторном запуске подбора стратегий уже полученные результаты будут потеряны.</span></div>
 <div class="blockcheck-controls">
-  <label class="field" title="Форматы строк:&#10; • host                              — handshake-only тест (быстро)&#10; • host/path                          — handshake + скачивание body, должно прийти ≥ N КБ&#10; • @full https://host/path?query     — throughput-тест: тянем 256 КБ за ≤5 с (≈410 kbps min). Для googlevideo /videoplayback URL такой режим включается автоматически."><span><b>Домены</b><em>по одному в строке. <code>host</code> = handshake-only, <code>host/path</code> = + скачать body ≥ N КБ, <code>@full https://...</code> = throughput-тест 256 КБ за ≤5 с (для googlevideo автоматически).</em></span>
-    <textarea id="bdcDomains" rows="4" placeholder="rutracker.org
-discord.com
-google.com/search?q=test"></textarea>
+  <label class="field" title="Форматы строк:&#10; • host                              — handshake-only тест (быстро)&#10; • host/path                          — handshake + скачивание body, должно прийти ≥ N КБ&#10; • @full https://host/path?query     — throughput-тест: тянем 256 КБ за ≤5 с (≈410 kbps min). Для googlevideo /videoplayback URL такой режим включается автоматически."><span><b>Домены</b><em>по одному в строке. <code>host</code> = handshake-only, <code>host/path</code> = + скачать body ≥ N КБ, <code>@full https://...</code> = throughput-тест 256 КБ за ≤5 с; <code># комментарий</code> в конце строки игнорируется.</em></span>
+    <textarea id="bdcDomains" rows="4" placeholder="rutracker.org # проверка доступности
+https://rutracker.org/forum/index.php # проверка 16-20 КБ
+@full https://...googlevideo.com/videoplayback?... # YouTube/googlevideo throughput"></textarea>
   </label>
   <details class="bc-tier-info">
     <summary>YouTube / googlevideo</summary>
@@ -1069,12 +1085,12 @@ EOF
 
   section_start_tab blockcheck "Подбор стратегий BlockCheck — для zapret" "Параллельный перебор стратегий nfqws v1 (отдельные --dpi-desync-* флаги) против заданных доменов. Использует DoH (через openssl) для резолва, изолированную nft-таблицу и пул воркеров. Может работать параллельно с BlockCheck2 — у каждого свой пул src-портов / queue / mark. Требует nft-поддержки ядра — на RouterOS это arm64/amd64 версии 7.21 и выше."
   cat <<'EOF'
-<div class="notice notice-warn"><b>Результаты в RAM</b><span>Логи и отчёты хранятся в <code>/dev/shm/mihomo-blockcheck1/</code> и пропадают после перезагрузки контейнера. Скачайте отчёт или примените стратегию в <code>ZAPRET_CMD</code>, если нужно надолго.</span></div>
+<div class="notice notice-warn"><b>Результаты в RAM</b><span>Логи и отчёты хранятся в <code>/dev/shm/mihomo-blockcheck1/</code> и пропадают после перезагрузки контейнера. Скачайте отчёт или примените стратегию в <code>ZAPRET_CMD</code> envs в MikroTik, чтобы не потерять результаты. При повторном запуске подбора стратегий уже полученные результаты будут потеряны.</span></div>
 <div class="blockcheck-controls">
-  <label class="field" title="Форматы строк:&#10; • host                              — handshake-only тест (быстро)&#10; • host/path                          — handshake + скачивание body, должно прийти ≥ N КБ&#10; • @full https://host/path?query     — throughput-тест: тянем 256 КБ за ≤5 с (≈410 kbps min). Для googlevideo /videoplayback URL такой режим включается автоматически."><span><b>Домены</b><em>по одному в строке. <code>host</code> = handshake-only, <code>host/path</code> = + скачать body ≥ N КБ, <code>@full https://...</code> = throughput-тест 256 КБ за ≤5 с (для googlevideo автоматически).</em></span>
-    <textarea id="bc1Domains" rows="4" placeholder="rutracker.org
-discord.com
-google.com/search?q=test"></textarea>
+  <label class="field" title="Форматы строк:&#10; • host                              — handshake-only тест (быстро)&#10; • host/path                          — handshake + скачивание body, должно прийти ≥ N КБ&#10; • @full https://host/path?query     — throughput-тест: тянем 256 КБ за ≤5 с (≈410 kbps min). Для googlevideo /videoplayback URL такой режим включается автоматически."><span><b>Домены</b><em>по одному в строке. <code>host</code> = handshake-only, <code>host/path</code> = + скачать body ≥ N КБ, <code>@full https://...</code> = throughput-тест 256 КБ за ≤5 с; <code># комментарий</code> в конце строки игнорируется.</em></span>
+    <textarea id="bc1Domains" rows="4" placeholder="rutracker.org # проверка доступности
+https://rutracker.org/forum/index.php # проверка 16-20 КБ
+@full https://...googlevideo.com/videoplayback?... # YouTube/googlevideo throughput"></textarea>
   </label>
   <details class="bc-tier-info">
     <summary>YouTube / googlevideo</summary>
@@ -1209,12 +1225,12 @@ EOF
 
   section_start_tab blockcheck2 "Подбор стратегий BlockCheck2 — для zapret2" "Параллельный перебор стратегий nfqws2 (lua-движок) против заданных доменов. Использует DoH (через openssl) для резолва, изолированную nft-таблицу и пул воркеров. Может работать параллельно с BlockCheck — у каждого свой пул src-портов / queue / mark. Требует nft-поддержки ядра — на RouterOS это arm64/amd64 версии 7.21 и выше."
   cat <<'EOF'
-<div class="notice notice-warn"><b>Результаты в RAM</b><span>Логи и отчёты хранятся в <code>/dev/shm/mihomo-blockcheck2/</code> и пропадают после перезагрузки контейнера. Скачайте отчёт или примените стратегию в <code>ZAPRET2_CMD</code>, если нужно надолго.</span></div>
+<div class="notice notice-warn"><b>Результаты в RAM</b><span>Логи и отчёты хранятся в <code>/dev/shm/mihomo-blockcheck2/</code> и пропадают после перезагрузки контейнера. Скачайте отчёт или примените стратегию в <code>ZAPRET2_CMD</code> envs в MikroTik, чтобы не потерять результаты. При повторном запуске подбора стратегий уже полученные результаты будут потеряны.</span></div>
 <div class="blockcheck-controls">
-  <label class="field" title="Форматы строк:&#10; • host                              — handshake-only тест (быстро)&#10; • host/path                          — handshake + скачивание body, должно прийти ≥ N КБ&#10; • @full https://host/path?query     — throughput-тест: тянем 256 КБ за ≤5 с (≈410 kbps min). Для googlevideo /videoplayback URL такой режим включается автоматически."><span><b>Домены</b><em>по одному в строке. <code>host</code> = handshake-only, <code>host/path</code> = + скачать body ≥ N КБ, <code>@full https://...</code> = throughput-тест 256 КБ за ≤5 с (для googlevideo автоматически).</em></span>
-    <textarea id="bcDomains" rows="4" placeholder="rutracker.org
-discord.com
-google.com/search?q=test"></textarea>
+  <label class="field" title="Форматы строк:&#10; • host                              — handshake-only тест (быстро)&#10; • host/path                          — handshake + скачивание body, должно прийти ≥ N КБ&#10; • @full https://host/path?query     — throughput-тест: тянем 256 КБ за ≤5 с (≈410 kbps min). Для googlevideo /videoplayback URL такой режим включается автоматически."><span><b>Домены</b><em>по одному в строке. <code>host</code> = handshake-only, <code>host/path</code> = + скачать body ≥ N КБ, <code>@full https://...</code> = throughput-тест 256 КБ за ≤5 с; <code># комментарий</code> в конце строки игнорируется.</em></span>
+    <textarea id="bcDomains" rows="4" placeholder="rutracker.org # проверка доступности
+https://rutracker.org/forum/index.php # проверка 16-20 КБ
+@full https://...googlevideo.com/videoplayback?... # YouTube/googlevideo throughput"></textarea>
   </label>
   <details class="bc-tier-info">
     <summary>YouTube / googlevideo</summary>

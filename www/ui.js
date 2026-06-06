@@ -21,6 +21,7 @@ function mtEscape(value) {
 
 function envKey(name) { return "mihomo-env:" + name; }
 function originalKey(name) { return "mihomo-original:" + name; }
+function originalPresentKey(name) { return "mihomo-original-present:" + name; }
 function pageKey(name) { return "mihomo-page:" + name; }
 
 // --- Серверная персистентность черновика ---
@@ -34,7 +35,7 @@ function pageKey(name) { return "mihomo-page:" + name; }
 // `invalid` тоже включён: маркеры невалидных значений нужно гонять на сервер,
 // иначе после browser-clear localStorage бейджи валидации остаются пустыми
 // пока пользователь не зайдёт на проблемную страницу и не запустит валидатор.
-const DRAFT_KEYS_RE = /^mihomo-(env|original|page|tab|theme|command-env-list|invalid|bc-form|bc1-form|bdc-form|tool):/;
+const DRAFT_KEYS_RE = /^mihomo-(env|original|original-present|page|tab|theme|command-env-list|invalid|bc-form|bc1-form|bdc-form|tool):/;
 let draftSyncTimer = null;
 let draftLoadInFlight = false;
 function draftCollect() {
@@ -123,14 +124,43 @@ function setFieldValue(el, value) {
   else el.value = value;
 }
 
+function checkerDomainsValue(id) {
+  const el = document.getElementById(id);
+  return (el ? el.value : "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+#.*$/, "").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
 function rememberField(el) {
   if (!el.name) return;
   if (localStorage.getItem(originalKey(el.name)) === null) {
     localStorage.setItem(originalKey(el.name), fieldValue(el));
+    localStorage.setItem(originalPresentKey(el.name), "0");
   }
   localStorage.setItem(envKey(el.name), fieldValue(el));
   localStorage.setItem(pageKey(el.name), location.pathname);
   draftSaveDebounced();
+}
+
+function fieldStatusText(el) {
+  const box = el.closest(".field, .toggle") || el.closest(".env-row");
+  const status = box && box.querySelector(":scope > .field-meta > i, :scope > i");
+  return status ? status.textContent.trim() : "";
+}
+
+function serverHasEnv(el, fromDraft, serverValue) {
+  if (fromDraft) return false;
+  const status = fieldStatusText(el);
+  if (status) return status !== "default";
+  return serverValue !== "";
+}
+
+function originalWasPresent(name) {
+  const flag = localStorage.getItem(originalPresentKey(name));
+  if (flag !== null) return flag === "1";
+  return false;
 }
 
 function wireFieldEvents(root) {
@@ -140,6 +170,7 @@ function wireFieldEvents(root) {
   root.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
     const serverValue = fieldValue(el);
     const fromDraft = el.dataset.fromDraft === "true";
+    const presentOnServer = serverHasEnv(el, fromDraft, serverValue);
     const storedOriginal = localStorage.getItem(originalKey(el.name));
     if (storedOriginal === null) {
       // First time we see this name. For draft-restored inputs the server
@@ -155,6 +186,7 @@ function wireFieldEvents(root) {
         localStorage.setItem(envKey(el.name), serverValue);
       }
     }
+    localStorage.setItem(originalPresentKey(el.name), presentOnServer ? "1" : "0");
     localStorage.setItem(pageKey(el.name), location.pathname);
     const saved = localStorage.getItem(envKey(el.name));
     if (saved !== null) setFieldValue(el, saved);
@@ -176,11 +208,12 @@ function normalizeFieldMeta(root) {
   });
 }
 
-function commandFor(name, original, value) {
+function commandFor(name, original, value, originalPresent) {
   const envListName = getEnvListName();
-  const hasOriginal = original !== "";
+  const hasOriginal = originalPresent;
   const hasValue = value !== "";
   if (!hasOriginal && !hasValue) return "";
+  if (!hasOriginal && value === original) return "";
   if (hasOriginal && !hasValue) return `/container/envs/remove [find list="${envListName}" key="${name}"]`;
   if (!hasOriginal && hasValue) return `/container/envs/add list="${envListName}" key="${name}" value="${mtEscape(value)}"`;
   if (original !== value) return `/container/envs/set [find list="${envListName}" key="${name}"] value="${mtEscape(value)}"`;
@@ -196,8 +229,9 @@ function collectPageCommands() {
     seen.add(el.name);
     rememberField(el);
     const original = localStorage.getItem(originalKey(el.name)) || "";
+    const originalPresent = originalWasPresent(el.name);
     const value = fieldValue(el);
-    const cmd = commandFor(el.name, original, value);
+    const cmd = commandFor(el.name, original, value, originalPresent);
     if (cmd) commands.push(cmd);
   });
   return commands;
@@ -212,8 +246,9 @@ function collectAllCommands() {
   }
   names.sort().forEach((name) => {
     const original = localStorage.getItem(originalKey(name)) || "";
+    const originalPresent = originalWasPresent(name);
     const value = localStorage.getItem(envKey(name)) || "";
-    const cmd = commandFor(name, original, value);
+    const cmd = commandFor(name, original, value, originalPresent);
     if (cmd) commands.push(cmd);
   });
   return commands;
@@ -806,6 +841,7 @@ function resetUiDraft() {
     if (!key) return;
     if (key.startsWith("mihomo-env:") ||
         key.startsWith("mihomo-original:") ||
+        key.startsWith("mihomo-original-present:") ||
         key.startsWith("mihomo-page:") ||
         key.startsWith("mihomo-tab:") ||
         key.startsWith("mihomo-tool:")) {
@@ -830,6 +866,7 @@ function resetCurrentPageDraft() {
   names.forEach((name) => {
     localStorage.removeItem(envKey(name));
     localStorage.removeItem(originalKey(name));
+    localStorage.removeItem(originalPresentKey(name));
     localStorage.removeItem(pageKey(name));
   });
   draftSaveDebounced();
@@ -1099,7 +1136,7 @@ function applyIndexedBatch(wrap, moves) {
   });
   ops.forEach(({oldName, newName, value}) => {
     if (oldName === newName) return;
-    const wasOnServer = (localStorage.getItem(originalKey(oldName)) || "") !== "";
+    const wasOnServer = originalWasPresent(oldName);
     if (wasOnServer) {
       // Server had oldName=V. After rename: remove V from oldName, add V at
       // newName. Keep originalKey(oldName) as the server value so commandFor
@@ -1111,6 +1148,7 @@ function applyIndexedBatch(wrap, moves) {
       // Pure draft: purge old completely, no command needed.
       localStorage.removeItem(envKey(oldName));
       localStorage.removeItem(originalKey(oldName));
+      localStorage.removeItem(originalPresentKey(oldName));
       localStorage.removeItem(pageKey(oldName));
     }
     // Always set originalKey(newName)="" on rename so the new row is treated
@@ -1120,6 +1158,7 @@ function applyIndexedBatch(wrap, moves) {
     // untouched so the rename appears as a `set`).
     if (localStorage.getItem(originalKey(newName)) === null) {
       localStorage.setItem(originalKey(newName), "");
+      localStorage.setItem(originalPresentKey(newName), "0");
     }
     // Stale tracker cleanup: if newName previously had a trackRemovedEnv
     // hidden input (because it was removed by a prior op), drop it now
@@ -2680,7 +2719,7 @@ function groupHasCustomParams(pane) {
 function ruleSetSourceDeleted(pane) {
   const sourceEnv = pane?.dataset?.sourceEnv;
   if (!sourceEnv) return false;
-  return localStorage.getItem(originalKey(sourceEnv)) !== null && (localStorage.getItem(envKey(sourceEnv)) || "") === "";
+  return originalWasPresent(sourceEnv) && (localStorage.getItem(envKey(sourceEnv)) || "") === "";
 }
 
 function demoteOrPromoteRuleSetGroups() {
@@ -2839,6 +2878,7 @@ function removeGroupPane(name) {
   pane.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
     if (localStorage.getItem(originalKey(el.name)) === null) {
       localStorage.setItem(originalKey(el.name), fieldValue(el));
+      localStorage.setItem(originalPresentKey(el.name), serverHasEnv(el, false, fieldValue(el)) ? "1" : "0");
     }
     localStorage.setItem(envKey(el.name), "");
     trackRemovedEnv(el.name);
@@ -2870,7 +2910,10 @@ function wireGroupRename(pane) {
       const newEnv = newPrefix + el.name.slice(oldPrefix.length);
       localStorage.setItem(envKey(oldEnv), "");
       trackRemovedEnv(oldEnv);
-      if (localStorage.getItem(originalKey(newEnv)) === null) localStorage.setItem(originalKey(newEnv), "");
+      if (localStorage.getItem(originalKey(newEnv)) === null) {
+        localStorage.setItem(originalKey(newEnv), "");
+        localStorage.setItem(originalPresentKey(newEnv), "0");
+      }
       el.name = newEnv;
       const caption = el.closest("label")?.querySelector("em");
       if (caption) caption.textContent = newEnv;
@@ -3181,7 +3224,7 @@ function removeEnvRow(btn) {
   const row = btn.closest(".env-row");
   if (!row) return;
   row.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
-    const wasOnServer = (localStorage.getItem(originalKey(el.name)) || "") !== "";
+    const wasOnServer = originalWasPresent(el.name);
     if (wasOnServer) {
       localStorage.setItem(envKey(el.name), "");
       trackRemovedEnv(el.name);
@@ -3191,6 +3234,7 @@ function removeEnvRow(btn) {
       // spurious /container/envs/remove.
       localStorage.removeItem(envKey(el.name));
       localStorage.removeItem(originalKey(el.name));
+      localStorage.removeItem(originalPresentKey(el.name));
       localStorage.removeItem(pageKey(el.name));
     }
   });
@@ -3756,7 +3800,8 @@ function refreshFieldMarkers() {
     const original = localStorage.getItem(originalKey(input.name));
     if (original === null) return;
     const current = fieldValue(input);
-    const modified = current !== original;
+    const originalPresent = originalWasPresent(input.name);
+    const modified = originalPresent ? current !== original : (current !== original && current !== "");
     input.dataset.modified = modified ? "true" : "false";
     if (!modified) return;
 
@@ -3783,7 +3828,9 @@ function countModifiedInScope(scope) {
     if (!input.name) return;
     const original = localStorage.getItem(originalKey(input.name));
     if (original === null) return;
-    if (fieldValue(input) !== original) n += 1;
+    const originalPresent = originalWasPresent(input.name);
+    const current = fieldValue(input);
+    if (originalPresent ? current !== original : (current !== original && current !== "")) n += 1;
   });
   return n;
 }
@@ -3826,7 +3873,8 @@ function updateNavBadges() {
       const cur = localStorage.getItem(key) || "";
       const orig = localStorage.getItem(originalKey(name));
       if (orig === null) continue;
-      if (cur === orig) continue;
+      const present = originalWasPresent(name);
+      if (present ? cur === orig : (cur === orig || cur === "")) continue;
       const path = localStorage.getItem(pageKey(name));
       if (!path) continue;
       byPathChanged[path] = (byPathChanged[path] || 0) + 1;
@@ -3928,7 +3976,7 @@ function collectPendingRemovals() {
     const cur = localStorage.getItem(key) || "";
     if (cur !== "") continue;                            // still has a value
     const orig = localStorage.getItem(originalKey(name));
-    if (!orig) continue;                                  // wasn't on server
+    if (!originalWasPresent(name)) continue;              // wasn't on server
     const path = localStorage.getItem(pageKey(name)) || "";
     list.push({name, orig, path});
   }
@@ -3941,7 +3989,7 @@ function collectPendingRemovals() {
     const name = key.slice("mihomo-original:".length);
     if (seen.has(name)) continue;
     const orig = localStorage.getItem(key) || "";
-    if (!orig) continue;
+    if (!originalWasPresent(name)) continue;
     if (localStorage.getItem(envKey(name)) !== null) continue;
     seen.add(name);
     list.push({name, orig, path: localStorage.getItem(pageKey(name)) || ""});
@@ -4308,11 +4356,30 @@ function bcHandleEvent(ev) {
   }
 }
 
-// "Combined-from-best": enumerate ALL working strategies and produce the
-// full http×tls×quic cross-product as combined `--new`-chained lines.
-// Each combination becomes its own row with Copy / → ZAPRET2_CMD buttons.
-// Cap row count to keep the UI sane.
-const BC_COMBINED_CAP = 60;
+function bcHashString(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function bcSpreadOptions(arr, salt) {
+  return arr.slice().sort((a, b) => {
+    const ah = bcHashString(salt + "|" + (a.name || "") + "|" + (a.args || ""));
+    const bh = bcHashString(salt + "|" + (b.name || "") + "|" + (b.args || ""));
+    return ah - bh;
+  });
+}
+
+function bcPickOption(arr, idx) {
+  return arr.length ? arr[idx % arr.length] : null;
+}
+
+// Combined-from-best: TLS is the backbone. Emit one combined row per unique
+// working TLS strategy; spread found HTTP and QUIC strategies across those rows.
+// This avoids the old 60-row cap and the huge http x tls x quic cross-product.
 
 // Throttle bcCombinedRefresh — при потоке strategy-событий перестраивать DOM
 // на каждое срабатывает дорого. RAF-coalescing склеивает в один кадр.
@@ -4342,43 +4409,28 @@ function bcCombinedRefresh() {
   const T = dedup(tlss);
   const realQ = dedup(wins.filter(r => r.proto === "quic"));
   if (!H.length && !T.length) { box.hidden = true; return; }
-  const DEFAULT_Q = {
-    name: "(QUIC по умолчанию)",
-    proto: "quic",
-    args: "--filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=20",
-  };
-  const Q = realQ.length ? realQ : [DEFAULT_Q];
-  // Also allow "no QUIC at all" as a valid choice (HTTP+TLS only combo).
-  const NO_Q = { name: "(без QUIC)", proto: null, args: null };
-  const qOptions = [NO_Q].concat(Q);
-
-  // Build all combinations. Treat empty H/T like an empty placeholder so
-  // we still emit a combined even if only one of the two is present.
-  const HOpts = H.length ? H : [{ name: "(без HTTP)", proto: null, args: null }];
-  const TOpts = T.length ? T : [{ name: "(без TLS)",  proto: null, args: null }];
-
+  const HH = bcSpreadOptions(H, "bc-http");
+  const TT = bcSpreadOptions(T, "bc-tls");
+  const QQ = bcSpreadOptions(realQ, "bc-quic");
+  const base = TT.length ? TT : (HH.length ? HH : QQ);
   const variants = [];
-  for (const h of HOpts) {
-    for (const t of TOpts) {
-      for (const q of qOptions) {
-        if (!h.args && !t.args && !q.args) continue; // empty combined
-        const parts = [];
-        if (h.args) parts.push(h.args);
-        if (t.args) parts.push(t.args);
-        if (q.args) parts.push(q.args);
-        variants.push({
-          combined: parts.join(" --new "),
-          tag: [
-            h.args ? "HTTP=" + h.name : "—",
-            t.args ? "TLS="  + t.name : "—",
-            q.args ? "QUIC=" + q.name : "—"
-          ].join(", "),
-        });
-        if (variants.length >= BC_COMBINED_CAP) break;
-      }
-      if (variants.length >= BC_COMBINED_CAP) break;
-    }
-    if (variants.length >= BC_COMBINED_CAP) break;
+  for (let i = 0; i < base.length; i++) {
+    const t = TT.length ? base[i] : null;
+    const h = TT.length ? bcPickOption(HH, i) : (base[i].proto === "http" ? base[i] : null);
+    const q = TT.length ? bcPickOption(QQ, i) : (base[i].proto === "quic" ? base[i] : bcPickOption(QQ, i));
+    const parts = [];
+    if (h && h.args) parts.push(h.args);
+    if (t && t.args) parts.push(t.args);
+    if (q && q.args) parts.push(q.args);
+    if (!parts.length) continue;
+    variants.push({
+      combined: parts.join(" --new "),
+      tag: [
+        h && h.args ? "HTTP=" + h.name : "—",
+        t && t.args ? "TLS="  + t.name : "—",
+        q && q.args ? "QUIC=" + q.name : "—"
+      ].join(", "),
+    });
   }
 
   if (variants.length === 0) { box.hidden = true; return; }
@@ -4400,8 +4452,7 @@ function bcCombinedRefresh() {
     list.appendChild(row);
   }
   document.getElementById("bcCombinedSummary").textContent =
-    "— " + variants.length + " вариант(ов) из " + H.length + " HTTP × " + T.length + " TLS × " + qOptions.length + " QUIC" +
-    (variants.length >= BC_COMBINED_CAP ? " (обрезано)" : "");
+    "— " + variants.length + " вариант(ов): база TLS " + T.length + ", HTTP " + H.length + ", QUIC " + realQ.length;
 }
 
 function bcCombinedCopyOne(btn) {
@@ -4581,7 +4632,7 @@ function bcFormValues() {
   if (document.getElementById("bcTestQuic").checked)  tests.push("quic");
   const fb = document.getElementById("bcUseFakebin");
   return {
-    domains:     (document.getElementById("bcDomains").value || "").trim(),
+    domains:     checkerDomainsValue("bcDomains"),
     workers:     parseInt(document.getElementById("bcWorkers").value, 10) || 8,
     level:       document.getElementById("bcLevel").value,
     fakebin:     fb && fb.checked ? "1" : "0",
@@ -5091,11 +5142,9 @@ function bc1HandleEvent(ev) {
   }
 }
 
-// "Combined-from-best": enumerate ALL working strategies and produce the
-// full http×tls×quic cross-product as combined `--new`-chained lines.
-// Each combination becomes its own row with Copy / → ZAPRET_CMD buttons.
-// Cap row count to keep the UI sane.
-const BC1_COMBINED_CAP = 60;
+// Combined-from-best: TLS is the backbone. Emit one combined row per unique
+// working TLS strategy; spread found HTTP and QUIC strategies across those rows.
+// This avoids the old 60-row cap and the huge http x tls x quic cross-product.
 
 // Throttle bc1CombinedRefresh — при потоке strategy-событий перестраивать DOM
 // на каждое срабатывает дорого. RAF-coalescing склеивает в один кадр.
@@ -5125,45 +5174,28 @@ function bc1CombinedRefresh() {
   const T = dedup(tlss);
   const realQ = dedup(wins.filter(r => r.proto === "quic"));
   if (!H.length && !T.length) { box.hidden = true; return; }
-  // BC1 = nfqws v1 синтаксис, не lua. Дефолтная QUIC-стратегия отличается
-  // от BC2 — здесь --dpi-desync=fake без lua-цепочки.
-  const DEFAULT_Q = {
-    name: "(QUIC по умолчанию)",
-    proto: "quic",
-    args: "--filter-udp=0-65535 --dpi-desync=fake --dpi-desync-repeats=20",
-  };
-  const Q = realQ.length ? realQ : [DEFAULT_Q];
-  // Also allow "no QUIC at all" as a valid choice (HTTP+TLS only combo).
-  const NO_Q = { name: "(без QUIC)", proto: null, args: null };
-  const qOptions = [NO_Q].concat(Q);
-
-  // Build all combinations. Treat empty H/T like an empty placeholder so
-  // we still emit a combined even if only one of the two is present.
-  const HOpts = H.length ? H : [{ name: "(без HTTP)", proto: null, args: null }];
-  const TOpts = T.length ? T : [{ name: "(без TLS)",  proto: null, args: null }];
-
+  const HH = bcSpreadOptions(H, "bc1-http");
+  const TT = bcSpreadOptions(T, "bc1-tls");
+  const QQ = bcSpreadOptions(realQ, "bc1-quic");
+  const base = TT.length ? TT : (HH.length ? HH : QQ);
   const variants = [];
-  for (const h of HOpts) {
-    for (const t of TOpts) {
-      for (const q of qOptions) {
-        if (!h.args && !t.args && !q.args) continue; // empty combined
-        const parts = [];
-        if (h.args) parts.push(h.args);
-        if (t.args) parts.push(t.args);
-        if (q.args) parts.push(q.args);
-        variants.push({
-          combined: parts.join(" --new "),
-          tag: [
-            h.args ? "HTTP=" + h.name : "—",
-            t.args ? "TLS="  + t.name : "—",
-            q.args ? "QUIC=" + q.name : "—"
-          ].join(", "),
-        });
-        if (variants.length >= BC1_COMBINED_CAP) break;
-      }
-      if (variants.length >= BC1_COMBINED_CAP) break;
-    }
-    if (variants.length >= BC1_COMBINED_CAP) break;
+  for (let i = 0; i < base.length; i++) {
+    const t = TT.length ? base[i] : null;
+    const h = TT.length ? bcPickOption(HH, i) : (base[i].proto === "http" ? base[i] : null);
+    const q = TT.length ? bcPickOption(QQ, i) : (base[i].proto === "quic" ? base[i] : bcPickOption(QQ, i));
+    const parts = [];
+    if (h && h.args) parts.push(h.args);
+    if (t && t.args) parts.push(t.args);
+    if (q && q.args) parts.push(q.args);
+    if (!parts.length) continue;
+    variants.push({
+      combined: parts.join(" --new "),
+      tag: [
+        h && h.args ? "HTTP=" + h.name : "—",
+        t && t.args ? "TLS="  + t.name : "—",
+        q && q.args ? "QUIC=" + q.name : "—"
+      ].join(", "),
+    });
   }
 
   if (variants.length === 0) { box.hidden = true; return; }
@@ -5185,8 +5217,7 @@ function bc1CombinedRefresh() {
     list.appendChild(row);
   }
   document.getElementById("bc1CombinedSummary").textContent =
-    "— " + variants.length + " вариант(ов) из " + H.length + " HTTP × " + T.length + " TLS × " + qOptions.length + " QUIC" +
-    (variants.length >= BC1_COMBINED_CAP ? " (обрезано)" : "");
+    "— " + variants.length + " вариант(ов): база TLS " + T.length + ", HTTP " + H.length + ", QUIC " + realQ.length;
 }
 
 function bc1CombinedCopyOne(btn) {
@@ -5366,7 +5397,7 @@ function bc1FormValues() {
   if (document.getElementById("bc1TestQuic").checked)  tests.push("quic");
   const fb = document.getElementById("bc1UseFakebin");
   return {
-    domains:     (document.getElementById("bc1Domains").value || "").trim(),
+    domains:     checkerDomainsValue("bc1Domains"),
     workers:     parseInt(document.getElementById("bc1Workers").value, 10) || 8,
     level:       document.getElementById("bc1Level").value,
     fakebin:     fb && fb.checked ? "1" : "0",
@@ -5857,7 +5888,7 @@ function bdcFormValues() {
   if (document.getElementById("bdcTestTls12").checked) tests.push("tls12");
   if (document.getElementById("bdcTestTls13").checked) tests.push("tls13");
   if (document.getElementById("bdcTestQuic").checked) tests.push("quic");
-  return { domains: (document.getElementById("bdcDomains").value || "").trim(), workers: parseInt(document.getElementById("bdcWorkers").value, 10) || 4, level: document.getElementById("bdcLevel").value, fakebin: document.getElementById("bdcUseFakebin").checked ? "1" : "0", hard_min_kb: parseInt(document.getElementById("bdcHardMinKb").value, 10) || 16, rnd_repeats: parseInt(document.getElementById("bdcRndRepeats").value, 10) || 2, tests };
+  return { domains: checkerDomainsValue("bdcDomains"), workers: parseInt(document.getElementById("bdcWorkers").value, 10) || 4, level: document.getElementById("bdcLevel").value, fakebin: document.getElementById("bdcUseFakebin").checked ? "1" : "0", hard_min_kb: parseInt(document.getElementById("bdcHardMinKb").value, 10) || 16, rnd_repeats: parseInt(document.getElementById("bdcRndRepeats").value, 10) || 2, tests };
 }
 
 function byedpiCheckCustom() {

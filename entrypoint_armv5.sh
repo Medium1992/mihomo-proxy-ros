@@ -24,6 +24,11 @@ done
 
 set -eu
 
+ORIGINAL_ENV_FILE="${ORIGINAL_ENV_FILE:-/dev/shm/mihomo-original-envs}"
+mkdir -p "$(dirname "$ORIGINAL_ENV_FILE")" 2>/dev/null || true
+printenv | cut -d= -f1 | sort -u > "$ORIGINAL_ENV_FILE" 2>/dev/null || true
+export ORIGINAL_ENV_FILE
+
 TPROXY="${TPROXY:-true}"
 LOG_LEVEL="${LOG_LEVEL:-error}"
 EXTERNAL_UI_URL="${EXTERNAL_UI_URL:-https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip}"

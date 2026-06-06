@@ -4,14 +4,16 @@ ARG TARGETARCH
 ARG TARGETVARIANT
 ARG AMD64VERSION
 ARG TAG
-ARG GO_VERSION=1.26
+ARG GO_VERSION
 ARG MIHOMO_CUSTOM_PATCHES=1
 ARG VERSION_OVERRIDE=""
 ARG WITH_GVISOR=1
 ARG BUILDTIME
 RUN apk add --no-cache curl jq gzip tar unzip git make python3
 
-RUN case "$(apk --print-arch)" in \
+RUN [ -n "$GO_VERSION" ] || { echo "GO_VERSION build arg is required"; exit 1; } && \
+    echo "Using Go ${GO_VERSION} from MetaCubeX/go build release" && \
+    case "$(apk --print-arch)" in \
         x86_64) GO_BUILD_ARCH=amd64 ;; \
         aarch64) GO_BUILD_ARCH=arm64 ;; \
         *) echo "Unsupported Go build arch: $(apk --print-arch)" && exit 1 ;; \

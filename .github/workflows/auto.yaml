@@ -14,6 +14,7 @@ jobs:
     outputs:
       build_needed: ${{ steps.compare.outputs.build_needed }}
       tag: ${{ steps.mihomo.outputs.tag }}
+      go_version: ${{ steps.mihomo.outputs.go_version }}
 
     steps:
       - uses: actions/checkout@v6
@@ -23,6 +24,20 @@ jobs:
         run: |
           TAG=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r '.tag_name')
           echo "tag=$TAG" >> $GITHUB_OUTPUT
+          GO_VERSION=$(curl -fsSL https://api.github.com/repos/MetaCubeX/go/releases/tags/build | jq -r '
+            [.assets[].name
+             | capture("^go(?<version>[0-9]+[.][0-9]+([.][0-9]+)?)[.]linux-amd64[.]tar[.]gz$")?
+             | .version]
+            | unique
+            | sort_by(split(".") | map(tonumber))
+            | last
+          ')
+          if [ -z "$GO_VERSION" ]; then
+            echo "Failed to read Go version from MetaCubeX/go build release"
+            exit 1
+          fi
+          echo "go_version=$GO_VERSION" >> $GITHUB_OUTPUT
+          echo "MetaCubeX/go build version: $GO_VERSION"
 
       - name: Get my latest release
         id: mine
@@ -117,6 +132,7 @@ jobs:
             -f Dockerfile-release \
             --platform linux/${{ matrix.arch }}${{ matrix.variant && format('/{0}', matrix.variant) || '' }} \
             --build-arg TAG=${{ needs.release-check.outputs.tag }} \
+            --build-arg GO_VERSION=${{ needs.release-check.outputs.go_version }} \
             --build-arg AMD64VERSION=${{ matrix.amd64 }} \
             --build-arg MIHOMO_CUSTOM_PATCHES=${{ env.MIHOMO_CUSTOM_PATCHES }} \
             --build-arg BUILDTIME="$(date)" \

@@ -16,6 +16,7 @@ jobs:
       upstream_tag: ${{ steps.upstream.outputs.upstream_tag }}
       upstream_ref: ${{ steps.upstream.outputs.upstream_ref }}
       version_tag: ${{ steps.upstream.outputs.version_tag }}
+      go_version: ${{ steps.upstream.outputs.go_version }}
 
     steps:
       - name: Get latest upstream alpha tag
@@ -57,6 +58,21 @@ jobs:
           echo "upstream_tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "upstream_ref=$UPSTREAM_REF" >> "$GITHUB_OUTPUT"
           echo "version_tag=$VERSION_TAG" >> "$GITHUB_OUTPUT"
+
+          GO_VERSION=$(curl -fsSL https://api.github.com/repos/MetaCubeX/go/releases/tags/build | jq -r '
+            [.assets[].name
+             | capture("^go(?<version>[0-9]+[.][0-9]+([.][0-9]+)?)[.]linux-amd64[.]tar[.]gz$")?
+             | .version]
+            | unique
+            | sort_by(split(".") | map(tonumber))
+            | last
+          ')
+          if [ -z "$GO_VERSION" ]; then
+            echo "Failed to read Go version from MetaCubeX/go build release"
+            exit 1
+          fi
+          echo "go_version=$GO_VERSION" >> "$GITHUB_OUTPUT"
+          echo "MetaCubeX/go build version: $GO_VERSION"
 
       - name: Get current alpha release version
         id: mine
@@ -159,6 +175,7 @@ jobs:
             --platform linux/${{ matrix.arch }}${{ matrix.variant && format('/{0}', matrix.variant) || '' }} \
             --build-arg TAG=${{ needs.alpha-check.outputs.upstream_ref }} \
             --build-arg VERSION_OVERRIDE=${{ needs.alpha-check.outputs.version_tag }} \
+            --build-arg GO_VERSION=${{ needs.alpha-check.outputs.go_version }} \
             --build-arg AMD64VERSION=${{ matrix.amd64 }} \
             --build-arg MIHOMO_CUSTOM_PATCHES=${{ env.MIHOMO_CUSTOM_PATCHES }} \
             --build-arg BUILDTIME="$(date)" \
