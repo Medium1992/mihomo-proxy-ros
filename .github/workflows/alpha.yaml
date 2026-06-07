@@ -352,6 +352,22 @@ jobs:
         run: |
           echo "BUILDTIME=$(date)" >> $GITHUB_ENV
 
+      - name: Prepare build secret files
+        if: steps.check_versions.outputs.build_needed == 'true'
+        env:
+          AWG: ${{ secrets.AWG }}
+          HAPP1: ${{ secrets.HAPP1 }}
+          HAPP2: ${{ secrets.HAPP2 }}
+          HAPP3: ${{ secrets.HAPP3 }}
+          HAPP4: ${{ secrets.HAPP4 }}
+        run: |
+          umask 077
+          printf '%s' "$AWG"   > "${RUNNER_TEMP}/awg"
+          printf '%s' "$HAPP1" > "${RUNNER_TEMP}/happ1"
+          printf '%s' "$HAPP2" > "${RUNNER_TEMP}/happ2"
+          printf '%s' "$HAPP3" > "${RUNNER_TEMP}/happ3"
+          printf '%s' "$HAPP4" > "${RUNNER_TEMP}/happ4"
+
       - name: Build and push amd64v1
         if: steps.check_versions.outputs.build_needed == 'true'
         uses: docker/build-push-action@v7
@@ -363,12 +379,12 @@ jobs:
           build-args: |
             AMD64VERSION=v1
             MIHOMO_RELEASE_TAG=alpha
-          secrets: |
-            "awg=${{ secrets.AWG }}"
-            "happ1=${{ secrets.HAPP1 }}"
-            "happ2=${{ secrets.HAPP2 }}"
-            "happ3=${{ secrets.HAPP3 }}"
-            "happ4=${{ secrets.HAPP4 }}"
+          secret-files: |
+            awg=${{ runner.temp }}/awg
+            happ1=${{ runner.temp }}/happ1
+            happ2=${{ runner.temp }}/happ2
+            happ3=${{ runner.temp }}/happ3
+            happ4=${{ runner.temp }}/happ4
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}
@@ -388,12 +404,12 @@ jobs:
           build-args: |
             AMD64VERSION=v2
             MIHOMO_RELEASE_TAG=alpha
-          secrets: |
-            "awg=${{ secrets.AWG }}"
-            "happ1=${{ secrets.HAPP1 }}"
-            "happ2=${{ secrets.HAPP2 }}"
-            "happ3=${{ secrets.HAPP3 }}"
-            "happ4=${{ secrets.HAPP4 }}"
+          secret-files: |
+            awg=${{ runner.temp }}/awg
+            happ1=${{ runner.temp }}/happ1
+            happ2=${{ runner.temp }}/happ2
+            happ3=${{ runner.temp }}/happ3
+            happ4=${{ runner.temp }}/happ4
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}
@@ -413,12 +429,12 @@ jobs:
           build-args: |
             AMD64VERSION=v4
             MIHOMO_RELEASE_TAG=alpha
-          secrets: |
-            "awg=${{ secrets.AWG }}"
-            "happ1=${{ secrets.HAPP1 }}"
-            "happ2=${{ secrets.HAPP2 }}"
-            "happ3=${{ secrets.HAPP3 }}"
-            "happ4=${{ secrets.HAPP4 }}"
+          secret-files: |
+            awg=${{ runner.temp }}/awg
+            happ1=${{ runner.temp }}/happ1
+            happ2=${{ runner.temp }}/happ2
+            happ3=${{ runner.temp }}/happ3
+            happ4=${{ runner.temp }}/happ4
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}
@@ -438,12 +454,12 @@ jobs:
           build-args: |
             AMD64VERSION=v3
             MIHOMO_RELEASE_TAG=alpha
-          secrets: |
-            "awg=${{ secrets.AWG }}"
-            "happ1=${{ secrets.HAPP1 }}"
-            "happ2=${{ secrets.HAPP2 }}"
-            "happ3=${{ secrets.HAPP3 }}"
-            "happ4=${{ secrets.HAPP4 }}"
+          secret-files: |
+            awg=${{ runner.temp }}/awg
+            happ1=${{ runner.temp }}/happ1
+            happ2=${{ runner.temp }}/happ2
+            happ3=${{ runner.temp }}/happ3
+            happ4=${{ runner.temp }}/happ4
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}
