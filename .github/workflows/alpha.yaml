@@ -365,6 +365,10 @@ jobs:
             MIHOMO_RELEASE_TAG=alpha
           secrets: |
             "awg=${{ secrets.AWG }}"
+            "happ1=${{ secrets.HAPP1 }}"
+            "happ2=${{ secrets.HAPP2 }}"
+            "happ3=${{ secrets.HAPP3 }}"
+            "happ4=${{ secrets.HAPP4 }}"
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}
@@ -386,6 +390,10 @@ jobs:
             MIHOMO_RELEASE_TAG=alpha
           secrets: |
             "awg=${{ secrets.AWG }}"
+            "happ1=${{ secrets.HAPP1 }}"
+            "happ2=${{ secrets.HAPP2 }}"
+            "happ3=${{ secrets.HAPP3 }}"
+            "happ4=${{ secrets.HAPP4 }}"
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}
@@ -407,6 +415,10 @@ jobs:
             MIHOMO_RELEASE_TAG=alpha
           secrets: |
             "awg=${{ secrets.AWG }}"
+            "happ1=${{ secrets.HAPP1 }}"
+            "happ2=${{ secrets.HAPP2 }}"
+            "happ3=${{ secrets.HAPP3 }}"
+            "happ4=${{ secrets.HAPP4 }}"
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}
@@ -428,6 +440,10 @@ jobs:
             MIHOMO_RELEASE_TAG=alpha
           secrets: |
             "awg=${{ secrets.AWG }}"
+            "happ1=${{ secrets.HAPP1 }}"
+            "happ2=${{ secrets.HAPP2 }}"
+            "happ3=${{ secrets.HAPP3 }}"
+            "happ4=${{ secrets.HAPP4 }}"
           tags: |
             ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}

@@ -303,7 +303,13 @@ function initToolsPage() {
     ["toolB64Input", toolBase64Decode],
     ["toolRegexSource", toolRegexTest],
     ["toolRegexText", toolRegexTest],
-    ["toolXrayJson", toolXrayConvert]
+    ["toolXrayJson", toolXrayConvert],
+    ["toolHappInput", toolHappInspect],
+    ["toolVanyaInput", toolVanyaBuild],
+    ["toolVanyaDomain", toolVanyaBuild],
+    ["toolHttpUrl", () => {}],
+    ["toolHttpMethod", () => {}],
+    ["toolHttpBody", () => {}]
   ].forEach(([id, fn]) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -316,6 +322,10 @@ function initToolsPage() {
   toolBase64Decode();
   toolRegexTest();
   toolXrayConvert();
+  toolHappInspect();
+  toolVanyaBuild();
+  toolVanyaRestore();
+  toolHttpInit();
 }
 
 function switchToolPane(id) {
@@ -359,6 +369,29 @@ function toolRestoreInputs() {
       else el.value = localStorage.getItem(key);
     } catch (e) {}
   });
+}
+
+function toolPersistReadonly(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  try { localStorage.setItem(toolStorageKey(id), el.value); } catch (e) {}
+}
+
+function toolRestoreReadonly(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  try {
+    const v = localStorage.getItem(toolStorageKey(id));
+    if (v !== null) el.value = v;
+  } catch (e) {}
+}
+
+function toolVanyaPersist() {
+  ["toolVanyaSs", "toolVanyaYaml", "toolVanyaResponse"].forEach(toolPersistReadonly);
+}
+
+function toolVanyaRestore() {
+  ["toolVanyaSs", "toolVanyaYaml", "toolVanyaResponse"].forEach(toolRestoreReadonly);
 }
 
 function toolUtf8ToBase64(text) {
@@ -475,6 +508,393 @@ function toolCopy(id, btn) {
     btn.textContent = "Скопировано";
     setTimeout(() => { btn.textContent = old; }, 900);
   }
+}
+
+function toolChunkShuffle(text, size, order) {
+  const src = String(text || "");
+  const out = [];
+  for (let i = 0; i < src.length; i += size) {
+    const part = src.slice(i, i + size);
+    if (part.length < size) {
+      out.push(part);
+      continue;
+    }
+    out.push(order.map((idx) => part[idx] || "").join(""));
+  }
+  return out.join("");
+}
+
+function toolHappPrefixInfo(raw) {
+  const clean = String(raw || "").trim();
+  const noHash = clean.includes("#") ? clean.slice(0, clean.indexOf("#")) : clean;
+  const prefixes = [
+    { prefix: "happ://crypt5/", type: "CRYPTO5", mode: "CRYPTO_5", ordinal: 4 },
+    { prefix: "happ://crypt4/", type: "CRYPTO4", mode: "RSA_4096_3", ordinal: 3 },
+    { prefix: "happ://crypt3/", type: "CRYPTO3", mode: "RSA_4096_2", ordinal: 2 },
+    { prefix: "happ://crypt2/", type: "CRYPTO2", mode: "RSA_4096", ordinal: 1 },
+    { prefix: "happ://crypt/", type: "CRYPTO", mode: "RSA_1024", ordinal: 0 }
+  ];
+  const lower = noHash.toLowerCase();
+  for (const item of prefixes) {
+    if (lower.startsWith(item.prefix)) {
+      return { ...item, payload: noHash.slice(item.prefix.length), input: clean };
+    }
+  }
+  return { prefix: "", type: "", mode: "", ordinal: null, payload: noHash, input: clean };
+}
+
+function toolHappInspect() {
+  const input = document.getElementById("toolHappInput")?.value || "";
+  const payloadEl = document.getElementById("toolHappPayload");
+  const diagEl = document.getElementById("toolHappDiag");
+  const info = toolHappPrefixInfo(input);
+  if (payloadEl) payloadEl.value = info.payload || "";
+  if (!input.trim()) {
+    if (diagEl) diagEl.value = "";
+    toolSetStatus("toolHappStatus", "", true);
+    return;
+  }
+  const lines = [];
+  if (!info.prefix) {
+    lines.push("Happ crypt prefix not detected.");
+    lines.push("Supported prefixes: happ://crypt/, crypt2/, crypt3/, crypt4/, crypt5/.");
+    lines.push("Payload is shown as raw input without wrapper.");
+    if (diagEl) diagEl.value = lines.join("\n");
+    toolSetStatus("toolHappStatus", "Не найден happ://crypt* prefix", false);
+    return;
+  }
+  lines.push(`deeplink: ${info.type}`);
+  lines.push(`mode: ${info.mode}`);
+  lines.push(`native ordinal: ${info.ordinal}`);
+  lines.push(`payload length: ${info.payload.length}`);
+  lines.push("");
+  if (info.type === "CRYPTO5") {
+    const preNative = toolChunkShuffle(info.payload, 6, [1, 3, 5, 0, 2, 4]);
+    lines.push("crypt5 Java pre-native transform:");
+    lines.push("x10.m11827E(payload):");
+    lines.push(preNative);
+    lines.push("");
+    lines.push("Then app calls ErrorCodeJNIWrapper.m10524c(transformed).");
+    lines.push("Native result is transformed by x10.m11837k(each 2 chars swapped), then Base64-decoded as UTF-8.");
+  } else {
+    lines.push("Java call used by app:");
+    lines.push(`ErrorCodeJNIWrapper.m10523b(${info.ordinal}, payload)`);
+  }
+  lines.push("");
+  lines.push("Final decrypt is inside liberror-code.so; this browser tool prepares and identifies the payload, but does not emulate JNI.");
+  if (diagEl) diagEl.value = lines.join("\n");
+  toolSetStatus("toolHappStatus", `${info.type} / ${info.mode}`, true);
+}
+
+function toolVanyaNormalizeInput(raw, domainRaw) {
+  const value = String(raw || "").trim();
+  const domain = (String(domainRaw || "").trim() || "berezochka.ru").replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+  if (!value) return { endpoint: "", diag: "", token: "" };
+  let ssconf = value;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{3,}$/i.test(value)) {
+    ssconf = `ssconf://${domain}/vanya/${value}`;
+  }
+  if (!/^ssconf:\/\//i.test(ssconf)) throw new Error("ожидается ssconf://... или UUID token");
+  const httpsUrl = "https://" + ssconf.replace(/^ssconf:\/\//i, "");
+  const u = new URL(httpsUrl);
+  const port = u.port || "443";
+  const endpoint = `https://${u.hostname}:${port}${u.pathname}`;
+  const hashParams = new URLSearchParams((u.hash || "").replace(/^#/, ""));
+  const pathParts = u.pathname.split("/").filter(Boolean);
+  const token = pathParts[0] === "vanya" ? (pathParts[1] || "") : "";
+  const apiBase = `https://${u.hostname}`;
+  const diag = [
+    `ssconf: ${ssconf}`,
+    `endpoint: ${endpoint}`,
+    token ? `token: ${token}` : "token: not detected in /vanya/<token>",
+    hashParams.get("certFp") ? `certFp: ${hashParams.get("certFp")}` : "",
+    hashParams.get("httpMethod") ? `httpMethod: ${hashParams.get("httpMethod")}` : "",
+    "",
+    token ? `${apiBase}/app/v1/user/auth/lite?token=${encodeURIComponent(token)}` : "",
+    token ? `${apiBase}/app/v1/user/info?token=${encodeURIComponent(token)}` : "",
+    token ? `${apiBase}/app/v1/qr/${u.hostname}/${encodeURIComponent(token)}.png` : ""
+  ].filter((line, idx, arr) => line || arr[idx - 1]).join("\n");
+  return { endpoint, diag, token };
+}
+
+function toolVanyaBuild() {
+  const input = document.getElementById("toolVanyaInput")?.value || "";
+  const domain = document.getElementById("toolVanyaDomain")?.value || "";
+  const endpointEl = document.getElementById("toolVanyaEndpoint");
+  const diagEl = document.getElementById("toolVanyaDiag");
+  const responseEl = document.getElementById("toolVanyaResponse");
+  if (!input.trim()) {
+    if (endpointEl) endpointEl.value = "";
+    if (diagEl) diagEl.value = "";
+    if (responseEl) responseEl.value = "";
+    toolSetStatus("toolVanyaStatus", "", true);
+    return null;
+  }
+  try {
+    const data = toolVanyaNormalizeInput(input, domain);
+    if (endpointEl) endpointEl.value = data.endpoint;
+    if (diagEl) diagEl.value = data.diag;
+    toolSetStatus("toolVanyaStatus", data.token && data.token.length < 36 ? "Token выглядит обрезанным" : "Endpoint готов", data.token ? data.token.length >= 36 : true);
+    return data;
+  } catch (e) {
+    if (endpointEl) endpointEl.value = "";
+    if (diagEl) diagEl.value = e.message;
+    toolSetStatus("toolVanyaStatus", e.message, false);
+    return null;
+  }
+}
+
+function toolDecodeB64Loose(text) {
+  try { return toolBase64ToUtf8(text); } catch (e) { return text || ""; }
+}
+
+function toolVanyaFetch() {
+  const data = toolVanyaBuild();
+  const responseEl = document.getElementById("toolVanyaResponse");
+  if (!data || !data.endpoint) return;
+  if (responseEl) responseEl.value = "";
+  toolSetStatus("toolVanyaStatus", "Запрашиваю config...", true);
+  const body = new URLSearchParams();
+  body.set("url", data.endpoint);
+  fetch("/cgi-bin/vanya-fetch", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString()
+  }).then((r) => r.json()).then((json) => {
+    const text = toolDecodeB64Loose(json.output_b64 || json.error_b64 || "");
+    if (responseEl) responseEl.value = text;
+    if (json.ok) toolSetStatus("toolVanyaStatus", `HTTP ${json.status || 200}`, true);
+    else toolSetStatus("toolVanyaStatus", json.status ? `HTTP ${json.status}` : "Ошибка запроса", false);
+  }).catch((e) => {
+    if (responseEl) responseEl.value = e.message;
+    toolSetStatus("toolVanyaStatus", "Ошибка CGI/fetch: " + e.message, false);
+  });
+}
+
+function toolHappInspect() {
+  const input = document.getElementById("toolHappInput")?.value || "";
+  const resultEl = document.getElementById("toolHappResult");
+  const info = toolHappPrefixInfo(input);
+  if (!input.trim()) {
+    if (resultEl) resultEl.value = "";
+    toolSetStatus("toolHappStatus", "", true);
+    return;
+  }
+  if (!info.prefix) {
+    if (resultEl) resultEl.value = "";
+    toolSetStatus("toolHappStatus", "Не найден happ://crypt* prefix", false);
+    return;
+  }
+  const lines = [
+    "Декодер Happ пока не подключен к native liberror-code.so.",
+    "",
+    `type: ${info.type}`,
+    `mode: ${info.mode}`,
+    `payload length: ${info.payload.length}`
+  ];
+  if (info.type === "CRYPTO5") {
+    const preNative = toolChunkShuffle(info.payload, 6, [1, 3, 5, 0, 2, 4]);
+    lines.push(`native input length: ${preNative.length}`);
+  } else {
+    lines.push(`native call: ErrorCodeJNIWrapper.m10523b(${info.ordinal}, payload)`);
+  }
+  lines.push("");
+  lines.push("Для реального URL подписки нужен backend, который вызовет Android/JNI или портирует native decrypt.");
+  if (resultEl) resultEl.value = lines.join("\n");
+  toolSetStatus("toolHappStatus", `${info.type} найден, нужен native decrypt`, false);
+}
+
+function toolHappDecode() {
+  const input = document.getElementById("toolHappInput")?.value || "";
+  const resultEl = document.getElementById("toolHappResult");
+  const info = toolHappPrefixInfo(input);
+  if (!info.prefix) {
+    if (resultEl) resultEl.value = "";
+    toolSetStatus("toolHappStatus", "Не найден happ://crypt* prefix", false);
+    return;
+  }
+  if (resultEl) resultEl.value = "";
+  toolSetStatus("toolHappStatus", "Расшифровываю...", true);
+  const body = new URLSearchParams();
+  body.set("link", input.trim());
+  fetch("/cgi-bin/noop-disabled", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString()
+  }).then((r) => r.json()).then((json) => {
+    const text = toolDecodeB64Loose(json.output_b64 || json.error_b64 || "");
+    if (resultEl) resultEl.value = text;
+    toolSetStatus("toolHappStatus", json.ok ? "Готово" : "Ошибка decrypt", !!json.ok);
+  }).catch((e) => {
+    if (resultEl) resultEl.value = e.message;
+    toolSetStatus("toolHappStatus", "Ошибка CGI/fetch: " + e.message, false);
+  });
+}
+
+function toolYamlScalar(value) {
+  return JSON.stringify(String(value ?? ""));
+}
+
+function toolVanyaProxyName(cfg) {
+  const tag = String(cfg?.tag || "").trim();
+  return tag || [cfg?.server, cfg?.server_port || cfg?.port].filter(Boolean).join(":") || "VanyaVPN";
+}
+
+function toolVanyaConfigToOutputs(text) {
+  const cfg = JSON.parse(text);
+  const method = String(cfg.method || cfg.cipher || "").trim();
+  const password = String(cfg.password || "").trim();
+  const server = String(cfg.server || "").trim();
+  const port = String(cfg.server_port || cfg.port || "").trim();
+  if (!method || !password || !server || !port) {
+    throw new Error("в JSON нет method/password/server/server_port");
+  }
+  const name = toolVanyaProxyName(cfg);
+  const user = toolUtf8ToBase64(`${method}:${password}`).replace(/=+$/g, "");
+  const ss = `ss://${user}@${toolHostPort(server, port)}#${encodeURIComponent(name)}`;
+  const yaml = [
+    "proxies:",
+    `  - name: ${toolYamlScalar(name)}`,
+    "    type: ss",
+    `    server: ${toolYamlScalar(server)}`,
+    `    port: ${Number(port) || toolYamlScalar(port)}`,
+    `    cipher: ${toolYamlScalar(method)}`,
+    `    password: ${toolYamlScalar(password)}`,
+    "    udp: true"
+  ].filter(Boolean).join("\n");
+  return { ss, yaml, cfg };
+}
+
+function toolVanyaRenderConfig(text) {
+  const responseEl = document.getElementById("toolVanyaResponse");
+  const ssEl = document.getElementById("toolVanyaSs");
+  const yamlEl = document.getElementById("toolVanyaYaml");
+  if (responseEl) responseEl.value = text || "";
+  if (ssEl) ssEl.value = "";
+  if (yamlEl) yamlEl.value = "";
+  if (!String(text || "").trim()) return null;
+  const out = toolVanyaConfigToOutputs(text);
+  if (ssEl) ssEl.value = out.ss;
+  if (yamlEl) yamlEl.value = out.yaml;
+  return out;
+}
+
+function toolVanyaBuild() {
+  const input = document.getElementById("toolVanyaInput")?.value || "";
+  const domain = document.getElementById("toolVanyaDomain")?.value || "";
+  const endpointEl = document.getElementById("toolVanyaEndpoint");
+  const diagEl = document.getElementById("toolVanyaDiag");
+  const responseEl = document.getElementById("toolVanyaResponse");
+  const ssEl = document.getElementById("toolVanyaSs");
+  const yamlEl = document.getElementById("toolVanyaYaml");
+  if (!input.trim()) {
+    if (endpointEl) endpointEl.value = "";
+    if (diagEl) diagEl.value = "";
+    if (responseEl) responseEl.value = "";
+    if (ssEl) ssEl.value = "";
+    if (yamlEl) yamlEl.value = "";
+    toolSetStatus("toolVanyaStatus", "", true);
+    return null;
+  }
+  try {
+    const data = toolVanyaNormalizeInput(input, domain);
+    if (endpointEl) endpointEl.value = data.endpoint;
+    if (diagEl) diagEl.value = [
+      `token: ${data.token || "not detected"}`,
+      `endpoint: ${data.endpoint}`,
+      "ss:// fragment after # is proxy name",
+      data.token && data.token.length < 36 ? "warning: token выглядит обрезанным" : ""
+    ].filter(Boolean).join("\n");
+    toolSetStatus("toolVanyaStatus", data.token && data.token.length < 36 ? "Token выглядит обрезанным" : "Endpoint готов", data.token ? data.token.length >= 36 : true);
+    return data;
+  } catch (e) {
+    if (endpointEl) endpointEl.value = "";
+    if (diagEl) diagEl.value = e.message;
+    toolSetStatus("toolVanyaStatus", e.message, false);
+    return null;
+  }
+}
+
+function toolVanyaFetch() {
+  const data = toolVanyaBuild();
+  const responseEl = document.getElementById("toolVanyaResponse");
+  const ssEl = document.getElementById("toolVanyaSs");
+  const yamlEl = document.getElementById("toolVanyaYaml");
+  if (!data || !data.endpoint) return;
+  if (responseEl) responseEl.value = "";
+  if (ssEl) ssEl.value = "";
+  if (yamlEl) yamlEl.value = "";
+  toolSetStatus("toolVanyaStatus", "Запрашиваю config...", true);
+  const body = new URLSearchParams();
+  body.set("url", data.endpoint);
+  fetch("/cgi-bin/vanya-fetch", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString()
+  }).then((r) => r.json()).then((json) => {
+    const text = toolDecodeB64Loose(json.output_b64 || json.error_b64 || "");
+    if (json.ok) {
+      try {
+        const rendered = toolVanyaRenderConfig(text);
+        toolSetStatus("toolVanyaStatus", rendered ? `HTTP ${json.status || 200}, ${toolVanyaProxyName(rendered.cfg)}` : `HTTP ${json.status || 200}`, true);
+      } catch (e) {
+        if (responseEl) responseEl.value = text;
+        toolSetStatus("toolVanyaStatus", `HTTP ${json.status || 200}, JSON не превращён в ss://: ${e.message}`, false);
+      }
+    } else {
+      if (responseEl) responseEl.value = text;
+      toolSetStatus("toolVanyaStatus", json.status ? `HTTP ${json.status}` : "Ошибка запроса", false);
+    }
+  }).catch((e) => {
+    if (responseEl) responseEl.value = e.message;
+    toolSetStatus("toolVanyaStatus", "Ошибка CGI/fetch: " + e.message, false);
+  });
+}
+
+function toolHappDecode() {
+  toolHappInspect();
+}
+
+function toolVanyaFetch() {
+  const data = toolVanyaBuild();
+  const responseEl = document.getElementById("toolVanyaResponse");
+  const ssEl = document.getElementById("toolVanyaSs");
+  const yamlEl = document.getElementById("toolVanyaYaml");
+  if (!data || !data.endpoint) return;
+  if (responseEl) responseEl.value = "";
+  if (ssEl) ssEl.value = "";
+  if (yamlEl) yamlEl.value = "";
+  toolSetStatus("toolVanyaStatus", "Запрашиваю config...", true);
+  const body = new URLSearchParams();
+  body.set("url", data.endpoint);
+  fetch("/cgi-bin/vanya-fetch", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString()
+  }).then((r) => r.json()).then((json) => {
+    const text = toolDecodeB64Loose(json.output_b64 || json.error_b64 || "");
+    try {
+      const rendered = toolVanyaRenderConfig(text);
+      if (rendered) {
+        const status = json.status && Number(json.status) > 0 ? `HTTP ${json.status}` : "config получен";
+        toolSetStatus("toolVanyaStatus", `${status}, ${toolVanyaProxyName(rendered.cfg)}`, true);
+        toolVanyaPersist();
+        return;
+      }
+    } catch (e) {
+      if (responseEl) responseEl.value = text;
+      toolSetStatus("toolVanyaStatus", json.ok ? `JSON не превращён в ss://: ${e.message}` : (json.status ? `HTTP ${json.status}` : "Ошибка запроса"), false);
+      toolVanyaPersist();
+      return;
+    }
+    if (responseEl) responseEl.value = text;
+    toolSetStatus("toolVanyaStatus", json.ok ? "Пустой ответ" : (json.status ? `HTTP ${json.status}` : "Ошибка запроса"), !!json.ok);
+    toolVanyaPersist();
+  }).catch((e) => {
+    if (responseEl) responseEl.value = e.message;
+    toolSetStatus("toolVanyaStatus", "Ошибка CGI/fetch: " + e.message, false);
+    toolVanyaPersist();
+  });
 }
 
 function toolParam(params, key, value) {
@@ -736,20 +1156,21 @@ function toolBuildShadowsocks(ob) {
 }
 
 function toolBuildHy2(ob) {
+  const hy = ob.streamSettings?.hysteriaSettings || ob.streamSettings?.hy2Settings || {};
   const s = ob.settings?.servers?.[0] || ob.settings?.server || ob.settings || {};
-  const host = s.address || s.server;
-  const port = s.port;
-  const password = s.password || s.auth || ob.settings?.password || ob.settings?.auth;
+  const host = s.address || s.server || ob.address || ob.server;
+  const port = s.port || ob.port;
+  const password = hy.auth || hy.password || s.password || s.auth || ob.settings?.password || ob.settings?.auth;
   if (!host || !password) return null;
   const params = new URLSearchParams();
   const tls = ob.streamSettings?.tlsSettings || {};
   toolParam(params, "sni", tls.serverName || s.serverName);
   toolParam(params, "alpn", Array.isArray(tls.alpn) ? tls.alpn.join(",") : tls.alpn);
   toolParam(params, "insecure", tls.allowInsecure ? "1" : "");
-  toolParam(params, "obfs", ob.settings?.obfs || s.obfs);
+  toolParam(params, "obfs", hy.obfs || ob.settings?.obfs || s.obfs);
   toolApplyHy2Salamander(params, ob.streamSettings?.finalmask);
   toolFinalMaskParams(params, ob.streamSettings?.finalmask);
-  const scheme = String(ob.settings?.version || ob.version || "2") === "1" ? "hysteria" : "hysteria2";
+  const scheme = String(hy.version || ob.settings?.version || ob.version || "2") === "1" ? "hysteria" : "hysteria2";
   return `${scheme}://${encodeURIComponent(password)}@${toolHostPort(host, port)}?${params.toString()}#${encodeURIComponent(toolTag(ob, host))}`;
 }
 
@@ -6090,4 +6511,93 @@ function bc1CopyAllLog(ev) {
   const btn = ev && ev.target;
   const pre = document.getElementById('bc1Log');
   _bcCopyAllText(pre ? (pre.textContent || '') : '', btn);
+}
+
+const TOOL_HTTP_DEFAULT_HEADERS = ["user-agent", "x-hwid", "x-device-model", "x-device-os", "x-ver-os"];
+
+function toolHttpHeaderSync(editor) {
+  const hidden = document.getElementById("toolHttpHeaders");
+  if (!hidden) return;
+  const items = [];
+  editor.querySelectorAll(".headers-row").forEach((row) => {
+    const key = row.querySelector(".headers-key").value.trim();
+    const value = row.querySelector(".headers-value").value.trim();
+    if (key) items.push(key + "=" + value);
+  });
+  hidden.value = items.join("#");
+  toolSaveInput(hidden);
+}
+
+function toolHttpAddHeaderRow(editor, key, value) {
+  const row = document.createElement("div");
+  row.className = "headers-row";
+  row.innerHTML = `<input class="headers-key" value="${escapeAttr(key)}" placeholder="Header"><input class="headers-value" value="${escapeAttr(value)}" placeholder="value"><button type="button">Удалить</button>`;
+  editor.querySelector(".headers-rows").appendChild(row);
+  row.querySelectorAll("input").forEach((input) => input.addEventListener("input", () => toolHttpHeaderSync(editor)));
+  row.querySelector("button").addEventListener("click", () => { row.remove(); toolHttpHeaderSync(editor); });
+}
+
+function toolHttpInit() {
+  const editor = document.querySelector("[data-http-headers]");
+  if (editor && editor.dataset.tlWired !== "true") {
+    editor.dataset.tlWired = "true";
+    const hidden = document.getElementById("toolHttpHeaders");
+    const current = (hidden && hidden.value.trim()) || "";
+    if (current) {
+      current.split("#").forEach((item) => { const p = splitHeaderItem(item); toolHttpAddHeaderRow(editor, p.key, p.value); });
+    } else {
+      TOOL_HTTP_DEFAULT_HEADERS.forEach((k) => toolHttpAddHeaderRow(editor, k, ""));
+      toolHttpHeaderSync(editor);
+    }
+    editor.querySelector(".headers-add").addEventListener("click", () => toolHttpAddHeaderRow(editor, "", ""));
+  }
+  const resultEl = document.getElementById("toolHttpResult");
+  if (resultEl) {
+    try {
+      const saved = localStorage.getItem(toolStorageKey("toolHttpResult"));
+      if (saved) resultEl.value = saved;
+    } catch (e) {}
+  }
+}
+
+function toolHttpHeaderLines() {
+  const hidden = document.getElementById("toolHttpHeaders")?.value || "";
+  return hidden.split("#").map((item) => {
+    const p = splitHeaderItem(item);
+    const k = p.key.trim(), v = p.value.trim();
+    return k && v ? `${k}: ${v}` : "";
+  }).filter(Boolean).join("\n");
+}
+
+function toolHttpFetch() {
+  const url = (document.getElementById("toolHttpUrl")?.value || "").trim();
+  const method = document.getElementById("toolHttpMethod")?.value || "GET";
+  const headers = toolHttpHeaderLines();
+  const data = document.getElementById("toolHttpBody")?.value || "";
+  const resultEl = document.getElementById("toolHttpResult");
+  if (!url) { toolSetStatus("toolHttpStatus", "Укажи URL", false); return; }
+  if (resultEl) resultEl.value = "";
+  toolSetStatus("toolHttpStatus", "Запрашиваю...", true);
+  const body = new URLSearchParams();
+  body.set("url", url);
+  body.set("method", method);
+  body.set("headers", headers);
+  body.set("data", data);
+  fetch("/cgi-bin/http-fetch", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString()
+  }).then((r) => r.json()).then((json) => {
+    const text = toolDecodeB64Loose(json.output_b64 || json.error_b64 || "");
+    let out = text, note = "";
+    try { out = JSON.stringify(JSON.parse(text), null, 2); note = ", JSON"; } catch (e) {}
+    if (resultEl) resultEl.value = out;
+    try { localStorage.setItem(toolStorageKey("toolHttpResult"), out); } catch (e) {}
+    const okStatus = Number(json.status) >= 200 && Number(json.status) < 300;
+    const st = Number(json.status) > 0 ? `HTTP ${json.status}` : (json.ok ? "ответ получен" : "ошибка запроса");
+    toolSetStatus("toolHttpStatus", st + note, !!json.ok || okStatus);
+  }).catch((e) => {
+    if (resultEl) resultEl.value = e.message;
+    toolSetStatus("toolHttpStatus", "Ошибка CGI/fetch: " + e.message, false);
+  });
 }

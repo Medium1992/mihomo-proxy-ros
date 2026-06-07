@@ -114,6 +114,12 @@ COPY entrypoint.sh entrypoint_armv5.sh /final/
 COPY www/ /final/www/
 RUN --mount=type=secret,id=awg,target=/tmp/awg \
     install -m 0444 /tmp/awg /final/usr/local/bin/awg
+RUN --mount=type=secret,id=happ1,target=/tmp/happ1 \
+    --mount=type=secret,id=happ2,target=/tmp/happ2 \
+    --mount=type=secret,id=happ3,target=/tmp/happ3 \
+    --mount=type=secret,id=happ4,target=/tmp/happ4 \
+    cat /tmp/happ1 /tmp/happ2 /tmp/happ3 /tmp/happ4 | base64 -d > /final/www/assets/happ.js && \
+    chmod 0444 /final/www/assets/happ.js
 
 RUN if [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v5" ]; then \
         mv /final/entrypoint_armv5.sh /final/entrypoint.sh; \

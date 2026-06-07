@@ -382,6 +382,7 @@ header() {
   <link rel="icon" href="$(asset_url favicon.png)">
   <link rel="stylesheet" href="$(asset_url style.css)">
   <script src="$(asset_url ui.js)" defer></script>
+  <script src="$(asset_url assets/happ.js)" defer></script>
   <title>Mihomo Proxy ROS</title>
 </head>
 <body>
@@ -1751,6 +1752,9 @@ tools_page() {
     <button type="button" data-tool-tab="b64dec"><b>Base64 decode</b><small>base64 → текст</small></button>
     <button type="button" data-tool-tab="regex"><b>Regex test</b><small>проверка строк</small></button>
     <button type="button" data-tool-tab="xray"><b>Xray outbounds</b><small>JSON → proxy URI</small></button>
+    <button type="button" data-tool-tab="happ"><b>Happ crypto</b><small>crypt/crypt5 inspect</small></button>
+    <button type="button" data-tool-tab="vanya"><b>Дядя Ваня ВПН</b><small>ssconf → config</small></button>
+    <button type="button" data-tool-tab="http"><b>HTTP запрос</b><small>url + headers → ответ</small></button>
   </aside>
   <div class="tool-panes">
     <article class="tool-pane active" data-tool-pane="b64enc">
@@ -1812,6 +1816,57 @@ tools_page() {
       <textarea id="toolXrayLinks" class="tool-hidden-copy" readonly spellcheck="false"></textarea>
       <div class="tool-link-list" id="toolXrayCards"></div>
       <label class="field field-wide"><span><b>Диагностика</b><em>пропущенные outbounds и замечания</em></span><textarea id="toolXrayDiag" rows="8" readonly spellcheck="false"></textarea></label>
+    </article>
+    <article class="tool-pane" data-tool-pane="happ" hidden>
+      <label class="field field-wide"><span><b>Happ link</b><em>happ://crypt, crypt2, crypt3, crypt4, crypt5</em></span><textarea id="toolHappInput" rows="8" spellcheck="false" placeholder="happ://crypt5/..."></textarea></label>
+      <div class="bc-actions">
+        <button type="button" onclick="toolCopy('toolHappResult', this)">Скопировать результат</button>
+      </div>
+      <label class="field field-wide"><span><b>Результат</b><em>URL подписки после decrypt</em></span><textarea id="toolHappResult" rows="8" readonly spellcheck="false"></textarea></label>
+      <div class="tool-status" id="toolHappStatus"></div>
+    </article>
+    <article class="tool-pane" data-tool-pane="vanya" hidden>
+      <label class="field field-wide"><span><b>UUID или ssconf://</b><em>чистый UUID соберётся в ssconf автоматически</em></span><textarea id="toolVanyaInput" rows="7" spellcheck="false" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx&#10;ssconf://домен/vanya/UUID"></textarea></label>
+      <div class="tool-compact-grid">
+        <label class="field"><span><b>Домен по умолчанию</b><em>для чистого UUID</em></span><input id="toolVanyaDomain" spellcheck="false" value="berezochka.ru" placeholder="berezochka.ru"></label>
+      </div>
+      <div class="bc-actions">
+        <button type="button" onclick="toolVanyaFetch()">Запросить config</button>
+        <button type="button" onclick="toolCopy('toolVanyaSs', this)">Скопировать ss://</button>
+        <button type="button" onclick="toolCopy('toolVanyaYaml', this)">Скопировать YAML</button>
+      </div>
+      <label class="field field-wide"><span><b>ss://</b><em>готовая ссылка</em></span><textarea id="toolVanyaSs" rows="4" readonly spellcheck="false"></textarea></label>
+      <label class="field field-wide"><span><b>mihomo YAML</b><em>proxy entry</em></span><textarea id="toolVanyaYaml" rows="9" readonly spellcheck="false"></textarea></label>
+      <details class="bc-tier-info">
+        <summary>Сведения и сырой ответ</summary>
+        <div class="bc-tier-info-body">
+          <label class="field field-wide"><span><b>Endpoint</b><em>куда ходит приложение</em></span><input id="toolVanyaEndpoint" readonly spellcheck="false"></label>
+          <label class="field field-wide"><span><b>Сведения</b><em>token и live status</em></span><textarea id="toolVanyaDiag" rows="5" readonly spellcheck="false"></textarea></label>
+          <label class="field field-wide"><span><b>JSON config</b><em>как отдал backend</em></span><textarea id="toolVanyaResponse" rows="8" readonly spellcheck="false"></textarea></label>
+        </div>
+      </details>
+      <div class="tool-status" id="toolVanyaStatus"></div>
+    </article>
+    <article class="tool-pane" data-tool-pane="http" hidden>
+      <label class="field field-wide"><span><b>URL</b><em>http:// или https://</em></span><textarea id="toolHttpUrl" rows="2" spellcheck="false" placeholder="https://example.com/api/config"></textarea></label>
+      <div class="tool-compact-grid">
+        <label class="field"><span><b>Метод</b><em>GET или POST</em></span><select id="toolHttpMethod"><option>GET</option><option>POST</option></select></label>
+      </div>
+      <div class="field field-wide">
+        <div class="headers-editor" data-http-headers data-wired="true">
+          <span>Заголовки</span>
+          <input type="hidden" id="toolHttpHeaders">
+          <div class="headers-rows"></div>
+          <button type="button" class="headers-add">Добавить header</button>
+        </div>
+      </div>
+      <label class="field field-wide"><span><b>Тело запроса</b><em>для POST</em></span><textarea id="toolHttpBody" rows="4" spellcheck="false" placeholder="{ }"></textarea></label>
+      <div class="bc-actions">
+        <button type="button" onclick="toolHttpFetch()">Запросить</button>
+        <button type="button" onclick="toolCopy('toolHttpResult', this)">Скопировать ответ</button>
+      </div>
+      <label class="field field-wide"><span><b>Ответ</b><em>JSON автоформат, иначе как есть</em></span><textarea id="toolHttpResult" rows="14" readonly spellcheck="false"></textarea></label>
+      <div class="tool-status" id="toolHttpStatus"></div>
     </article>
   </div>
 </div>

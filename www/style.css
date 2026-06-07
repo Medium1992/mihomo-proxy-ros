@@ -1183,6 +1183,12 @@ pre {
   min-width: 0;
 }
 
+.tool-compact-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 360px);
+  gap: 14px;
+}
+
 .tool-pane {
   display: grid;
   gap: 14px;
