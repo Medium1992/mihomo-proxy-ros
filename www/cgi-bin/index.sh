@@ -1755,6 +1755,7 @@ tools_page() {
     <button type="button" data-tool-tab="happ"><b>Happ crypto</b><small>crypt/crypt5 inspect</small></button>
     <button type="button" data-tool-tab="vanya"><b>Дядя Ваня ВПН</b><small>ssconf → config</small></button>
     <button type="button" data-tool-tab="http"><b>HTTP запрос</b><small>url + headers → ответ</small></button>
+    <button type="button" data-tool-tab="x2m"><b>xray2mihomo</b><small>Xray sub → mihomo</small></button>
   </aside>
   <div class="tool-panes">
     <article class="tool-pane active" data-tool-pane="b64enc">
@@ -1867,6 +1868,30 @@ tools_page() {
       </div>
       <label class="field field-wide"><span><b>Ответ</b><em>JSON автоформат, иначе как есть</em></span><textarea id="toolHttpResult" rows="14" readonly spellcheck="false"></textarea></label>
       <div class="tool-status" id="toolHttpStatus"></div>
+    </article>
+    <article class="tool-pane" data-tool-pane="x2m" hidden>
+      <label class="field field-wide"><span><b>Endpoint</b><em>локально: http://127.0.0.1/cgi-bin/xray2mihomo-sub</em></span><input id="toolX2mEndpoint" spellcheck="false" value="http://127.0.0.1/cgi-bin/xray2mihomo-sub"></label>
+      <label class="field field-wide"><span><b>URL подписки</b><em>Xray JSON sub (sub/url/target)</em></span><textarea id="toolX2mSub" rows="2" spellcheck="false" placeholder="https://provider.example/sub/path"></textarea></label>
+      <label class="field field-wide"><span><b>Готовая ссылка</b><em>для mihomo provider url или проверки</em></span><textarea id="toolX2mLink" rows="3" readonly spellcheck="false"></textarea></label>
+      <div class="tool-compact-grid cols2">
+        <label class="field"><span><b>Формат</b><em>uri / mihomo yaml / base64</em></span><select id="toolX2mFormat"><option value="uri">URI строки</option><option value="yaml">mihomo YAML</option><option value="base64">base64</option></select></label>
+        <label class="field"><span><b>DNS/fetch</b><em>openssl резолв как в DPI (для локального endpoint)</em></span><select id="toolX2mResolve"><option value="openssl">openssl</option><option value="wget">wget</option></select></label>
+      </div>
+      <div class="field field-wide">
+        <div class="headers-editor" data-x2m-headers data-wired="true">
+          <span>Заголовки <em>уходят апстриму как HTTP headers</em></span>
+          <input type="hidden" id="toolX2mHeaders">
+          <div class="headers-rows"></div>
+          <button type="button" class="headers-add">Добавить header</button>
+        </div>
+      </div>
+      <div class="bc-actions">
+        <button type="button" onclick="toolX2mFetch()">Запросить</button>
+        <button type="button" onclick="toolCopy('toolX2mLink', this)">Скопировать ссылку</button>
+        <button type="button" onclick="toolCopy('toolX2mResult', this)">Скопировать ответ</button>
+      </div>
+      <label class="field field-wide"><span><b>Ответ</b><em>результат конвертера как есть</em></span><textarea id="toolX2mResult" rows="14" readonly spellcheck="false"></textarea></label>
+      <div class="tool-status" id="toolX2mStatus"></div>
     </article>
   </div>
 </div>

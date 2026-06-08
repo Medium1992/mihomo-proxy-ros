@@ -309,7 +309,11 @@ function initToolsPage() {
     ["toolVanyaDomain", toolVanyaBuild],
     ["toolHttpUrl", () => {}],
     ["toolHttpMethod", () => {}],
-    ["toolHttpBody", () => {}]
+    ["toolHttpBody", () => {}],
+    ["toolX2mSub", () => toolX2mBuild(true)],
+    ["toolX2mEndpoint", () => toolX2mBuild(true)],
+    ["toolX2mFormat", () => toolX2mBuild(true)],
+    ["toolX2mResolve", () => toolX2mBuild(true)]
   ].forEach(([id, fn]) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -326,6 +330,7 @@ function initToolsPage() {
   toolVanyaBuild();
   toolVanyaRestore();
   toolHttpInit();
+  toolX2mInit();
 }
 
 function switchToolPane(id) {
@@ -1013,8 +1018,9 @@ function toolInferProtocol(ob) {
 }
 
 function toolFinalMaskParams(params, finalmask) {
-  if (!finalmask || typeof finalmask !== "object" || Array.isArray(finalmask)) return;
-  if (Object.keys(finalmask).length) toolParam(params, "fm", JSON.stringify(finalmask));
+  // finalmask is a JSON-only Xray streamSettings feature — it has no share-link/URI
+  // representation. Only its salamander mask maps to a URI param (hysteria2 obfs),
+  // handled by toolApplyHy2Salamander. So we intentionally emit nothing here.
 }
 
 function toolApplyHy2Salamander(params, finalmask) {
@@ -6599,5 +6605,124 @@ function toolHttpFetch() {
   }).catch((e) => {
     if (resultEl) resultEl.value = e.message;
     toolSetStatus("toolHttpStatus", "Ошибка CGI/fetch: " + e.message, false);
+  });
+}
+
+// ---- xray2mihomo builder tab (mirrors the Cloudflare worker page) ----
+const TOOL_X2M_DEFAULT_HEADERS = [
+  ["user-agent", "Happ/3.22.1/Android/17800511170441525643"],
+  ["x-hwid", ""],
+  ["x-device-model", ""],
+  ["x-device-os", ""],
+  ["x-ver-os", ""]
+];
+
+function toolX2mHeaderSync(editor) {
+  const hidden = document.getElementById("toolX2mHeaders");
+  if (!hidden) return;
+  const items = [];
+  editor.querySelectorAll(".headers-row").forEach((row) => {
+    const key = row.querySelector(".headers-key").value.trim();
+    const value = row.querySelector(".headers-value").value.trim();
+    if (key) items.push(key + "=" + value);
+  });
+  hidden.value = items.join("#");
+  toolSaveInput(hidden);
+  toolX2mBuild(true);
+}
+
+function toolX2mAddHeaderRow(editor, key, value) {
+  const row = document.createElement("div");
+  row.className = "headers-row";
+  row.innerHTML = `<input class="headers-key" value="${escapeAttr(key)}" placeholder="Header"><input class="headers-value" value="${escapeAttr(value)}" placeholder="value"><button type="button">Удалить</button>`;
+  editor.querySelector(".headers-rows").appendChild(row);
+  row.querySelectorAll("input").forEach((input) => input.addEventListener("input", () => toolX2mHeaderSync(editor)));
+  row.querySelector("button").addEventListener("click", () => { row.remove(); toolX2mHeaderSync(editor); });
+}
+
+function toolX2mInit() {
+  const editor = document.querySelector("[data-x2m-headers]");
+  if (editor && editor.dataset.tlWired !== "true") {
+    editor.dataset.tlWired = "true";
+    const hidden = document.getElementById("toolX2mHeaders");
+    const current = (hidden && hidden.value.trim()) || "";
+    if (current) {
+      current.split("#").forEach((item) => { const p = splitHeaderItem(item); toolX2mAddHeaderRow(editor, p.key, p.value); });
+    } else {
+      TOOL_X2M_DEFAULT_HEADERS.forEach(([k, v]) => toolX2mAddHeaderRow(editor, k, v));
+      toolX2mHeaderSync(editor);
+    }
+    editor.querySelector(".headers-add").addEventListener("click", () => toolX2mAddHeaderRow(editor, "", ""));
+  }
+  const resultEl = document.getElementById("toolX2mResult");
+  if (resultEl) {
+    try { const saved = localStorage.getItem(toolStorageKey("toolX2mResult")); if (saved) resultEl.value = saved; } catch (e) {}
+  }
+  toolX2mBuild(true);
+}
+
+function toolX2mBuild(quiet) {
+  const sub = (document.getElementById("toolX2mSub")?.value || "").trim();
+  const linkEl = document.getElementById("toolX2mLink");
+  if (!sub) {
+    if (linkEl) linkEl.value = "";
+    if (!quiet) toolSetStatus("toolX2mStatus", "Укажи URL подписки", false);
+    return "";
+  }
+  let out;
+  try {
+    let base = (document.getElementById("toolX2mEndpoint")?.value || "http://127.0.0.1/cgi-bin/xray2mihomo-sub").trim();
+    if (!/^https?:\/\//i.test(base)) base = "http://" + base;
+    out = new URL(base);
+    out.searchParams.set("sub", sub);
+    out.searchParams.set("format", document.getElementById("toolX2mFormat")?.value || "uri");
+    const resolve = document.getElementById("toolX2mResolve")?.value || "openssl";
+    if (resolve === "openssl") out.searchParams.set("resolve", "openssl");
+    const hidden = document.getElementById("toolX2mHeaders")?.value || "";
+    hidden.split("#").forEach((item) => {
+      const p = splitHeaderItem(item);
+      const key = (p.key || "").trim();
+      const value = (p.value || "").trim();
+      if (key && value) out.searchParams.set(key, value);
+    });
+  } catch (e) {
+    if (linkEl) linkEl.value = "";
+    if (!quiet) toolSetStatus("toolX2mStatus", "Ошибка endpoint: " + e.message, false);
+    return "";
+  }
+  const link = out.toString();
+  if (linkEl) {
+    linkEl.value = link;
+    try { localStorage.setItem(toolStorageKey("toolX2mLink"), link); } catch (e) {}
+  }
+  if (!quiet) toolSetStatus("toolX2mStatus", "Ссылка собрана", true);
+  return link;
+}
+
+function toolX2mFetch() {
+  const link = toolX2mBuild(false);
+  const resultEl = document.getElementById("toolX2mResult");
+  if (!link) return;
+  if (resultEl) resultEl.value = "";
+  toolSetStatus("toolX2mStatus", "Запрашиваю...", true);
+  const body = new URLSearchParams();
+  body.set("url", link);
+  body.set("method", "GET");
+  body.set("headers", "");
+  body.set("data", "");
+  fetch("/cgi-bin/http-fetch", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString()
+  }).then((r) => r.json()).then((json) => {
+    const text = toolDecodeB64Loose(json.output_b64 || json.error_b64 || "");
+    if (resultEl) resultEl.value = text;
+    try { localStorage.setItem(toolStorageKey("toolX2mResult"), text); } catch (e) {}
+    const okStatus = Number(json.status) >= 200 && Number(json.status) < 300;
+    const st = Number(json.status) > 0 ? `HTTP ${json.status}` : (json.ok ? "ответ получен" : "ошибка запроса");
+    toolSetStatus("toolX2mStatus", st, !!json.ok || okStatus);
+  }).catch((e) => {
+    if (resultEl) resultEl.value = e.message;
+    toolSetStatus("toolX2mStatus", "Ошибка CGI/fetch: " + e.message, false);
   });
 }

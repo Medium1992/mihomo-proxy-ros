@@ -18,7 +18,7 @@ if [ "$CONTENT_LENGTH" -gt "$MAX_BODY" ]; then
   printf '{"ok":false,"error_b64":"%s"}\n' "$(printf '%s' "$msg" | base64 -w0 2>/dev/null || printf '%s' "$msg" | base64)"
   exit 0
 fi
-body=$(dd bs=1 count="$CONTENT_LENGTH" 2>/dev/null)
+body=$(head -c "$CONTENT_LENGTH")
 
 b64=$(printf '%s' "$body" | awk -F'&' '{
   for(i=1;i<=NF;i++) {

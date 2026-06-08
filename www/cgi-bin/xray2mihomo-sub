@@ -1,0 +1,360 @@
+#!/bin/sh
+
+STATE_DIR="${STATE_DIR:-/dev/shm/mihomo-xray2mihomo}"
+DEFAULT_UA="Happ/3.22.1/Android/17800511170441525643"
+TIMEOUT="${XRAY2MIHOMO_FETCH_TIMEOUT:-25}"
+
+mkdir -p "$STATE_DIR" 2>/dev/null
+
+urldecode() {
+  printf '%s\n' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\\x\1/g' | while IFS= read -r line; do printf '%b' "$line"; done
+}
+
+field_qs() {
+  printf '%s' "$QUERY_STRING" | awk -v k="$1" -F'&' '{
+    for (i=1; i<=NF; i++) {
+      n = index($i, "=")
+      if (n > 0 && substr($i, 1, n-1) == k) { print substr($i, n+1); exit }
+    }
+  }'
+}
+
+emit_error() {
+  printf 'Status: %s\r\n' "$1"
+  printf 'Content-Type: text/plain; charset=utf-8\r\n'
+  printf 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n'
+  printf 'Pragma: no-cache\r\n'
+  printf 'Expires: 0\r\n\r\n'
+  printf '%s\n' "$2"
+  exit 0
+}
+
+emit_head() {
+  printf 'Content-Type: text/plain; charset=utf-8\r\n'
+  printf 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n'
+  printf 'Pragma: no-cache\r\n'
+  printf 'Expires: 0\r\n\r\n'
+}
+
+b64_one() {
+  base64 -w0 2>/dev/null || base64 | tr -d '\n'
+}
+
+query_headers() {
+  printf '%s' "$QUERY_STRING" | awk -F'&' '
+    {
+      for (i=1; i<=NF; i++) {
+        n = index($i, "=")
+        if (n < 1) continue
+        k = substr($i, 1, n-1)
+        v = substr($i, n+1)
+        if (k == "sub" || k == "url" || k == "target" || k == "format" || k == "resolve") continue
+        sub(/^h\./, "", k)
+        sub(/^header\./, "", k)
+        print k "=" v
+      }
+    }'
+}
+
+safe_header_name() {
+  case "$1" in ''|*[!A-Za-z0-9_~.\^\+\*-]*) return 1 ;; *) return 0 ;; esac
+}
+
+build_headers() {
+  query_headers | while IFS='=' read -r rk rv; do
+    k=$(urldecode "$rk")
+    v=$(urldecode "$rv")
+    safe_header_name "$k" || continue
+    [ -n "$v" ] && printf '%s: %s\n' "$k" "$v"
+  done
+}
+
+headers_have_ua() {
+  grep -qi '^user-agent[[:space:]]*:' "$1" 2>/dev/null
+}
+
+fetch_wget() {
+  url="$1"; out="$2"; hf="$3"
+  set -- -q -T "$TIMEOUT" -O "$out"
+  while IFS= read -r h; do [ -n "$h" ] && set -- "$@" --header="$h"; done < "$hf"
+  headers_have_ua "$hf" || set -- "$@" --header="User-Agent: $DEFAULT_UA"
+  set -- "$@" --header="Cache-Control: no-cache"
+  wget "$@" "$url" >/dev/null 2>&1
+}
+
+fetch_openssl_https() {
+  url="$1"; out="$2"; hf="$3"
+  case "$url" in https://*) ;; *) return 1 ;; esac
+  rest="${url#https://}"
+  hostport_s="${rest%%/*}"
+  path="/${rest#*/}"
+  [ "$rest" = "$hostport_s" ] && path="/"
+  host="${hostport_s%%:*}"
+  port="${hostport_s#*:}"
+  [ "$port" = "$hostport_s" ] && port=443
+  [ -z "$host" ] && return 1
+  ip=""
+  if [ -r /www/blockcheck2/lib.sh ]; then
+    BC_STATE_DIR="$STATE_DIR"
+    . /www/blockcheck2/lib.sh >/dev/null 2>&1
+    if command -v bc_doh_resolve >/dev/null 2>&1; then
+      ip=$(bc_doh_resolve "$host" | head -n1)
+    fi
+  fi
+  [ -z "$ip" ] && return 1
+  tmp="$out.http.$$"
+  {
+    printf 'GET %s HTTP/1.1\r\n' "$path"
+    printf 'Host: %s\r\n' "$host"
+    headers_have_ua "$hf" || printf 'User-Agent: %s\r\n' "$DEFAULT_UA"
+    printf 'Cache-Control: no-cache\r\n'
+    while IFS= read -r h; do [ -n "$h" ] && printf '%s\r\n' "$h"; done < "$hf"
+    printf 'Connection: close\r\n\r\n'
+  } | timeout -k 2 "$TIMEOUT" openssl s_client -quiet -connect "$ip:$port" -servername "$host" > "$tmp" 2>/dev/null || {
+    rm -f "$tmp"; return 1
+  }
+  # Strip HTTP headers, de-chunk a Transfer-Encoding: chunked body, drop UTF-8 BOM.
+  # The old code only stripped headers, so a chunked response left hex chunk-size
+  # lines inside the body — tolerated by the old awk scanner but fatal to jq.
+  awk '
+    function hexdec(s,   i, c, v, r) { s = tolower(s); r = 0; for (i = 1; i <= length(s); i++) { c = substr(s, i, 1); v = index("0123456789abcdef", c) - 1; if (v < 0) break; r = r * 16 + v } return r }
+    BEGIN { RS = "\004"; BOM = sprintf("%c%c%c", 239, 187, 191) }
+    {
+      data = $0
+      hi = index(data, "\r\n\r\n"); sep = 4
+      if (hi == 0) { hi = index(data, "\n\n"); sep = 2 }
+      if (hi == 0) { headers = ""; body = data } else { headers = substr(data, 1, hi - 1); body = substr(data, hi + sep) }
+      if (tolower(headers) ~ /transfer-encoding:[ \t]*chunked/) {
+        n = length(body); pos = 1; out = ""
+        while (pos <= n) {
+          nl = index(substr(body, pos), "\n"); if (nl == 0) break
+          sizeline = substr(body, pos, nl - 1); sub(/;.*/, "", sizeline); gsub(/[\r\t ]/, "", sizeline)
+          size = hexdec(sizeline)
+          pos = pos + nl
+          if (size <= 0) break
+          out = out substr(body, pos, size)
+          pos = pos + size
+          if (substr(body, pos, 2) == "\r\n") pos += 2; else if (substr(body, pos, 1) == "\n") pos += 1
+        }
+        body = out
+      }
+      if (substr(body, 1, 3) == BOM) body = substr(body, 4)
+      printf "%s", body
+    }
+  ' "$tmp" > "$out"
+  rm -f "$tmp"
+  [ -s "$out" ]
+}
+
+# Whole Xray-outbounds -> proxy-URI conversion in ONE awk pass.
+# Replaces the old split_outbounds + per-field json_s/json_n/urlenc_min
+# pipeline that forked ~30 processes per node (the real "takes a minute"
+# cause). Streaming, byte-state machine: O(n), one process total.
+convert_sub() {
+  awk '
+    function urlenc(s) {
+      gsub(/%/, "%25", s); gsub(/ /, "%20", s); gsub(/#/, "%23", s)
+      gsub(/&/, "%26", s); gsub(/\?/, "%3F", s); gsub(/\+/, "%2B", s)
+      return s
+    }
+    # First string value of "key" anywhere in the object (mirrors old json_s:
+    # stops at the first unescaped quote or backslash).
+    function js(o, k,   p, i, n, c, res) {
+      p = "\"" k "\""
+      i = index(o, p); if (i == 0) return ""
+      i += length(p); n = length(o)
+      while (i <= n) { c = substr(o, i, 1); if (c == ":" || c == " " || c == "\t") { i++; continue } break }
+      if (substr(o, i, 1) != "\"") return ""
+      i++; res = ""
+      while (i <= n) { c = substr(o, i, 1); if (c == "\"" || c == "\\") break; res = res c; i++ }
+      return res
+    }
+    # First numeric value of "key".
+    function jn(o, k,   p, i, n, c, res) {
+      p = "\"" k "\""
+      i = index(o, p); if (i == 0) return ""
+      i += length(p); n = length(o)
+      while (i <= n) { c = substr(o, i, 1); if (c == ":" || c == " " || c == "\t") { i++; continue } break }
+      res = ""
+      while (i <= n) { c = substr(o, i, 1); if (c >= "0" && c <= "9") { res = res c; i++ } else break }
+      return res
+    }
+    function ap(p, k, v) { if (v == "") return p; if (p != "") return p "&" k "=" urlenc(v); return k "=" urlenc(v) }
+    function streamparams(ob,   p, network, security) {
+      p = ""
+      network = js(ob, "network"); if (network == "") network = "tcp"
+      security = js(ob, "security")
+      p = ap(p, "type", network)
+      if (security != "none") p = ap(p, "security", security)
+      p = ap(p, "sni", js(ob, "serverName"))
+      p = ap(p, "fp", js(ob, "fingerprint"))
+      p = ap(p, "pbk", js(ob, "publicKey"))
+      p = ap(p, "sid", js(ob, "shortId"))
+      p = ap(p, "spx", js(ob, "spiderX"))
+      p = ap(p, "path", js(ob, "path"))
+      p = ap(p, "host", js(ob, "host"))
+      p = ap(p, "mode", js(ob, "mode"))
+      p = ap(p, "serviceName", js(ob, "serviceName"))
+      return p
+    }
+    function tagname(r, t, fb) {
+      if (r != "" && t != "" && tolower(r) != tolower(t)) return r " " t
+      else if (r != "") return r
+      else if (t != "") return t
+      return fb
+    }
+    function hostport(h, po) { if (index(h, ":")) return "[" h "]:" po; return h ":" po }
+    function b64enc(s,   n, i, b1, b2, b3, o, f2, f3) {
+      o = ""; n = length(s); i = 1
+      while (i <= n) {
+        b1 = ORD[substr(s, i, 1)]
+        if (i + 1 <= n) { b2 = ORD[substr(s, i + 1, 1)]; f2 = 1 } else { b2 = 0; f2 = 0 }
+        if (i + 2 <= n) { b3 = ORD[substr(s, i + 2, 1)]; f3 = 1 } else { b3 = 0; f3 = 0 }
+        o = o substr(B64, int(b1 / 4) + 1, 1)
+        o = o substr(B64, (b1 % 4) * 16 + int(b2 / 16) + 1, 1)
+        if (f2) o = o substr(B64, (b2 % 16) * 4 + int(b3 / 64) + 1, 1); else o = o "="
+        if (f3) o = o substr(B64, (b3 % 64) + 1, 1); else o = o "="
+        i += 3
+      }
+      return o
+    }
+    function emit(remark, ob,   proto, tag, name, ename, host, port, id, q, flow, sp, pw, auth, sni, alpn, payload, line) {
+      proto = js(ob, "protocol")
+      tag = js(ob, "tag")
+      name = tagname(remark, tag, "proxy")
+      ename = urlenc(name)
+      line = ""
+      if (proto == "vless") {
+        host = js(ob, "address"); port = jn(ob, "port"); id = js(ob, "id")
+        if (port == "") port = "443"
+        if (host == "" || id == "") return
+        q = "encryption=" urlenc(js(ob, "encryption"))
+        flow = js(ob, "flow"); if (flow != "") q = q "&flow=" urlenc(flow)
+        sp = streamparams(ob); if (sp != "") q = q "&" sp
+        line = "vless://" id "@" hostport(host, port) "?" q "#" ename
+      } else if (proto == "trojan") {
+        host = js(ob, "address"); port = jn(ob, "port"); pw = js(ob, "password")
+        if (port == "") port = "443"
+        if (host == "" || pw == "") return
+        sp = streamparams(ob)
+        line = "trojan://" urlenc(pw) "@" hostport(host, port) "?" sp "#" ename
+      } else if (proto == "vmess") {
+        host = js(ob, "address"); port = jn(ob, "port"); id = js(ob, "id")
+        if (port == "") port = "443"
+        if (host == "" || id == "") return
+        payload = "{\"v\":\"2\",\"ps\":\"" name "\",\"add\":\"" host "\",\"port\":\"" port "\",\"id\":\"" id "\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"" js(ob, "network") "\",\"type\":\"none\",\"host\":\"\",\"path\":\"\",\"tls\":\"\",\"sni\":\"\",\"alpn\":\"\",\"fp\":\"\"}"
+        line = "vmess://" b64enc(payload)
+      } else if (proto == "hysteria" || proto == "hysteria2" || proto == "hy2") {
+        host = js(ob, "address"); port = jn(ob, "port"); auth = js(ob, "auth")
+        if (port == "") port = "443"
+        if (host == "" || auth == "") return
+        sni = js(ob, "serverName"); alpn = js(ob, "alpn")
+        line = "hysteria2://" urlenc(auth) "@" hostport(host, port) "?sni=" urlenc(sni) "&alpn=" urlenc(alpn) "#" ename
+      } else return
+      if (line != "" && !seen[line]++) print line
+    }
+    BEGIN {
+      for (i = 0; i < 256; i++) ORD[sprintf("%c", i)] = i
+      B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+      instr = 0; esc = 0; want = 0; inarr = 0; cap = 0; d = 0; obj = ""; remark = ""
+    }
+    {
+      L = $0; m = length(L)
+      for (p = 1; p <= m; p++) {
+        c = substr(L, p, 1)
+        if (instr) {
+          if (cap) obj = obj c
+          if (esc) esc = 0
+          else if (c == "\\") esc = 1
+          else if (c == "\"") instr = 0
+          continue
+        }
+        if (c == "\"") {
+          if (!inarr) {
+            if (substr(L, p, 11) == "\"outbounds\"") want = 1
+            if (substr(L, p, 9) == "\"remarks\"" && match(L, /"remarks"[ \t]*:[ \t]*"[^"]*"/)) {
+              seg = substr(L, RSTART, RLENGTH)
+              sub(/^"remarks"[ \t]*:[ \t]*"/, "", seg); sub(/"$/, "", seg)
+              remark = seg
+            }
+          }
+          instr = 1
+          if (cap) obj = obj c
+          continue
+        }
+        if (want && c == "[") { inarr = 1; want = 0; continue }
+        if (inarr && !cap && c == "{") { cap = 1; d = 1; obj = "{"; continue }
+        if (cap) {
+          obj = obj c
+          if (c == "{") d++
+          else if (c == "}") { d--; if (d == 0) { emit(remark, obj); cap = 0; obj = "" } }
+        } else if (inarr && c == "]") { inarr = 0 }
+      }
+      if (cap) obj = obj " "
+    }
+  ' "$1"
+}
+
+sub=$(urldecode "$(field_qs sub)")
+[ -z "$sub" ] && sub=$(urldecode "$(field_qs url)")
+[ -z "$sub" ] && sub=$(urldecode "$(field_qs target)")
+format=$(urldecode "$(field_qs format)")
+[ -z "$format" ] && format=uri
+resolve=$(urldecode "$(field_qs resolve)")
+
+case "$sub" in http://*|https://*) ;; *) emit_error 400 "sub/url/target must be http:// or https://" ;; esac
+case "$format" in uri|base64|yaml) ;; *) emit_error 400 "unsupported format" ;; esac
+
+JQ_PROG="${XRAY2MIHOMO_JQ:-/www/cgi-bin/xray2mihomo.jq}"
+
+hf="$STATE_DIR/headers.$$"
+body="$STATE_DIR/body.$$"
+uris="$STATE_DIR/uris.$$"
+res="$STATE_DIR/res.$$"
+jqerr="$STATE_DIR/jqerr.$$"
+trap 'rm -f "$hf" "$body" "$uris" "$res" "$jqerr"' EXIT
+build_headers > "$hf"
+
+if [ "$resolve" = openssl ]; then
+  fetch_openssl_https "$sub" "$body" "$hf" || fetch_wget "$sub" "$body" "$hf" || emit_error 502 "subscription fetch failed"
+else
+  fetch_wget "$sub" "$body" "$hf" || fetch_openssl_https "$sub" "$body" "$hf" || emit_error 502 "subscription fetch failed"
+fi
+
+# Primary path: jq converter (1:1 with the Cloudflare worker, supports yaml).
+# jq writes straight to a file so a large response never round-trips through a
+# shell variable (and the trailing newline is preserved exactly).
+if command -v jq >/dev/null 2>&1 && [ -r "$JQ_PROG" ]; then
+  jq -j --arg fmt "$format" -f "$JQ_PROG" "$body" > "$res" 2>"$jqerr"
+  rc=$?
+  if [ "$rc" -eq 0 ] && [ -s "$res" ]; then
+    if [ "$format" = yaml ]; then
+      printf 'Content-Type: text/yaml; charset=utf-8\r\n'
+      printf 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n'
+      printf 'Pragma: no-cache\r\n'
+      printf 'Expires: 0\r\n\r\n'
+    else
+      emit_head
+    fi
+    cat "$res"
+    exit 0
+  fi
+  # jq failed (e.g. upstream is not clean Xray JSON). yaml can't degrade; report.
+  if [ "$format" = yaml ]; then
+    msg=$(head -c 300 "$jqerr" | tr '\n' ' ')
+    emit_error 422 "convert error: ${msg:-jq failed}"
+  fi
+  # uri/base64 fall through to the tolerant awk scanner below.
+fi
+
+# Fallback: awk scanner (no jq, e.g. armv5; or jq could not parse the body).
+[ "$format" = yaml ] && emit_error 501 "yaml requires jq (rebuild container image)"
+convert_sub "$body" > "$uris"
+[ -s "$uris" ] || emit_error 422 "no supported outbounds converted"
+emit_head
+if [ "$format" = base64 ]; then
+  b64_one < "$uris"
+  printf '\n'
+else
+  cat "$uris"
+fi

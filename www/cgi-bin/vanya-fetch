@@ -30,7 +30,7 @@ if [ "$CONTENT_LENGTH" -gt 4096 ]; then
   exit 0
 fi
 
-body=$(dd bs=1 count="$CONTENT_LENGTH" 2>/dev/null)
+body=$(head -c "$CONTENT_LENGTH")
 url_raw=$(printf '%s' "$body" | awk -F'&' '{
   for (i=1; i<=NF; i++) {
     if (substr($i,1,4) == "url=") { print substr($i,5); exit }

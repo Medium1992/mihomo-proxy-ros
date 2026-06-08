@@ -1189,6 +1189,10 @@ pre {
   gap: 14px;
 }
 
+.tool-compact-grid.cols2 {
+  grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr);
+}
+
 .tool-pane {
   display: grid;
   gap: 14px;
