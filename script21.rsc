@@ -220,8 +220,8 @@ $WARules
 :put "Add env ROBLOX_AS value: AS22697,AS11281,AS136766"} on-error {}
 :do { add key=SUPERCELL_GEOSITE list=MihomoProxyRoS value=supercell
 :put "Add env SUPERCELL_GEOSITE value: supercell"} on-error {}
-:do { add key=AI_GEOSITE list=MihomoProxyRoS value=category-ai-!cn,openai,google-gemini
-:put "Add env AI_GEOSITE value: category-ai-!cn,openai,google-gemini"} on-error {}
+:do { add key=AI_GEOSITE list=MihomoProxyRoS value=category-ai-!cn,openai,google-gemini,anthropic
+:put "Add env AI_GEOSITE value: category-ai-!cn,openai,google-gemini,anthropic"} on-error {}
 :do { add key=TWITCH_GEOSITE list=MihomoProxyRoS value=twitch
 :put "Add env TWITCH_GEOSITE value: twitch"} on-error {}
 :do { add key=RULES1 list=MihomoProxyRoS value="AND,((NETWORK,udp),(DST-PORT,443)),REJECT"
@@ -442,7 +442,7 @@ add name=FWD_update source="# Define global variables\r\
 \n\"xhamster\";\r\
 \n\"porn\";\r\
 \n\"video\";\r\
-\n\"claude\";\r\
+\n\"anthropic\";\r\
 \n\"xai\";\r\
 \n\"notion\";\r\
 \n\"twitch\";\r\
