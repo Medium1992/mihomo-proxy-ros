@@ -473,13 +473,21 @@ add name=FWD_update_RU source="# Define global variables\r\
 \n\r\
 \n# List of resources corresponding to RSC files\r\
 \n:global resources {\r\
-\n\"category-ru\";\r\
 \n\"category-gov-ru\";\r\
 \n\"category-bank-ru\";\r\
 \n\"category-retail-ru\";\r\
 \n\"category-travel-ru\";\r\
 \n\"category-ecommerce-ru\";\r\
 \n\"category-entertainment-ru\";\r\
+\n\"mailru-group\";\r\
+\n\"vk\";\r\
+\n\"ok\";\r\
+\n\"yandex\";\r\
+\n\"ozon\";\r\
+\n\"wildberries\";\r\
+\n\"x5\";\r\
+\n\"okko\";\r\
+\n\"kinopoisk\";\r\
 \n}\r\
 \n\r\
 \n# Base URL for RSC files\r\
