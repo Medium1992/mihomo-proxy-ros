@@ -498,6 +498,42 @@ input:focus, textarea:focus, select:focus {
   align-items: center;
 }
 
+.mixed-user-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.password-wrap {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.password-wrap input {
+  padding-right: 46px;
+}
+
+.password-toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.password-toggle:hover,
+.password-toggle:focus-visible {
+  color: var(--ink);
+}
+
 [hidden] {
   display: none !important;
 }
@@ -1539,6 +1575,14 @@ pre {
 }
 
 .command-panel[hidden] { display: none; }
+body[data-page="tools"] .command-trigger,
+body[data-page="tools"] .bottom-submit,
+body[data-page="tools"] #commands,
+body[data-page="yaml"] .command-trigger,
+body[data-page="yaml"] .bottom-submit,
+body[data-page="yaml"] #commands {
+  display: none !important;
+}
 .command-panel h2 { margin: 0; }
 .command-panel p { margin: 4px 0 0; color: var(--muted); }
 .command-grid {
@@ -1600,6 +1644,35 @@ pre {
   button, .ghost, .primary, .theme-btn { width: 100%; }
   .bc-copy-all { width: 28px; }
   .subhead { align-items: stretch; flex-direction: column; }
+}
+
+.env-row.mixed-user-row {
+  grid-template-columns: 28px 56px minmax(0, 1fr) 120px;
+  align-items: center;
+}
+
+.env-row.mixed-user-row > .env-grip { grid-column: 1; }
+.env-row.mixed-user-row > .env-index { grid-column: 2; }
+.env-row.mixed-user-row > .mixed-user-fields { grid-column: 3; }
+.env-row.mixed-user-row > button {
+  grid-column: 4;
+  width: 120px;
+  align-self: end;
+}
+
+@media (max-width: 560px) {
+  .env-row.mixed-user-row {
+    grid-template-columns: 1fr;
+  }
+  .env-row.mixed-user-row > .env-grip,
+  .env-row.mixed-user-row > .env-index,
+  .env-row.mixed-user-row > .mixed-user-fields,
+  .env-row.mixed-user-row > button {
+    grid-column: 1;
+  }
+  .mixed-user-fields {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Template row and validation result blocks */

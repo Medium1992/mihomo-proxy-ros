@@ -385,7 +385,7 @@ header() {
   <script src="$(asset_url assets/happ.js)" defer></script>
   <title>Mihomo Proxy ROS</title>
 </head>
-<body>
+<body data-page="$page">
 <div class="app">
   <aside class="side">
     <a class="brand" href="$(page_url overview)">
@@ -398,6 +398,7 @@ EOF
   nav_item overview "Обзор" "⌁"
   nav_item core "Ядро и DNS" "⚙"
   nav_item providers "Прокси-провайдеры" "+"
+  nav_item listeners "Входящие порты" "⇥"
   nav_item dpi "DPI" "◇"
   nav_item groups "Прокси-группы" "☷"
   nav_item rules "Правила маршрутизации" "≡"
@@ -425,7 +426,7 @@ EOF
         <a class="ghost" href="$(page_url yaml)">Смотреть YAML</a>
         <button class="ghost" type="button" onclick="resetCurrentPageDraft()">Сбросить страницу</button>
         <button class="ghost" type="button" onclick="resetUiDraft()">Сбросить черновик</button>
-        <button class="primary" type="button" onclick="generateCommands()">Команды MikroTik</button>
+        <button class="primary command-trigger" type="button" onclick="generateCommands()">Команды MikroTik</button>
       </div>
     </header>
     <form id="envForm">
@@ -435,7 +436,7 @@ EOF
 footer() {
   cat <<'EOF'
     <div class="bottom-submit">
-      <button class="primary" type="button" onclick="generateCommands()">Сгенерировать команды MikroTik</button>
+      <button class="primary command-trigger" type="button" onclick="generateCommands()">Сгенерировать команды MikroTik</button>
     </div>
     </form>
     <section id="commands" class="command-panel" hidden>
@@ -1743,6 +1744,41 @@ EOF
   section_end
 }
 
+listeners_page() {
+  section_start "Входящие порты" "Настройки входящих listeners mihomo. Сейчас здесь настраиваются пользователи для mixed-in: сам listener слушает TCP/UDP порт 1080 контейнера."
+  cat <<'EOF'
+<div class="notice notice-warn"><b>mixed-in users</b><span>Если задан хотя бы один <code>MIXED_IN_USER*</code>, entrypoint добавит в listener <code>mixed-in</code> секцию <code>users</code>. В env хранится строка <code>username#password</code>, а здесь она редактируется двумя отдельными полями.</span></div>
+<div class="subhead"><b>MIXED_IN_USER*</b><button type="button" onclick="addRow('mixedUsers', 'MIXED_IN_USER', false)">Добавить</button></div>
+<div id="mixedUsers" class="rows mixed-users">
+EOF
+  mixed_found=0
+  for name in $(env_names '^MIXED_IN_USER[0-9]*='); do
+    value="$(env_raw "$name")"
+    username=""
+    password=""
+    case "$value" in
+      *"#"*)
+        username="${value%%#*}"
+        password="${value#*#}"
+        ;;
+    esac
+    idx="$(printf '%s' "$name" | sed 's/MIXED_IN_USER//')"; [ -z "$idx" ] && idx=0
+    cat <<EOF
+<div class="env-row env-row-stack mixed-user-row" data-index="$idx" data-prefix="MIXED_IN_USER" data-max-index="99"><div class="mixed-user-fields"><label><span>Логин</span><input class="mixed-user-name" value="$(printf '%s' "$username" | h)" placeholder="username"></label><label><span>Пароль</span><input class="mixed-user-pass" type="password" value="$(printf '%s' "$password" | h)" placeholder="password"></label></div><input type="hidden" name="$name" value="$(printf '%s' "$value" | h)" data-mixed-user-value><button type="button" onclick="removeEnvRow(this)">Удалить</button></div>
+EOF
+    mixed_found=1
+  done
+  if [ "$mixed_found" -eq 0 ]; then
+    cat <<'EOF'
+<div class="env-row env-row-stack mixed-user-row" data-index="0" data-prefix="MIXED_IN_USER" data-max-index="99"><div class="mixed-user-fields"><label><span>Логин</span><input class="mixed-user-name" placeholder="username"></label><label><span>Пароль</span><input class="mixed-user-pass" type="password" placeholder="password"></label></div><input type="hidden" name="MIXED_IN_USER0" value="" data-mixed-user-value><button type="button" onclick="removeEnvRow(this)">Удалить</button></div>
+EOF
+  fi
+  cat <<'EOF'
+</div>
+EOF
+  section_end
+}
+
 tools_page() {
   section_start "Инструменты" "Конверторы и быстрые проверки для конфигов, подписок и строк прокси."
   cat <<'EOF'
@@ -1812,7 +1848,9 @@ tools_page() {
       </details>
       <label class="field field-wide"><span><b>Xray JSON</b><em>outbounds</em></span><textarea id="toolXrayJson" rows="18" spellcheck="false"></textarea></label>
       <div class="bc-actions">
+        <button type="button" class="primary" onclick="toolXrayConvert()">Конвертировать</button>
         <button type="button" onclick="toolCopy('toolXrayLinks', this)">Скопировать все</button>
+        <span class="tool-status" id="toolXrayStatus"></span>
       </div>
       <textarea id="toolXrayLinks" class="tool-hidden-copy" readonly spellcheck="false"></textarea>
       <div class="tool-link-list" id="toolXrayCards"></div>
@@ -1904,6 +1942,7 @@ case "$page" in
   overview) overview_page ;;
   core) core_page ;;
   providers) providers_page ;;
+  listeners) listeners_page ;;
   dpi) dpi_page ;;
   groups) groups_page ;;
   rules) rules_page ;;

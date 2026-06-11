@@ -4,7 +4,7 @@ set -u
 
 WWW_DIR="${WWW_DIR:-/www}"
 CGI="$WWW_DIR/cgi-bin/index.sh"
-PAGES="overview:index core:core providers:providers dpi:dpi groups:groups rules:rules rulesets:rulesets yaml:yaml tools:tools"
+PAGES="overview:index core:core providers:providers listeners:listeners dpi:dpi groups:groups rules:rules rulesets:rulesets yaml:yaml tools:tools"
 CURRENT_PID=""
 
 graceful_shutdown() {

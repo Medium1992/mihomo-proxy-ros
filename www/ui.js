@@ -213,11 +213,69 @@ function commandFor(name, original, value, originalPresent) {
   const hasOriginal = originalPresent;
   const hasValue = value !== "";
   if (!hasOriginal && !hasValue) return "";
+  if (!hasOriginal && value === defaultEnvValue(name)) return "";
   if (!hasOriginal && value === original) return "";
   if (hasOriginal && !hasValue) return `/container/envs/remove [find list="${envListName}" key="${name}"]`;
   if (!hasOriginal && hasValue) return `/container/envs/add list="${envListName}" key="${name}" value="${mtEscape(value)}"`;
   if (original !== value) return `/container/envs/set [find list="${envListName}" key="${name}"] value="${mtEscape(value)}"`;
   return "";
+}
+
+function defaultEnvValue(name) {
+  if (/^SUB_LINK\d*_INTERVAL$/.test(name) || name === "SUB_LINK_INTERVAL") return "3600";
+  if (/^ZAPRET_PACKETS\d*$/.test(name)) return "12";
+  if (/^ZAPRET2_PACKETS\d*$/.test(name)) return "12";
+  const defaults = {
+    HEALTHCHECK_URL: "https://www.gstatic.com/generate_204",
+    HEALTHCHECK_URL_STATUS: "204",
+    HEALTHCHECK_URL_BYEDPI: "https://www.facebook.com",
+    HEALTHCHECK_URL_STATUS_BYEDPI: "200"
+  };
+  return Object.prototype.hasOwnProperty.call(defaults, name) ? defaults[name] : null;
+}
+
+function currentCommandNames() {
+  const names = new Set();
+  document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]").forEach((el) => {
+    if (el.name) names.add(el.name);
+  });
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith("mihomo-env:")) continue;
+    const name = key.slice("mihomo-env:".length);
+    const value = localStorage.getItem(key) || "";
+    const original = localStorage.getItem(originalKey(name)) || "";
+    const present = originalWasPresent(name);
+    if (value !== original || (present && value === "") || (!present && value !== "" && value !== defaultEnvValue(name))) {
+      names.add(name);
+    }
+  }
+  return [...names].filter((name) => /^[A-Z0-9_]+$/.test(name)).sort();
+}
+
+async function refreshOriginalsFromServer(names) {
+  if (!names || !names.length || typeof fetch !== "function") return false;
+  try {
+    const res = await fetch("/cgi-bin/env-state", {
+      method: "POST",
+      headers: {"Content-Type": "text/plain; charset=UTF-8"},
+      body: names.join("\n")
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const env = data && data.env ? data.env : {};
+    names.forEach((name) => {
+      if (!Object.prototype.hasOwnProperty.call(env, name)) return;
+      const item = env[name] || {};
+      const present = !!item.present;
+      localStorage.setItem(originalPresentKey(name), present ? "1" : "0");
+      if (present) localStorage.setItem(originalKey(name), String(item.value || ""));
+    });
+    return true;
+  } catch (e) {
+    console.warn("env-state refresh failed:", e);
+    return false;
+  }
 }
 
 function collectPageCommands() {
@@ -264,16 +322,71 @@ function formatCommands(title, commands) {
   return text;
 }
 
-function generateCommands() {
+function currentPageId() {
+  return (document.body && document.body.dataset.page) || location.pathname.replace(/^.*\/|\.html$/g, "") || "";
+}
+
+function activePageTabId() {
+  const active = document.querySelector(".page-tabs .page-tab.active");
+  return active ? active.dataset.tab || "" : "";
+}
+
+function commandUiAllowed() {
+  const page = currentPageId();
+  if (page === "tools" || page === "yaml") return false;
+  const tab = activePageTabId();
+  if (page === "dpi" && (tab === "byedpicheck" || tab === "blockcheck" || tab === "blockcheck2")) return false;
+  return true;
+}
+
+function updateCommandVisibility() {
+  const allowed = commandUiAllowed();
+  document.querySelectorAll(".command-trigger").forEach((el) => { el.hidden = !allowed; });
+  const bottomSubmit = document.querySelector(".bottom-submit");
+  if (bottomSubmit) bottomSubmit.hidden = !allowed;
+  const panel = document.getElementById("commands");
+  if (panel && !allowed) panel.hidden = true;
+  if (allowed && panel && panel.hidden) restoreLastCommands();
+}
+
+async function generateCommands() {
+  if (!commandUiAllowed()) {
+    updateCommandVisibility();
+    return;
+  }
   syncDnsPolicy();
   syncWgDst();
+  syncMixedUsers();
   localStorage.setItem("mihomo-command-env-list", getEnvListName());
+  await refreshOriginalsFromServer(currentCommandNames());
   const pageCommands = collectPageCommands();
   const allCommands = collectAllCommands();
-  document.getElementById("commandsText").value = formatCommands("Команды для текущей страницы", pageCommands);
-  document.getElementById("commandsAllText").value = formatCommands("Суммарные команды для всех измененных env", allCommands);
+  const pageText = formatCommands("Команды для текущей страницы", pageCommands);
+  const allText = formatCommands("Суммарные команды для всех измененных env", allCommands);
+  document.getElementById("commandsText").value = pageText;
+  document.getElementById("commandsAllText").value = allText;
+  localStorage.setItem("mihomo-last-commands-page", pageText);
+  localStorage.setItem("mihomo-last-commands-all", allText);
+  localStorage.setItem("mihomo-last-commands-at", new Date().toISOString());
   document.getElementById("commands").hidden = false;
   document.getElementById("commands").scrollIntoView({behavior: "smooth", block: "start"});
+}
+
+function restoreLastCommands() {
+  if (!commandUiAllowed()) {
+    updateCommandVisibility();
+    return;
+  }
+  const panel = document.getElementById("commands");
+  const pageEl = document.getElementById("commandsText");
+  const allEl = document.getElementById("commandsAllText");
+  if (!panel || !pageEl || !allEl) return;
+  const pageText = localStorage.getItem("mihomo-last-commands-page") || "";
+  const allText = localStorage.getItem("mihomo-last-commands-all") || "";
+  if (!pageText && !allText) return;
+  pageEl.value = pageText;
+  allEl.value = allText;
+  panel.hidden = false;
 }
 
 function copyText(text, fallbackEl) {
@@ -303,7 +416,6 @@ function initToolsPage() {
     ["toolB64Input", toolBase64Decode],
     ["toolRegexSource", toolRegexTest],
     ["toolRegexText", toolRegexTest],
-    ["toolXrayJson", toolXrayConvert],
     ["toolHappInput", toolHappInspect],
     ["toolVanyaInput", toolVanyaBuild],
     ["toolVanyaDomain", toolVanyaBuild],
@@ -322,10 +434,17 @@ function initToolsPage() {
       fn();
     });
   });
+  const xrayJson = document.getElementById("toolXrayJson");
+  if (xrayJson) {
+    xrayJson.addEventListener("input", () => {
+      toolSaveInput(xrayJson);
+      toolSetStatus("toolXrayStatus", "JSON изменён, нажмите «Конвертировать».", true);
+    });
+  }
   toolBase64Encode();
   toolBase64Decode();
   toolRegexTest();
-  toolXrayConvert();
+  toolSetStatus("toolXrayStatus", xrayJson && xrayJson.value.trim() ? "JSON загружен, нажмите «Конвертировать»." : "", true);
   toolHappInspect();
   toolVanyaBuild();
   toolVanyaRestore();
@@ -1219,10 +1338,12 @@ function toolXrayConvert() {
   const out = document.getElementById("toolXrayLinks");
   const diag = document.getElementById("toolXrayDiag");
   const notes = [];
+  toolSetStatus("toolXrayStatus", input.trim() ? "Конвертирую..." : "", true);
   if (!input.trim()) {
     if (out) out.value = "";
     if (diag) diag.value = "";
     toolRenderXrayCards([]);
+    toolSetStatus("toolXrayStatus", "", true);
     return;
   }
   try {
@@ -1243,10 +1364,12 @@ function toolXrayConvert() {
       notes.length ? "" : "diagnostics: ok",
       ...notes
     ].filter(Boolean).join("\n");
+    toolSetStatus("toolXrayStatus", `Готово: ${links.length} из ${outbounds.length}.`, true);
   } catch (e) {
     if (out) out.value = "";
     toolRenderXrayCards([]);
     if (diag) diag.value = "Ошибка JSON: " + e.message;
+    toolSetStatus("toolXrayStatus", "Ошибка JSON: " + e.message, false);
   }
 }
 
@@ -1309,6 +1432,7 @@ const INDEXED_PREFIXES = {
   LINK:           { minIndex: 0, zeroPlain: true,  maxIndex: null, containerId: "links" },
   SUB_LINK:       { minIndex: 0, zeroPlain: false, maxIndex: null, containerId: "subs"  },
   SOCKS:          { minIndex: 0, zeroPlain: false, maxIndex: 99,   containerId: "socksRows" },
+  MIXED_IN_USER:  { minIndex: 0, zeroPlain: false, maxIndex: 99,   containerId: "mixedUsers" },
   BYEDPI_CMD:     { minIndex: 0, zeroPlain: true,  maxIndex: 99,   containerId: "byedpi" },
   ZAPRET_CMD:     { minIndex: 0, zeroPlain: true,  maxIndex: 99,   containerId: "zapret",  packets: "ZAPRET_PACKETS"  },
   ZAPRET2_CMD:    { minIndex: 0, zeroPlain: true,  maxIndex: 99,   containerId: "zapret2", packets: "ZAPRET2_PACKETS" },
@@ -1374,6 +1498,7 @@ function addRow(containerId, prefix, startAtOne) {
   if (prefix === "RULES" || prefix === "RULE_SET") div.className = "env-row rule-row";
   if (prefix === "BYEDPI_CMD") div.className = "env-row dpi-single-row";
   if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") div.className = "env-row dpi-packet-row";
+  if (prefix === "MIXED_IN_USER") div.className = "env-row env-row-stack mixed-user-row";
   if (prefix === "LINK") div.className = "env-row env-row-stack link-row";
   if (prefix === "SUB_LINK") div.className = "env-row env-row-stack sub-link-row";
   div.dataset.index = idx;
@@ -1388,6 +1513,8 @@ function addRow(containerId, prefix, startAtOne) {
     div.innerHTML = `<label><span>${displayKey}</span><input name="${key}" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Редактировать">&#10002;</button><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   } else if (prefix === "RULES") {
     div.innerHTML = `<label><span>${displayKey}</span><input name="${key}" placeholder="DOMAIN,example.com,GLOBAL"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+  } else if (prefix === "MIXED_IN_USER") {
+    div.innerHTML = `<div class="mixed-user-fields"><label><span>Логин</span><input class="mixed-user-name" placeholder="username"></label><label><span>Пароль</span><input class="mixed-user-pass" type="password" placeholder="password"></label></div><input type="hidden" name="${key}" value="" data-mixed-user-value><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   } else if (prefix === "LINK") {
     div.innerHTML =
       `<label><span>${displayKey}</span><input name="${key}" placeholder="vless:// / vmess:// / ss:// / trojan:// / vpn://"></label>` +
@@ -1425,12 +1552,91 @@ function addRow(containerId, prefix, startAtOne) {
     el.dataset.fromDraft = "true";
   });
   wireFieldEvents(div);
+  if (prefix === "MIXED_IN_USER") initMixedUserRow(div);
+  initPasswordToggles(div);
   ensureIndexedRowControls(div);
   if (prefix === "SUB_LINK" && typeof initHeadersEditors === "function") initHeadersEditors(div);
   if (typeof wirePaneValidators === "function") wirePaneValidators(div);
   sortIndexedRows(wrap);
   if (typeof refreshAllBadges === "function") refreshAllBadges();
   if (typeof renderRulesPreview === 'function') renderRulesPreview();
+}
+
+function splitMixedUserValue(value) {
+  const raw = String(value || "");
+  const pos = raw.indexOf("#");
+  if (pos < 0) return { username: "", password: "" };
+  return {
+    username: raw.slice(0, pos),
+    password: raw.slice(pos + 1)
+  };
+}
+
+function syncMixedUserRow(row) {
+  if (!row) return;
+  const hidden = row.querySelector("input[data-mixed-user-value][name]");
+  const username = row.querySelector(".mixed-user-name");
+  const password = row.querySelector(".mixed-user-pass");
+  if (!hidden || !username || !password) return;
+  hidden.value = username.value && password.value ? `${username.value}#${password.value}` : "";
+  rememberField(hidden);
+}
+
+function initMixedUserRow(row) {
+  if (!row || row.dataset.mixedUserWired === "true") return;
+  const hidden = row.querySelector("input[data-mixed-user-value][name]");
+  const username = row.querySelector(".mixed-user-name");
+  const password = row.querySelector(".mixed-user-pass");
+  if (!hidden || !username || !password) return;
+  const current = splitMixedUserValue(hidden.value);
+  if (!username.value && current.username) username.value = current.username;
+  if (!password.value && current.password) password.value = current.password;
+  const onInput = () => {
+    syncMixedUserRow(row);
+    if (typeof refreshAllBadges === "function") refreshAllBadges();
+  };
+  username.addEventListener("input", onInput);
+  username.addEventListener("change", onInput);
+  password.addEventListener("input", onInput);
+  password.addEventListener("change", onInput);
+  row.dataset.mixedUserWired = "true";
+  syncMixedUserRow(row);
+}
+
+function syncMixedUsers() {
+  document.querySelectorAll(".mixed-user-row").forEach(syncMixedUserRow);
+}
+
+function initMixedUsers(root) {
+  (root || document).querySelectorAll(".mixed-user-row").forEach(initMixedUserRow);
+}
+
+function initPasswordToggles(root) {
+  (root || document).querySelectorAll('input[type="password"], .mixed-user-pass, .socks-password').forEach((input) => {
+    if (!input || input.dataset.passwordToggle === "true") return;
+    const label = input.closest("label");
+    if (!label) return;
+    const wrap = document.createElement("span");
+    wrap.className = "password-wrap";
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "password-toggle";
+    btn.title = "Показать пароль";
+    btn.setAttribute("aria-label", "Показать пароль");
+    btn.textContent = "◉";
+    btn.addEventListener("click", () => {
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      btn.title = show ? "Скрыть пароль" : "Показать пароль";
+      btn.setAttribute("aria-label", btn.title);
+      btn.textContent = show ? "◎" : "◉";
+    });
+    wrap.appendChild(btn);
+    label.classList.add("password-field");
+    input.dataset.passwordToggle = "true";
+  });
 }
 
 function sortIndexedRows(wrap) {
@@ -3794,6 +4000,7 @@ function syncSocksRow(row) {
 }
 
 function wireSocksRow(row) {
+  initPasswordToggles(row);
   row.querySelectorAll("input, select").forEach((el) => {
     if (el.type === "hidden") return;
     el.addEventListener("input",  () => syncSocksRow(row));
@@ -4169,12 +4376,7 @@ function activatePageTab(tabId) {
     btn.setAttribute("aria-selected", on ? "true" : "false");
   });
   try { localStorage.setItem(activeTabKey(), tabId); } catch (e) {}
-  // Скрываем нижнюю «Сгенерировать команды MikroTik» на BlockCheck-вкладках:
-  // там нет name-полей env-формы, кнопка бесполезна и только путает.
-  const bottomSubmit = document.querySelector(".bottom-submit");
-  if (bottomSubmit) {
-    bottomSubmit.hidden = (tabId === "blockcheck" || tabId === "blockcheck2" || tabId === "byedpicheck");
-  }
+  updateCommandVisibility();
 }
 
 function initPageTabs() {
@@ -4474,6 +4676,8 @@ function bootstrapUI() {
   initGroupEditor();
   initHeadersEditors(document);
   initWgEndpointEditors(document);
+  initMixedUsers(document);
+  initPasswordToggles(document);
   initPageTabs();
   initSocksEditor();
   initFieldValidators();
@@ -4482,6 +4686,7 @@ function bootstrapUI() {
   initBlockcheck1();
   initByedpiCheck();
   renderRulesPreview();
+  restoreLastCommands();
   refreshAllBadges();
   document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]").forEach((el) => {
     el.addEventListener("input", renderRulesPreview);

@@ -1,0 +1,51 @@
+#!/bin/sh
+
+ORIGINAL_ENV_FILE="${ORIGINAL_ENV_FILE:-/dev/shm/mihomo-original-envs}"
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\r\n'
+}
+
+env_present() {
+  name="$1"
+  if [ -f "$ORIGINAL_ENV_FILE" ]; then
+    grep -qx "$name" "$ORIGINAL_ENV_FILE" 2>/dev/null
+  else
+    env | grep -q "^$name="
+  fi
+}
+
+len="${CONTENT_LENGTH:-0}"
+case "$len" in
+  ''|*[!0-9]*) len=0 ;;
+esac
+body=""
+if [ "$len" -gt 0 ]; then
+  body="$(dd bs=1 count="$len" 2>/dev/null)"
+fi
+
+echo "Content-Type: application/json; charset=utf-8"
+echo
+printf '{"ok":true,"env":{'
+first=true
+printf '%s\n' "$body" | while IFS= read -r name; do
+  case "$name" in
+    ''|*[!A-Z0-9_]*)
+      continue
+      ;;
+  esac
+  value="$(printenv "$name" 2>/dev/null || true)"
+  if env_present "$name"; then
+    present=true
+  else
+    present=false
+    value=""
+  fi
+  if [ "$first" = true ]; then
+    first=false
+  else
+    printf ','
+  fi
+  printf '"%s":{"present":%s,"value":"%s"}' "$(json_escape "$name")" "$present" "$(json_escape "$value")"
+done
+printf '}}\n'

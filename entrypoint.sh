@@ -2832,6 +2832,25 @@ EOF
     port: 1080
     listen: 0.0.0.0
     udp: true
+EOF
+  mixed_users_emitted=false
+  for varname in $(env | grep -E '^MIXED_IN_USER[0-9]*=' | cut -d= -f1 | sort -V); do
+    mixed_user="$(printenv "$varname")"
+    case "$mixed_user" in
+      *"#"*) ;;
+      *) continue ;;
+    esac
+    mixed_username="${mixed_user%%#*}"
+    mixed_password="${mixed_user#*#}"
+    [ -n "$mixed_username" ] && [ -n "$mixed_password" ] || continue
+    if [ "$mixed_users_emitted" = false ]; then
+      printf '    users:\n' >> "$CONFIG_YAML"
+      mixed_users_emitted=true
+    fi
+    printf '      - username: %s\n' "$(printf '%s' "$mixed_username" | yaml_quote)" >> "$CONFIG_YAML"
+    printf '        password: %s\n' "$(printf '%s' "$mixed_password" | yaml_quote)" >> "$CONFIG_YAML"
+  done
+  cat >> "$CONFIG_YAML" <<EOF
 proxy-providers:
 EOF
 
