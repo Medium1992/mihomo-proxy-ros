@@ -190,8 +190,8 @@ $WARules
 :do {add key=ZAPRET2_CMD list=MihomoProxyRoS value=""
 :put "Add env ZAPRET2_CMD"} on-error {}
 }
-:do { add key=GROUP list=MihomoProxyRoS value=YouTube,Telegram,Discord,META,Roblox,SuperCell,AI,Twitch
-:put "Add env GROUP value: YouTube,Telegram,Discord,META,Roblox,SuperCell,AI,Twitch"} on-error {}
+:do { add key=GROUP list=MihomoProxyRoS value=YouTube,Telegram,Discord,META,SuperCell,AI,Twitch
+:put "Add env GROUP value: YouTube,Telegram,Discord,META,SuperCell,AI,Twitch"} on-error {}
 :do { add key=YOUTUBE_GEOSITE list=MihomoProxyRoS value=youtube
 :put "Add env YOUTUBE_GEOSITE value: youtube"} on-error {}
 :do { add key=TELEGRAM_GEOSITE list=MihomoProxyRoS value=telegram
@@ -214,10 +214,6 @@ $WARules
 :put "Add env META_AS value: AS32934,AS54115,AS63293"} on-error {}
 :do { add key=META_IPCIDR list=MihomoProxyRoS value=41.189.185.0/24,202.59.209.0/24,223.27.200.0/24,223.27.237.0/24
 :put "Add env META_IPCIDR value: 41.189.185.0/24,202.59.209.0/24,223.27.200.0/24,223.27.237.0/24"} on-error {}
-:do { add key=ROBLOX_GEOSITE list=MihomoProxyRoS value=roblox
-:put "Add env ROBLOX_GEOSITE value: roblox"} on-error {}
-:do { add key=ROBLOX_AS list=MihomoProxyRoS value=AS22697,AS11281,AS136766
-:put "Add env ROBLOX_AS value: AS22697,AS11281,AS136766"} on-error {}
 :do { add key=SUPERCELL_GEOSITE list=MihomoProxyRoS value=supercell
 :put "Add env SUPERCELL_GEOSITE value: supercell"} on-error {}
 :do { add key=AI_GEOSITE list=MihomoProxyRoS value=category-ai-!cn,openai,google-gemini,anthropic
@@ -354,10 +350,6 @@ add name=IP_MihomoProxyRoS source="# Define global variables\r\
 \n# NetFlix\r\
 \n\"geoipv4/netflix\";\r\
 \n\"asnv4/AS2906\";\r\
-\n# Roblox\r\
-\n\"asnv4/AS22697\";\r\
-\n\"asnv4/AS11281\";\r\
-\n\"asnv4/AS136766\";\r\
 \n}\r\
 \n\r\
 \n\$LoadRscResources resources=\$resources baseUrl=\$baseUrl\r\
