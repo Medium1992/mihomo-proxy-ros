@@ -1,10 +1,15 @@
 #!/usr/bin/sh
 
-sleep 1
-
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
-# sysctl -w net.netfilter.nf_conntrack_tcp_loose=0
+sysctl -w net.ipv4.ip_forward=0
+sysctl -w net.ipv6.conf.all.disable_ipv6=1
+sysctl -w net.ipv6.conf.default.disable_ipv6=1
+sysctl -w net.ipv6.conf.all.forwarding=0
+sysctl -w net.ipv6.conf.default.forwarding=0
+for f in /proc/sys/net/ipv6/conf/*/disable_ipv6; do
+  echo 1 > "$f" 2>/dev/null || true
+done
 sysctl -w net.netfilter.nf_conntrack_tcp_timeout_established=86400
 sysctl -w net.netfilter.nf_conntrack_tcp_timeout_syn_sent=5
 sysctl -w net.netfilter.nf_conntrack_tcp_timeout_syn_recv=5
@@ -15,12 +20,23 @@ sysctl -w net.netfilter.nf_conntrack_tcp_timeout_time_wait=10
 sysctl -w net.netfilter.nf_conntrack_tcp_timeout_close=10
 sysctl -w net.netfilter.nf_conntrack_tcp_timeout_unacknowledged=300
 sysctl -w net.netfilter.nf_conntrack_udp_timeout_stream=180
-# sysctl -w net.ipv4.udp_early_demux=0
 
 for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo") print $2}'); do
 tc qdisc add dev $iface root fq_codel >/dev/null 2>&1;
 ip link set dev $iface multicast off >/dev/null 2>&1;
 done
+
+SHUTTING_DOWN=0
+graceful_shutdown() {
+  trap - TERM INT
+  [ "$SHUTTING_DOWN" = 1 ] && exit 0
+  SHUTTING_DOWN=1
+  log "Stop signal received, exiting..."
+  exit 0
+}
+trap graceful_shutdown TERM INT
+
+sleep 1
 
 set -eu
 
@@ -35,12 +51,14 @@ EXTERNAL_UI_URL="${EXTERNAL_UI_URL:-https://github.com/MetaCubeX/metacubexd/arch
 UI_SECRET="${UI_SECRET:-}"
 CONFIG_DIR="/root/.config/mihomo"
 AWG_DIR="$CONFIG_DIR/awg"
+TRUSTTUNNEL_DIR="$CONFIG_DIR/trusttunnel"
+OPENVPN_DIR="$CONFIG_DIR/openvpn"
 PROXIES_DIR="$CONFIG_DIR/proxies_mount"
 AMNEZIA_PREMIUM_DIR="$CONFIG_DIR/amnezia_premium"
 RULE_SET_DIR="$CONFIG_DIR/rule_set_list"
 # Runtime artifacts (regenerated on every container start) live in RAM
 # to avoid wearing out the underlying flash storage. Mounted user files
-# (AWG_DIR, PROXIES_DIR, RULE_SET_DIR) and mihomo's own downloads
+# (AWG_DIR, TRUSTTUNNEL_DIR, OPENVPN_DIR, PROXIES_DIR, RULE_SET_DIR) and mihomo's own downloads
 # (geosite, geoip, external-ui) stay in CONFIG_DIR on flash.
 RUNTIME_DIR="/dev/shm/mihomo"
 HS5T_DIR="/dev/shm/hs5t"
@@ -1196,6 +1214,411 @@ emit_vpn_xray_vless_proxy() {
   echo ""
 }
 
+ovpn_directive_value() {
+  local file="$1"
+  local key="$2"
+  local field_index="${3:-1}"
+
+  awk -v key="$key" -v field_index="$field_index" '
+    function strip_quotes(s) {
+      gsub(/^"/, "", s)
+      gsub(/"$/, "", s)
+      gsub(/^'\''/, "", s)
+      gsub(/'\''$/, "", s)
+      return s
+    }
+    /^[[:space:]]*($|#|;)/ { next }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      sub(/^[[:space:]]+/, "", line)
+      n = split(line, parts, /[[:space:]]+/)
+      if (parts[1] == key && field_index <= n) {
+        print strip_quotes(parts[field_index])
+        exit
+      }
+    }
+  ' "$file"
+}
+
+ovpn_extract_block() {
+  local file="$1"
+  local tag="$2"
+  local out_file="$3"
+
+  awk -v tag="$tag" '
+    BEGIN {
+      start = "<" tag ">"
+      stop = "</" tag ">"
+    }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (line == stop) {
+        in_block = 0
+        exit
+      }
+      if (in_block) {
+        print line
+      }
+      if (line == start) {
+        in_block = 1
+      }
+    }
+  ' "$file" > "$out_file"
+  [ -s "$out_file" ]
+}
+
+ovpn_extract_pem_block() {
+  local file="$1"
+  local tag="$2"
+  local out_file="$3"
+  local raw_file="${out_file}.raw"
+
+  ovpn_extract_block "$file" "$tag" "$raw_file" || return 1
+  awk '
+    /^-----BEGIN / { in_pem = 1 }
+    in_pem { print }
+    /^-----END / { exit }
+  ' "$raw_file" > "$out_file"
+  rm -f "$raw_file"
+  [ -s "$out_file" ]
+}
+
+emit_yaml_block_file() {
+  local key="$1"
+  local file="$2"
+
+  [ -s "$file" ] || return 1
+  echo "    $key: |"
+  sed 's/^/      /' "$file"
+}
+
+emit_vpn_openvpn_proxy() {
+  local ovpn_file="$1"
+  local name="$2"
+  local tmp_prefix="$3"
+  local server="" port="" proto="" dev="" cipher="" auth="" mtu="" username="" password="" comp_lzo=""
+  local ca_file cert_file key_file tls_file auth_user_file tls_source="" cipher_item=""
+
+  grep -q '^[[:space:]]*remote[[:space:]]' "$ovpn_file" 2>/dev/null || return 1
+  grep -q '^[[:space:]]*<ca>[[:space:]]*$' "$ovpn_file" 2>/dev/null || return 1
+
+  server=$(ovpn_directive_value "$ovpn_file" "remote" 2)
+  port=$(ovpn_directive_value "$ovpn_file" "remote" 3)
+  proto=$(ovpn_directive_value "$ovpn_file" "proto" 2)
+  [ -n "$proto" ] || proto=$(ovpn_directive_value "$ovpn_file" "remote" 4)
+  dev=$(ovpn_directive_value "$ovpn_file" "dev" 2)
+  cipher=$(ovpn_directive_value "$ovpn_file" "cipher" 2)
+  [ -n "$cipher" ] || cipher=$(ovpn_directive_value "$ovpn_file" "data-ciphers" 2)
+  auth=$(ovpn_directive_value "$ovpn_file" "auth" 2)
+  comp_lzo=$(ovpn_directive_value "$ovpn_file" "comp-lzo" 2)
+  mtu=$(ovpn_directive_value "$ovpn_file" "tun-mtu" 2)
+  [ -n "$mtu" ] || mtu=$(ovpn_directive_value "$ovpn_file" "mtu" 2)
+
+  [ -n "$server" ] || return 1
+  [ -n "$port" ] || port=1194
+  case "$proto" in
+    tcp-client|tcp-server|tcp4|tcp6) proto="tcp" ;;
+    udp4|udp6) proto="udp" ;;
+  esac
+  case "$proto" in
+    tcp|udp) ;;
+    *) proto="udp" ;;
+  esac
+  [ -n "$dev" ] || dev="tun"
+  auth=$(printf '%s' "$auth" | tr '[:lower:]' '[:upper:]')
+  [ "$auth" = "SHA-1" ] && auth="SHA1"
+  [ -n "$auth" ] || auth="SHA256"
+
+  if [ -n "$cipher" ]; then
+    for cipher_item in $(printf '%s' "$cipher" | tr ':,' '  '); do
+      cipher_item=$(printf '%s' "$cipher_item" | tr '[:lower:]' '[:upper:]')
+      [ "$cipher_item" = "AES-CBC" ] && cipher_item="AES-128-CBC"
+      case "$cipher_item" in
+        AES-128-GCM|AES-192-GCM|AES-256-GCM|AES-128-CBC|AES-192-CBC|AES-256-CBC|CHACHA20-POLY1305)
+          cipher="$cipher_item"
+          break
+          ;;
+      esac
+    done
+  fi
+  comp_lzo=$(printf '%s' "$comp_lzo" | tr '[:upper:]' '[:lower:]')
+
+  ca_file="${tmp_prefix}.ca"
+  cert_file="${tmp_prefix}.cert"
+  key_file="${tmp_prefix}.key"
+  tls_file="${tmp_prefix}.tls"
+  auth_user_file="${tmp_prefix}.auth_user"
+
+  ovpn_extract_pem_block "$ovpn_file" "ca" "$ca_file" || return 1
+  ovpn_extract_pem_block "$ovpn_file" "cert" "$cert_file" || true
+  ovpn_extract_pem_block "$ovpn_file" "key" "$key_file" || true
+  if ovpn_extract_pem_block "$ovpn_file" "tls-crypt" "$tls_file"; then
+    tls_source="tls-crypt"
+  elif ovpn_extract_pem_block "$ovpn_file" "tls-auth" "$tls_file"; then
+    tls_source="tls-auth"
+  fi
+
+  if ovpn_extract_block "$ovpn_file" "auth-user-pass" "$auth_user_file"; then
+    username=$(sed -n '1p' "$auth_user_file")
+    password=$(sed -n '2p' "$auth_user_file")
+  fi
+
+  if [ ! -s "$cert_file" ] || [ ! -s "$key_file" ]; then
+    [ -n "$username" ] || return 1
+    [ -n "$password" ] || return 1
+  fi
+
+  echo "  - name: \"$name\""
+  echo "    type: openvpn"
+  echo "    server: $server"
+  echo "    port: $port"
+  echo "    proto: $proto"
+  [ -n "$username" ] && printf '    username: %s\n' "$(printf '%s' "$username" | yaml_quote)"
+  [ -n "$password" ] && printf '    password: %s\n' "$(printf '%s' "$password" | yaml_quote)"
+  emit_yaml_block_file "ca" "$ca_file"
+  [ -s "$cert_file" ] && emit_yaml_block_file "cert" "$cert_file"
+  [ -s "$key_file" ] && emit_yaml_block_file "key" "$key_file"
+  [ -s "$tls_file" ] && emit_yaml_block_file "tls-crypt" "$tls_file"
+  echo "    dev: $dev"
+  case "$cipher" in
+    AES-128-GCM|AES-192-GCM|AES-256-GCM|AES-128-CBC|AES-192-CBC|AES-256-CBC|CHACHA20-POLY1305) echo "    cipher: $cipher" ;;
+  esac
+  case "$auth" in
+    MD5|SHA1|SHA256|SHA384|SHA512) echo "    auth: $auth" ;;
+  esac
+  case "$comp_lzo" in
+    yes|no|adaptive) echo "    comp-lzo: \"$comp_lzo\"" ;;
+  esac
+  [ -n "$mtu" ] && echo "    mtu: $mtu"
+  echo ""
+
+  [ "$tls_source" = "tls-auth" ] && log "Warning: $name OpenVPN uses <tls-auth>; emitted it as tls-crypt for mihomo compatibility" >&2
+  return 0
+}
+
+toml_string_value() {
+  local file="$1"
+  local key="$2"
+
+  awk -v key="$key" '
+    /^[[:space:]]*($|#)/ { next }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (line !~ "^[[:space:]]*" key "[[:space:]]*=") next
+      sub(/^[^=]*=[[:space:]]*/, "", line)
+      if (line ~ /^"""/) next
+      if (line ~ /^"/) {
+        sub(/^"/, "", line)
+        sub(/"[[:space:]]*(#.*)?$/, "", line)
+        print line
+        exit
+      }
+      sub(/[[:space:]]*(#.*)?$/, "", line)
+      print line
+      exit
+    }
+  ' "$file"
+}
+
+toml_bool_value() {
+  local file="$1"
+  local key="$2"
+
+  toml_string_value "$file" "$key" | tr '[:upper:]' '[:lower:]'
+}
+
+toml_first_array_string() {
+  local file="$1"
+  local key="$2"
+
+  awk -v key="$key" '
+    /^[[:space:]]*($|#)/ { next }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (line !~ "^[[:space:]]*" key "[[:space:]]*=") next
+      sub(/^[^=]*=[[:space:]]*/, "", line)
+      if (match(line, /"[^"]+"/)) {
+        out = substr(line, RSTART + 1, RLENGTH - 2)
+        print out
+        exit
+      }
+    }
+  ' "$file"
+}
+
+toml_multiline_string_file() {
+  local file="$1"
+  local key="$2"
+  local out_file="$3"
+
+  awk -v key="$key" '
+    /^[[:space:]]*($|#)/ && !in_block { next }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (!in_block) {
+        if (line !~ "^[[:space:]]*" key "[[:space:]]*=") next
+        sub(/^[^=]*=[[:space:]]*/, "", line)
+        if (line !~ /^"""/) next
+        sub(/^"""/, "", line)
+        in_block = 1
+        if (line == "") next
+      }
+      if (in_block) {
+        if (line ~ /"""/) {
+          sub(/""".*$/, "", line)
+          if (line != "") print line
+          exit
+        }
+        print line
+      }
+    }
+  ' "$file" > "$out_file"
+  [ -s "$out_file" ]
+}
+
+split_host_port() {
+  local addr="$1"
+  local host_file="$2"
+  local port_file="$3"
+  local host="" port=""
+
+  case "$addr" in
+    \[*\]:*)
+      host="${addr%%]:*}"
+      host="${host#[}"
+      port="${addr##*:}"
+      ;;
+    *:*)
+      host="${addr%:*}"
+      port="${addr##*:}"
+      ;;
+    *)
+      host="$addr"
+      port=""
+      ;;
+  esac
+
+  printf '%s' "$host" > "$host_file"
+  printf '%s' "$port" > "$port_file"
+}
+
+emit_trusttunnel_proxy() {
+  local toml_file="$1"
+  local name="$2"
+  local tmp_prefix="$3"
+  local hostname="" address="" server="" port="" username="" password="" skip_verify="" protocol="" custom_sni=""
+  local host_file="${tmp_prefix}.host"
+  local port_file="${tmp_prefix}.port"
+
+  hostname=$(toml_string_value "$toml_file" "hostname")
+  address=$(toml_first_array_string "$toml_file" "addresses")
+  username=$(toml_string_value "$toml_file" "username")
+  password=$(toml_string_value "$toml_file" "password")
+  custom_sni=$(toml_string_value "$toml_file" "custom_sni")
+  skip_verify=$(toml_bool_value "$toml_file" "skip_verification")
+  protocol=$(toml_string_value "$toml_file" "upstream_protocol" | tr '[:upper:]' '[:lower:]')
+
+  [ -n "$address" ] || address="$hostname:443"
+  split_host_port "$address" "$host_file" "$port_file"
+  server=$(cat "$host_file" 2>/dev/null)
+  port=$(cat "$port_file" 2>/dev/null)
+  [ -n "$server" ] || server="$hostname"
+  [ -n "$port" ] || port="443"
+
+  [ -n "$server" ] || return 1
+  [ -n "$username" ] || return 1
+  [ -n "$password" ] || return 1
+
+  echo "  - name: \"$name\""
+  echo "    type: trusttunnel"
+  echo "    server: $server"
+  echo "    port: $port"
+  printf '    username: %s\n' "$(printf '%s' "$username" | yaml_quote)"
+  printf '    password: %s\n' "$(printf '%s' "$password" | yaml_quote)"
+  if [ -n "$custom_sni" ]; then
+    printf '    sni: %s\n' "$(printf '%s' "$custom_sni" | yaml_quote)"
+  elif [ -n "$hostname" ] && [ "$hostname" != "$server" ]; then
+    printf '    sni: %s\n' "$(printf '%s' "$hostname" | yaml_quote)"
+  fi
+  [ "$skip_verify" = "true" ] && echo "    skip-cert-verify: true"
+  [ "$protocol" = "http3" ] && echo "    quic: true"
+  echo "    health-check: true"
+  echo "    udp: true"
+  echo ""
+}
+
+generate_trusttunnel_providers() {
+  local tt_providers=""
+  if ls "$TRUSTTUNNEL_DIR"/*.toml >/dev/null 2>&1; then
+    for conf in "$TRUSTTUNNEL_DIR"/*.toml; do
+      [ ! -f "$conf" ] && continue
+      local tt_name=$(basename "$conf" .toml)
+      local tt_yaml="${RUNTIME_DIR}/${tt_name}.yaml"
+
+      if {
+        echo "proxies:"
+        emit_trusttunnel_proxy "$conf" "$tt_name" "${RUNTIME_DIR}/${tt_name}.trusttunnel"
+      } > "$tt_yaml"; then
+
+        cat >> "$CONFIG_YAML" <<EOF
+  ${tt_name}:
+    type: file
+    path: $RUNTIME_DIR/${tt_name}.yaml
+EOF
+emit_provider_override "$tt_name" >> "$CONFIG_YAML"
+        if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+          cat >> "$CONFIG_YAML" <<EOF
+$(health_check_block)
+EOF
+        fi
+        tt_providers="${tt_providers} ${tt_name}"
+      else
+        rm -f "$tt_yaml"
+      fi
+    done
+  fi
+  echo "$tt_providers"
+}
+
+generate_openvpn_providers() {
+  local ovpn_providers=""
+  if ls "$OPENVPN_DIR"/*.ovpn >/dev/null 2>&1 || ls "$OPENVPN_DIR"/*.conf >/dev/null 2>&1; then
+    for conf in "$OPENVPN_DIR"/*.ovpn "$OPENVPN_DIR"/*.conf; do
+      [ ! -f "$conf" ] && continue
+      local ovpn_name=$(basename "$conf" .ovpn)
+      [ "$ovpn_name" = "$(basename "$conf")" ] && ovpn_name=$(basename "$conf" .conf)
+      local ovpn_yaml="${RUNTIME_DIR}/${ovpn_name}.yaml"
+
+      if {
+        echo "proxies:"
+        emit_vpn_openvpn_proxy "$conf" "$ovpn_name" "${RUNTIME_DIR}/${ovpn_name}.openvpn"
+      } > "$ovpn_yaml"; then
+
+        cat >> "$CONFIG_YAML" <<EOF
+  ${ovpn_name}:
+    type: file
+    path: $RUNTIME_DIR/${ovpn_name}.yaml
+EOF
+emit_provider_override "$ovpn_name" >> "$CONFIG_YAML"
+        if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+          cat >> "$CONFIG_YAML" <<EOF
+$(health_check_block)
+EOF
+        fi
+        ovpn_providers="${ovpn_providers} ${ovpn_name}"
+      else
+        rm -f "$ovpn_yaml"
+      fi
+    done
+  fi
+  echo "$ovpn_providers"
+}
+
 vpn_json_is_amnezia_premium() {
   local json_file="$1"
 
@@ -1965,11 +2388,26 @@ generate_vpn_provider() {
       if grep -q '^\[Interface\]' "$conf_file" && grep -q '^\[Peer\]' "$conf_file"; then
         count=$(cat "$count_file" 2>/dev/null || echo 0)
         count=$((count + 1))
-        echo "$count" > "$count_file"
         if [ "$count" -eq 1 ]; then
           parse_awg_config "$conf_file" "$provider_name" >> "$yaml_file"
         else
           parse_awg_config "$conf_file" "${provider_name}_${count}" >> "$yaml_file"
+        fi
+        echo "$count" > "$count_file"
+        continue
+      fi
+
+      if grep -q '^[[:space:]]*remote[[:space:]]' "$conf_file" && grep -q '^[[:space:]]*<ca>[[:space:]]*$' "$conf_file"; then
+        count=$(cat "$count_file" 2>/dev/null || echo 0)
+        count=$((count + 1))
+        if [ "$count" -eq 1 ]; then
+          proxy_name="$provider_name"
+        else
+          proxy_name="${provider_name}_${count}"
+        fi
+        if emit_vpn_openvpn_proxy "$conf_file" "$proxy_name" "${tmp_prefix}.openvpn" >> "$yaml_file"; then
+          echo "$count" > "$count_file"
+          continue
         fi
       fi
     done
@@ -1979,7 +2417,7 @@ generate_vpn_provider() {
   rm -f "${tmp_prefix}."*
 
   if [ "$count" -eq 0 ]; then
-    log "ERROR: $provider_name vpn:// has no supported WireGuard/AmneziaWG/VLESS config"
+    log "ERROR: $provider_name vpn:// has no supported WireGuard/AmneziaWG/VLESS/OpenVPN config"
     return 1
   fi
 
@@ -2170,20 +2608,48 @@ $prio|$rule"
 
 emit_provider_override() {
   local name="$1"
-  local dialer
+  local dialer add_prefix add_suffix
 
   dialer=$(printenv "${name}_DIALER_PROXY" 2>/dev/null || true)
+  add_prefix=$(printenv "${name}_ADDITIONAL_PREFIX" 2>/dev/null || true)
+  add_suffix=$(printenv "${name}_ADDITIONAL_SUFFIX" 2>/dev/null || true)
 
-  if [ -n "$dialer" ]; then
-    cat <<EOF
-    override:
-      dialer-proxy: $dialer
-EOF
+  if [ -n "$dialer" ] || [ -n "$add_prefix" ] || [ -n "$add_suffix" ]; then
+    echo "    override:"
+    [ -n "$dialer" ]     && echo "      dialer-proxy: $dialer"
+    [ -n "$add_prefix" ] && printf '      additional-prefix: "%s"\n' "$(echo "$add_prefix" | sed 's/"/\\"/g')"
+    [ -n "$add_suffix" ] && printf '      additional-suffix: "%s"\n' "$(echo "$add_suffix" | sed 's/"/\\"/g')"
   fi
 }
 
 parse_wg_dst() {
   echo "$ZAPRET2_WG_DST" | tr ',' '\n' | sed '/^$/d'
+}
+
+setup_forward_nft() {
+  [ -z "$ZAPRET2_WG_DST" ] && [ "${TPROXY}" = "true" ] && return 0
+
+  echo "Applying forward firewall..."
+
+  nft add table inet forward 2>/dev/null || true
+  nft add chain inet forward forward '{
+    type filter hook forward priority filter;
+    policy drop;
+  }' 2>/dev/null || true
+  nft add rule inet forward forward \
+    ct state { established, related, untracked } \
+    accept
+  nft add rule inet forward forward \
+    ct state invalid \
+    drop
+
+  if [ "${TPROXY}" != "true" ]; then
+    nft add rule inet forward forward \
+      iifname "$iface" oifname "Meta" meta l4proto udp \
+      accept
+  fi
+
+  sysctl -w net.ipv4.ip_forward=1
 }
 
 apply_zapret2_wg_nft() {
@@ -2212,6 +2678,10 @@ apply_zapret2_wg_nft() {
     port="${ep##*:}"
 
     echo "WG endpoint: $ip:$port"
+
+    nft add rule inet forward forward \
+      iifname "$iface" ip daddr $ip udp dport $port \
+      accept
 
     nft add rule inet $table pre \
       ip daddr $ip udp dport $port \
@@ -2253,6 +2723,8 @@ apply_zapret2_wg_nft() {
 
     done
   fi
+
+
 }
 
 start_zapret2_wg() {
@@ -2343,6 +2815,25 @@ EOF
     port: 1080
     listen: 0.0.0.0
     udp: true
+EOF
+  mixed_users_emitted=false
+  for varname in $(env | grep -E '^MIXED_IN_USER[0-9]*=' | cut -d= -f1 | sort -V); do
+    mixed_user="$(printenv "$varname")"
+    case "$mixed_user" in
+      *"#"*) ;;
+      *) continue ;;
+    esac
+    mixed_username="${mixed_user%%#*}"
+    mixed_password="${mixed_user#*#}"
+    [ -n "$mixed_username" ] && [ -n "$mixed_password" ] || continue
+    if [ "$mixed_users_emitted" = false ]; then
+      printf '    users:\n' >> "$CONFIG_YAML"
+      mixed_users_emitted=true
+    fi
+    printf '      - username: %s\n' "$(printf '%s' "$mixed_username" | yaml_quote)" >> "$CONFIG_YAML"
+    printf '        password: %s\n' "$(printf '%s' "$mixed_password" | yaml_quote)" >> "$CONFIG_YAML"
+  done
+  cat >> "$CONFIG_YAML" <<EOF
 proxy-providers:
 EOF
 
@@ -2432,6 +2923,14 @@ EOF
     fi
     cat >> "$CONFIG_YAML" <<EOF
 EOF
+    # Provider-level filter/exclude (mihomo proxy-providers): применяются к
+    # узлам внутри подписки. exclude-type — список типов через `|`.
+    sub_filter=$(printenv "${name}_FILTER" 2>/dev/null || true)
+    sub_excl=$(printenv "${name}_EXCLUDE_FILTER" 2>/dev/null || true)
+    sub_excl_type=$(printenv "${name}_EXCLUDE_TYPE" 2>/dev/null || true)
+    [ -n "$sub_filter" ]    && printf '    filter: "%s"\n'         "$(echo "$sub_filter"    | sed 's/"/\\"/g')" >> "$CONFIG_YAML"
+    [ -n "$sub_excl" ]      && printf '    exclude-filter: "%s"\n' "$(echo "$sub_excl"      | sed 's/"/\\"/g')" >> "$CONFIG_YAML"
+    [ -n "$sub_excl_type" ] && printf '    exclude-type: "%s"\n'   "$(echo "$sub_excl_type" | sed 's/"/\\"/g')" >> "$CONFIG_YAML"
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
       cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
@@ -2446,6 +2945,12 @@ EOF
   awg_provs=$(generate_awg_providers)
   providers="${providers}${awg_provs}"
   dns_other="${dns_other}${awg_provs}"
+
+  # TrustTunnel / OpenVPN mounted configs
+  tt_provs=$(generate_trusttunnel_providers)
+  providers="${providers}${tt_provs}"
+  ovpn_provs=$(generate_openvpn_providers)
+  providers="${providers}${ovpn_provs}"
 
 # SOCKS5
   socks_envs="$CONFIG_DIR/.socks_envs"
@@ -3330,27 +3835,15 @@ nft_rules() {
 
   nft flush ruleset || true
 
-  nft create table inet rawdrop
-  nft add chain inet rawdrop prerouting "{ type filter hook prerouting priority raw; policy accept; }"
-  nft add rule inet rawdrop prerouting ip daddr { $FAKE_IP_RANGE } meta l4proto != { tcp, udp } drop
-
   nft add table inet filter
   nft add chain inet filter input '{ type filter hook input priority filter; policy accept; }'
   nft add rule inet filter input ct state { established, related, untracked } accept
   nft add rule inet filter input ct state invalid drop
-  nft add chain inet filter forward '{ type filter hook forward priority filter; policy accept; }'
-  nft add rule inet filter forward ct state { established, related, untracked } accept
-  nft add rule inet filter forward ct state invalid drop
-
-  nft create table ip nat
-  nft add chain ip nat postrouting "{ type nat hook postrouting priority srcnat; policy accept; }"
-for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
-  nft add rule ip nat postrouting oifname "$iface" masquerade
-done
 
   iface=$(first_iface)
   iface_cidr=$(ip -4 -o addr show dev "$iface" scope global | awk '{print $4}')
   iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
+  setup_forward_nft
 
 if [ "${TPROXY}" = "true" ]; then
   nft create table inet mihomo
@@ -3416,22 +3909,19 @@ iptables_rules() {
   iptables -t raw -X
   iptables -t filter -F
   iptables -t filter -X
-  iptables -t raw -A PREROUTING -d $FAKE_IP_RANGE -p tcp -j RETURN
-  iptables -t raw -A PREROUTING -d $FAKE_IP_RANGE -p udp -j RETURN
-  iptables -t raw -A PREROUTING -d $FAKE_IP_RANGE -j DROP
+  iptables -P FORWARD DROP
   iptables -t filter -A INPUT   -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
   iptables -t filter -A INPUT -m conntrack --ctstate INVALID -j DROP
-  iptables -t filter -A FORWARD   -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
+  iptables -t filter -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
   iptables -t filter -A FORWARD -m conntrack --ctstate INVALID -j DROP
-  for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
-    iptables -t nat -A POSTROUTING -o "$iface" -j MASQUERADE
-  done
   [ -n "$BYEDPI_LIST" ] && apply_byedpi_iptables
   iptables -t nat -A PREROUTING -m addrtype --dst-type LOCAL -j RETURN
   iptables -t nat -A PREROUTING -m addrtype ! --dst-type UNICAST -j RETURN
   iface=$(first_iface)
   iface_cidr=$(ip -4 -o addr show dev "$iface" scope global | awk '{print $4}')
   iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
+  iptables -t filter -A FORWARD -i "$iface" -o Meta -p udp -j ACCEPT
+  sysctl -w net.ipv4.ip_forward=1
   for entry in $dscp_to_group; do
     dscp=${entry%%:*}
     port=$((7000 + dscp))
@@ -3460,11 +3950,9 @@ wait_for_meta() {
 }
 
 run() {
-  mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$PROXIES_DIR" "$RULE_SET_DIR"
-  # Wipe runtime dirs on every start — everything here is regenerated below.
+  mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$TRUSTTUNNEL_DIR" "$OPENVPN_DIR" "$PROXIES_DIR" "$RULE_SET_DIR"
   rm -rf "$RUNTIME_DIR" "$HS5T_DIR"
   mkdir -p "$RUNTIME_DIR" "$HS5T_DIR"
-  # Clean up stale hs5t artefacts from previous installs (when they lived in /).
   rm -f /hs5t_*.yml /hs5t_*.sh
 
   UNSPEC_PREF=$(ip rule show | awk '/lookup unspec/ {print $1}' | tr -d :)
@@ -3489,11 +3977,6 @@ run() {
 
   echo "Starting Mihomo $(mihomo -v)"
 
-  # -d keeps mihomo's own data (UI, geo databases, cache) on flash;
-  # -f points to the entrypoint-generated config that lives in RAM.
-  # SAFE_PATHS whitelists RUNTIME_DIR so mihomo accepts proxy-providers
-  # whose `path:` points to /dev/shm/mihomo/*.yaml (outside its home dir).
-  # Colon-separated on Linux per mihomo docs.
   SAFE_PATHS="$RUNTIME_DIR" mihomo -d "$CONFIG_DIR" -f "$CONFIG_YAML" &
   MIHOMO_PID=$!
 
@@ -3515,11 +3998,6 @@ run() {
     start_byedpi_processes
   fi
 
-  # Web UI runs from RAM. /www is the source (mounted, may not allow chmod
-  # or be on flash). /dev/shm/web is the runtime docroot:
-  #   - cgi-bin: copied so chmod +x works (tmpfs supports unix mode bits)
-  #   - HTML:    rendered straight to RAM (no flash wear)
-  #   - assets:  symlinks back to /www (picked up live without container restart)
   WEBROOT=/dev/shm/web
   mkdir -p "$WEBROOT"
   rm -rf "$WEBROOT/cgi-bin"
@@ -3528,7 +4006,9 @@ run() {
   for item in assets templates favicon.png style.css ui.js; do
     [ -e "/www/$item" ] && ln -sfn "/www/$item" "$WEBROOT/$item"
   done
-  WWW_DIR="$WEBROOT" /bin/sh /www/render_static.sh >/dev/null 2>&1 || true
+  WWW_DIR="$WEBROOT" /bin/sh /www/render_static.sh >/dev/null 2>&1 &
+  RENDER_PID=$!
+  wait "$RENDER_PID" 2>/dev/null || true
   httpd -f -p 80 -h "$WEBROOT" >/dev/null 2>&1 &
 
   wait $MIHOMO_PID
