@@ -65,6 +65,8 @@ button, input, textarea, select { font: inherit; letter-spacing: 0; }
   position: sticky;
   top: 0;
   height: 100vh;
+  display: flex;
+  flex-direction: column;
   padding: 22px 16px;
   border-right: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface) 88%, transparent);
@@ -94,6 +96,18 @@ button, input, textarea, select { font: inherit; letter-spacing: 0; }
 
 nav { display: grid; gap: 6px; }
 
+.side nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: start;
+  grid-auto-rows: min-content;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  margin-right: -4px;
+  scrollbar-gutter: stable;
+}
+
 nav a {
   display: flex;
   align-items: center;
@@ -107,11 +121,12 @@ nav a {
 nav a span {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   color: var(--accent);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 15px;
+  font-weight: 750;
 }
 
 nav a:hover {
@@ -126,10 +141,8 @@ nav a.active {
 }
 
 .side-note {
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: 16px;
+  flex: 0 0 auto;
+  margin-top: 16px;
   display: grid;
   gap: 6px;
   padding: 14px;

@@ -2,6 +2,30 @@
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
+sysctl -w net.ipv4.ip_forward=0
+sysctl -w net.ipv6.conf.all.disable_ipv6=1
+sysctl -w net.ipv6.conf.default.disable_ipv6=1
+sysctl -w net.ipv6.conf.all.forwarding=0
+sysctl -w net.ipv6.conf.default.forwarding=0
+for f in /proc/sys/net/ipv6/conf/*/disable_ipv6; do
+  echo 1 > "$f" 2>/dev/null || true
+done
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_established=86400
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_syn_sent=5
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_syn_recv=5
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_fin_wait=10
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_close_wait=10
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_last_ack=10
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_time_wait=10
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_close=10
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_unacknowledged=300
+sysctl -w net.netfilter.nf_conntrack_udp_timeout_stream=180
+
+for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo") print $2}'); do
+tc qdisc add dev $iface root fq_codel >/dev/null 2>&1;
+ip link set dev $iface multicast off >/dev/null 2>&1;
+done
+
 SHUTTING_DOWN=0
 graceful_shutdown() {
   trap - TERM INT
@@ -33,24 +57,6 @@ else
     apk del iptables iptables-legacy >/dev/null 2>&1
   fi
 fi
-
-# sysctl -w net.netfilter.nf_conntrack_tcp_loose=0
-sysctl -w net.netfilter.nf_conntrack_tcp_timeout_established=86400
-sysctl -w net.netfilter.nf_conntrack_tcp_timeout_syn_sent=5
-sysctl -w net.netfilter.nf_conntrack_tcp_timeout_syn_recv=5
-sysctl -w net.netfilter.nf_conntrack_tcp_timeout_fin_wait=10
-sysctl -w net.netfilter.nf_conntrack_tcp_timeout_close_wait=10
-sysctl -w net.netfilter.nf_conntrack_tcp_timeout_last_ack=10
-sysctl -w net.netfilter.nf_conntrack_tcp_timeout_time_wait=10
-sysctl -w net.netfilter.nf_conntrack_tcp_timeout_close=10
-sysctl -w net.netfilter.nf_conntrack_tcp_timeout_unacknowledged=300
-sysctl -w net.netfilter.nf_conntrack_udp_timeout_stream=180
-# sysctl -w net.ipv4.udp_early_demux=0
-
-for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo") print $2}'); do
-tc qdisc add dev $iface root fq_codel >/dev/null 2>&1;
-ip link set dev $iface multicast off >/dev/null 2>&1;
-done
 
 set -eu
 
@@ -2640,6 +2646,32 @@ parse_wg_dst() {
   echo "$ZAPRET2_WG_DST" | tr ',' '\n' | sed '/^$/d'
 }
 
+setup_forward_nft() {
+  [ -z "$ZAPRET2_WG_DST" ] && [ "${TPROXY}" = "true" ] && return 0
+
+  echo "Applying forward firewall..."
+
+  nft add table inet forward 2>/dev/null || true
+  nft add chain inet forward forward '{
+    type filter hook forward priority filter;
+    policy drop;
+  }' 2>/dev/null || true
+  nft add rule inet forward forward \
+    ct state { established, related, untracked } \
+    accept
+  nft add rule inet forward forward \
+    ct state invalid \
+    drop
+
+  if [ "${TPROXY}" != "true" ]; then
+    nft add rule inet forward forward \
+      iifname "$iface" oifname "Meta" meta l4proto udp \
+      accept
+  fi
+
+  sysctl -w net.ipv4.ip_forward=1
+}
+
 apply_zapret2_wg_nft() {
 
   [ -z "$ZAPRET2_WG_DST" ] && return 0
@@ -2666,6 +2698,10 @@ apply_zapret2_wg_nft() {
     port="${ep##*:}"
 
     echo "WG endpoint: $ip:$port"
+
+    nft add rule inet forward forward \
+      iifname "$iface" ip daddr $ip udp dport $port \
+      accept
 
     nft add rule inet $table pre \
       ip daddr $ip udp dport $port \
@@ -2708,40 +2744,7 @@ apply_zapret2_wg_nft() {
     done
   fi
 
-  # === Exclude WG from container masquerade ===
-  # Контейнер сам делает `ip nat postrouting … masquerade`. WG-пакеты должны
-  # уходить с оригинальным src IP (zapret2/nfqws обрабатывает их по сырому
-  # endpoint'у). В nft базовые цепочки независимы — `accept` в отдельной
-  # таблице/цепочке НЕ предотвращает срабатывание masquerade в другой
-  # цепочке на том же хуке. Поэтому вставляем `return` в саму
-  # `ip nat postrouting` ВЫШЕ строк с masquerade.
-  echo "Adding masquerade exclusions for WG..."
 
-  # Убедимся, что основная nat-цепочка уже есть (создаётся выше в run()).
-  if nft list chain ip nat postrouting >/dev/null 2>&1; then
-
-    echo "$ZAPRET2_WG_DST" | tr ',' '\n' | while read -r ep; do
-
-      [ -z "$ep" ] && continue
-
-      ip="${ep%%:*}"
-      port="${ep##*:}"
-
-      # Идемпотентность — не дублируем правило, если оно уже есть.
-      nft list chain ip nat postrouting | \
-        grep -q "ip daddr $ip udp dport $port return" && continue
-
-      echo "No-masquerade WG: $ip:$port"
-
-      # insert (без position) ставит правило в самое начало цепочки —
-      # выше всех `oifname … masquerade`.
-      nft insert rule ip nat postrouting \
-        ip daddr $ip udp dport $port return
-
-    done
-  else
-    echo "Warning: ip nat postrouting chain not found, skipping masquerade exclusion"
-  fi
 }
 
 start_zapret2_wg() {
@@ -3852,27 +3855,15 @@ nft_rules() {
 
   nft flush ruleset || true
 
-  nft create table inet rawdrop
-  nft add chain inet rawdrop prerouting "{ type filter hook prerouting priority raw; policy accept; }"
-  nft add rule inet rawdrop prerouting ip daddr { $FAKE_IP_RANGE } meta l4proto != { tcp, udp } drop
-
   nft add table inet filter
   nft add chain inet filter input '{ type filter hook input priority filter; policy accept; }'
   nft add rule inet filter input ct state { established, related, untracked } accept
   nft add rule inet filter input ct state invalid drop
-  nft add chain inet filter forward '{ type filter hook forward priority filter; policy accept; }'
-  nft add rule inet filter forward ct state { established, related, untracked } accept
-  nft add rule inet filter forward ct state invalid drop
-
-  nft create table ip nat
-  nft add chain ip nat postrouting "{ type nat hook postrouting priority srcnat; policy accept; }"
-for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
-  nft add rule ip nat postrouting oifname "$iface" masquerade
-done
 
   iface=$(first_iface)
   iface_cidr=$(ip -4 -o addr show dev "$iface" scope global | awk '{print $4}')
   iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
+  setup_forward_nft
 
 if [ "${TPROXY}" = "true" ]; then
   nft create table inet mihomo
@@ -3938,22 +3929,19 @@ iptables_rules() {
   iptables -t raw -X
   iptables -t filter -F
   iptables -t filter -X
-  iptables -t raw -A PREROUTING -d $FAKE_IP_RANGE -p tcp -j RETURN
-  iptables -t raw -A PREROUTING -d $FAKE_IP_RANGE -p udp -j RETURN
-  iptables -t raw -A PREROUTING -d $FAKE_IP_RANGE -j DROP
+  iptables -P FORWARD DROP
   iptables -t filter -A INPUT   -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
   iptables -t filter -A INPUT -m conntrack --ctstate INVALID -j DROP
-  iptables -t filter -A FORWARD   -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
+  iptables -t filter -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED,UNTRACKED -j ACCEPT
   iptables -t filter -A FORWARD -m conntrack --ctstate INVALID -j DROP
-  for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
-    iptables -t nat -A POSTROUTING -o "$iface" -j MASQUERADE
-  done
   [ -n "$BYEDPI_LIST" ] && apply_byedpi_iptables
   iptables -t nat -A PREROUTING -m addrtype --dst-type LOCAL -j RETURN
   iptables -t nat -A PREROUTING -m addrtype ! --dst-type UNICAST -j RETURN
   iface=$(first_iface)
   iface_cidr=$(ip -4 -o addr show dev "$iface" scope global | awk '{print $4}')
   iface_ip=$(ip -4 addr show "$iface" | grep inet | awk '{ print $2 }' | cut -d/ -f1)
+  iptables -t filter -A FORWARD -i "$iface" -o Meta -p udp -j ACCEPT
+  sysctl -w net.ipv4.ip_forward=1
   for entry in $dscp_to_group; do
     dscp=${entry%%:*}
     port=$((7000 + dscp))
@@ -3983,10 +3971,8 @@ wait_for_meta() {
 
 run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$TRUSTTUNNEL_DIR" "$OPENVPN_DIR" "$PROXIES_DIR" "$RULE_SET_DIR"
-  # Wipe runtime dirs on every start — everything here is regenerated below.
   rm -rf "$RUNTIME_DIR" "$HS5T_DIR"
   mkdir -p "$RUNTIME_DIR" "$HS5T_DIR"
-  # Clean up stale hs5t artefacts from previous installs (when they lived in /).
   rm -f /hs5t_*.yml /hs5t_*.sh
 
   UNSPEC_PREF=$(ip rule show | awk '/lookup unspec/ {print $1}' | tr -d :)
@@ -4011,11 +3997,6 @@ run() {
 
   echo "Starting Mihomo $(mihomo -v)"
 
-  # -d keeps mihomo's own data (UI, geo databases, cache) on flash;
-  # -f points to the entrypoint-generated config that lives in RAM.
-  # SAFE_PATHS whitelists RUNTIME_DIR so mihomo accepts proxy-providers
-  # whose `path:` points to /dev/shm/mihomo/*.yaml (outside its home dir).
-  # Colon-separated on Linux per mihomo docs.
   SAFE_PATHS="$RUNTIME_DIR" mihomo -d "$CONFIG_DIR" -f "$CONFIG_YAML" &
   MIHOMO_PID=$!
 
@@ -4037,11 +4018,6 @@ run() {
     start_byedpi_processes
   fi
 
-  # Web UI runs from RAM. /www is the source (mounted, may not allow chmod
-  # or be on flash). /dev/shm/web is the runtime docroot:
-  #   - cgi-bin: copied so chmod +x works (tmpfs supports unix mode bits)
-  #   - HTML:    rendered straight to RAM (no flash wear)
-  #   - assets:  symlinks back to /www (picked up live without container restart)
   WEBROOT=/dev/shm/web
   mkdir -p "$WEBROOT"
   rm -rf "$WEBROOT/cgi-bin"
