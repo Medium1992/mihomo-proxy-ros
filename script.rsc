@@ -208,6 +208,10 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env SUPERCELL_GEOSITE value: supercell"} on-error {}
 :do { add key=AI_GEOSITE list=MihomoProxyRoS value=category-ai-!cn,openai,google-gemini,anthropic
 :put "Add env AI_GEOSITE value: category-ai-!cn,openai,google-gemini,anthropic"} on-error {}
+:do { add key=AI_AS list=MihomoProxyRoS value=AS399358,AS60808
+:put "Add env AI_AS value: AS399358,AS60808"} on-error {}
+:do { add key=AI_IPCIDR list=MihomoProxyRoS value=216.73.216.0/22
+:put "Add env AI_IPCIDR value: 216.73.216.0/22"} on-error {}
 :do { add key=TWITCH_GEOSITE list=MihomoProxyRoS value=twitch
 :put "Add env TWITCH_GEOSITE value: twitch"} on-error {}
 :do { add key=RULES1 list=MihomoProxyRoS value="AND,((NETWORK,udp),(DST-PORT,443)),REJECT"
@@ -340,6 +344,9 @@ add name=IP_MihomoProxyRoS source="# Define global variables\r\
 \n# NetFlix\r\
 \n\"geoipv4/netflix\";\r\
 \n\"asnv4/AS2906\";\r\
+\n# Anthropic\r\
+\n\"asnv4/AS399358\";\r\
+\n\"asnv4/AS60808\";\r\
 \n}\r\
 \n\r\
 \n\$LoadRscResources resources=\$resources baseUrl=\$baseUrl\r\
