@@ -3411,7 +3411,7 @@ function groupValidatedFieldMarkup(prefix, suffix, validateKind, label, hint, pl
 }
 
 function groupTypeHint() {
-  return `Тип <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#type" target="_blank" rel="noopener">proxy-groups type</a>: select/url-test/load-balance/fallback/relay.`;
+  return `Тип <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#type" target="_blank" rel="noopener">proxy-groups type</a>: select/url-test/load-balance/fallback.`;
 }
 
 function addGroupPane(name) {
@@ -3445,7 +3445,8 @@ function addGroupPane(name) {
     <div class="grid">
       ${groupValidatedFieldMarkup(prefix, "PROXIES", "proxies", "Proxies", `Явные <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> через запятую: имена других прокси-групп (регистрозависимо) либо служебные <code>DIRECT</code>, <code>REJECT</code>, <code>REJECT-DROP</code>, <code>PASS</code>.`, "DIRECT,REJECT,YOUTUBE")}
       ${groupValidatedFieldMarkup(prefix, "USE", "use", "Use", `Список <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">providers</a> через запятую или <code>none</code>. Регистрозависимо.`, "LINK1,SUB_LINK1,BYEDPI")}
-      <label class="field" data-env="${prefix}_TYPE"><span><b>Type</b><em>${prefix}_TYPE</em></span><select name="${prefix}_TYPE" data-default="select"><option value="select">select</option><option value="url-test">url-test</option><option value="load-balance">load-balance</option><option value="fallback">fallback</option><option value="relay">relay</option></select><small>${groupTypeHint()}</small><i>new</i></label>
+      <label class="field" data-env="${prefix}_TYPE"><span><b>Type</b><em>${prefix}_TYPE</em></span><select name="${prefix}_TYPE" data-default="select"><option value="select">select</option><option value="url-test">url-test</option><option value="load-balance">load-balance</option><option value="fallback">fallback</option></select><small>${groupTypeHint()}</small><i>new</i></label>
+      ${groupFieldMarkup(prefix, "DEFAULT_SELECTED", "Default selected", `<a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#default-selected" target="_blank" rel="noopener">default-selected</a> для type select. Пусто → наследует <code>GROUP_DEFAULT_SELECTED</code>.`, "", "text", "")}
       ${groupFieldMarkup(prefix, "INTERVAL", "Interval", `<a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#interval" target="_blank" rel="noopener">Интервал</a> проверки в секундах. Пусто → наследует <code>GROUP_INTERVAL</code>.`, "", "number", "")}
       ${groupFieldMarkup(prefix, "URL", "URL", `URL <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#url" target="_blank" rel="noopener">health-check</a>. Пусто → наследует <code>GROUP_URL</code>.`, "", "text", "")}
       ${groupFieldMarkup(prefix, "URL_STATUS", "URL status", `Ожидаемый <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status" target="_blank" rel="noopener">expected-status</a>. Пусто → наследует <code>GROUP_URL_STATUS</code>.`, "", "number", "")}
@@ -4160,7 +4161,7 @@ const PROXIES_SPECIALS = new Set(["DIRECT", "REJECT", "REJECT-DROP", "PASS"]);
 // https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45
 const EXCLUDE_TYPE_VALUES = new Set([
   "direct", "reject", "rejectdrop", "compatible", "pass", "dns",
-  "relay", "selector", "fallback", "urltest", "loadbalance",
+  "selector", "fallback", "urltest", "loadbalance",
   "shadowsocks", "shadowsocksr", "snell", "socks5", "http",
   "vmess", "vless", "trojan", "hysteria", "hysteria2",
   "wireguard", "tuic", "ssh",

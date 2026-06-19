@@ -100,6 +100,7 @@ SUB_LINK_INTERVAL="${SUB_LINK_INTERVAL:-3600}"
 GROUP_TYPE="${GROUP_TYPE:-select}"
 GROUP_USE="${GROUP_USE:-}"
 GROUP_PROXIES="${GROUP_PROXIES:-}"
+GROUP_DEFAULT_SELECTED="${GROUP_DEFAULT_SELECTED:-}"
 GROUP_FILTER="${GROUP_FILTER:-}"
 GROUP_EXCLUDE="${GROUP_EXCLUDE:-}"
 GROUP_EXCLUDE_TYPE="${GROUP_EXCLUDE_TYPE:-}"
@@ -145,6 +146,7 @@ export SUB_LINK_INTERVAL
 export GROUP_TYPE
 export GROUP_USE
 export GROUP_PROXIES
+export GROUP_DEFAULT_SELECTED
 export GROUP_FILTER
 export GROUP_EXCLUDE
 export GROUP_EXCLUDE_TYPE
@@ -3237,6 +3239,7 @@ custom_rules_payloads=""
     exclude_type="${GLOBAL_EXCLUDE_TYPE:-$GROUP_EXCLUDE_TYPE}"
     use="${GLOBAL_USE:-$GROUP_USE}"
     proxies_val="${GLOBAL_PROXIES:-$GROUP_PROXIES}"
+    default_selected="${GLOBAL_DEFAULT_SELECTED:-$GROUP_DEFAULT_SELECTED}"
     g_tol="${GLOBAL_TOLERANCE:-$GROUP_TOLERANCE}"
     g_url="${GLOBAL_URL:-$GROUP_URL}"
     g_status="${GLOBAL_URL_STATUS:-$GROUP_URL_STATUS}"
@@ -3248,6 +3251,7 @@ custom_rules_payloads=""
     echo "proxy-groups:"
     echo "  - name: GLOBAL"
     echo "    type: $type"
+    [ "$type" = "select" ] && [ -n "$default_selected" ] && echo "    default-selected: $default_selected"
     if [ "${HEALTHCHECK_PROVIDER}" = "false" ]; then
       echo "    url: \"$g_url\""
       echo "    expected-status: $g_status"
@@ -3289,6 +3293,7 @@ custom_rules_payloads=""
     exclude_type="${DNS_EXCLUDE_TYPE:-}"
     use="${DNS_USE:-}"
     proxies_val="${DNS_PROXIES:-}"
+    default_selected="${DNS_DEFAULT_SELECTED:-}"
     g_tol="${DNS_TOLERANCE:-$GROUP_TOLERANCE}"
     g_url="${DNS_URL:-$GROUP_URL}"
     g_status="${DNS_URL_STATUS:-$GROUP_URL_STATUS}"
@@ -3299,6 +3304,7 @@ custom_rules_payloads=""
     echo
     echo "  - name: DNS"
     echo "    type: $type"
+    [ "$type" = "select" ] && [ -n "$default_selected" ] && echo "    default-selected: $default_selected"
     if [ "${HEALTHCHECK_PROVIDER}" = "false" ]; then
       echo "    url: \"$g_url\""
       echo "    expected-status: $g_status"
@@ -3393,6 +3399,7 @@ custom_rules_payloads=""
       exclude_type=$(printenv "${env_name}_EXCLUDE_TYPE" || echo "$GROUP_EXCLUDE_TYPE")
       use=$(printenv "${env_name}_USE" || echo "$GROUP_USE")
       proxies_val=$(printenv "${env_name}_PROXIES" 2>/dev/null || echo "$GROUP_PROXIES")
+      default_selected=$(printenv "${env_name}_DEFAULT_SELECTED" 2>/dev/null || echo "$GROUP_DEFAULT_SELECTED")
       g_tol=$(printenv "${env_name}_TOLERANCE" || echo "$GROUP_TOLERANCE")
       g_url=$(printenv "${env_name}_URL" || echo "$GROUP_URL")
       g_status=$(printenv "${env_name}_URL_STATUS" || echo "$GROUP_URL_STATUS")
@@ -3404,6 +3411,7 @@ custom_rules_payloads=""
         echo
         echo "  - name: $g"
         echo "    type: $type"
+        [ "$type" = "select" ] && [ -n "$default_selected" ] && echo "    default-selected: $default_selected"
         if [ "${HEALTHCHECK_PROVIDER}" = "false" ]; then
           echo "    url: \"$g_url\""
           echo "    expected-status: $g_status"
@@ -3475,6 +3483,7 @@ custom_rules_payloads=""
         exclude_type=$(printenv "${env_name}_EXCLUDE_TYPE" || echo "$GROUP_EXCLUDE_TYPE")
         use=$(printenv "${env_name}_USE" || echo "$GROUP_USE")
         proxies_val=$(printenv "${env_name}_PROXIES" 2>/dev/null || echo "$GROUP_PROXIES")
+        default_selected=$(printenv "${env_name}_DEFAULT_SELECTED" 2>/dev/null || echo "$GROUP_DEFAULT_SELECTED")
         g_tol=$(printenv "${env_name}_TOLERANCE" || echo "$GROUP_TOLERANCE")
         g_url=$(printenv "${env_name}_URL" || echo "$GROUP_URL")
         g_status=$(printenv "${env_name}_URL_STATUS" || echo "$GROUP_URL_STATUS")
@@ -3486,6 +3495,7 @@ custom_rules_payloads=""
           echo
           echo "  - name: $name"
           echo "    type: $type"
+          [ "$type" = "select" ] && [ -n "$default_selected" ] && echo "    default-selected: $default_selected"
           if [ "${HEALTHCHECK_PROVIDER}" = "false" ]; then
             echo "    url: \"$g_url\""
             echo "    expected-status: $g_status"
