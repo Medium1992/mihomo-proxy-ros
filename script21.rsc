@@ -50,6 +50,15 @@ foreach i in=$slotArray do={
 :set selectSlot $i
 :if ($selectSlot!="system") do={:set pathPull "$selectSlot/"}
 :put "The slot $selectSlot selected for pulling Containers, path pulling $pathPull"
+:if ([:len [/disk/find where slot=$selectSlot fs=tmpfs]] > 0) do={
+:local rootDir ($pathPull . "Containers/MihomoProxyRoS")
+:local repullSource (":local c [/container/find where comment=\"MihomoProxyRoS\"]\r\n:if ([:len \$c] > 0) do={\r\n:do {/container/stop \$c} on-error={}\r\n:while ([:len [/container/find where comment=\"MihomoProxyRoS\" and stopped]] = 0) do={:delay 1}\r\n/container/remove \$c\r\n}\r\n/container/add remote-image=\"ghcr.io/medium1992/mihomo-proxy-ros\" envlists=MihomoProxyRoS mountlists=MihomoProxyRoS interface=MihomoProxyRoS root-dir=\"" . $rootDir . "\" start-on-boot=yes comment=\"MihomoProxyRoS\"\r\n:while ([:len [/container/find where comment=\"MihomoProxyRoS\" and running]] = 0) do={/container/start [find where comment=\"MihomoProxyRoS\" and stopped]; :delay 3}")
+:if ([:len [/system/script/find where name="MihomoProxyRoS_repull"]] = 0) do={/system/script/add name=MihomoProxyRoS_repull source=$repullSource} else={/system/script/set [find where name="MihomoProxyRoS_repull"] source=$repullSource}
+:if ([:len [/system/scheduler/find where name="MihomoProxyRoS_repull"]] = 0) do={/system/scheduler/add name=MihomoProxyRoS_repull start-time=startup on-event="/system/script/run MihomoProxyRoS_repull"} else={/system/scheduler/set [find where name="MihomoProxyRoS_repull"] start-time=startup on-event="/system/script/run MihomoProxyRoS_repull"}
+} else={
+/system/script/remove [find where name="MihomoProxyRoS_repull"]
+/system/scheduler/remove [find where name="MihomoProxyRoS_repull"]
+}
 :set flagDisks true
 }}}}
 
