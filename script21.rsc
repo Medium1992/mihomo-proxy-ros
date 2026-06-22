@@ -168,6 +168,10 @@ add blackhole comment=BlackHole distance=254 dst-address=172.16.0.0/12 gateway="
 add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway="" routing-table=MihomoProxyRoS
 :put "Add default route 0.0.0.0/0 into routing table MihomoProxyRoS & BlackHole route"}
 
+/ip firewall nat
+:if ([:len [find comment="GitHub_Fastly_fix_dstnat"]] = 0) do={add action=netmap chain=dstnat dst-address=185.199.108.0/22 to-addresses=185.199.109.0/24 comment="GitHub_Fastly_fix_dstnat"; :put "Add nat rule GitHub_Fastly_fix_dstnat"}
+:if ([:len [find comment="GitHub_Fastly_fix_output"]] = 0) do={add action=netmap chain=output dst-address=185.199.108.0/22 to-addresses=185.199.109.0/24 comment="GitHub_Fastly_fix_output"; :put "Add nat rule GitHub_Fastly_fix_output"}
+
 :global whatsappRules
 :set whatsappRules [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/custom_list/add_env_WA.rsc mode=https output=user as-value]
 :if (($whatsappRules->"status")="finished") do={
@@ -269,10 +273,6 @@ add address=8.8.8.8 list=DNS
 add address=8.8.4.4 list=DNS
 :put "Add address list DNS"
 } on-error {}
-
-/ip firewall nat
-:if ([:len [find comment="GitHub_Fastly_fix_dstnat"]] = 0) do={add action=netmap chain=dstnat dst-address=185.199.108.0/22 to-addresses=185.199.109.0/24 comment="GitHub_Fastly_fix_dstnat"; :put "Add nat rule GitHub_Fastly_fix_dstnat"}
-:if ([:len [find comment="GitHub_Fastly_fix_output"]] = 0) do={add action=netmap chain=output dst-address=185.199.108.0/22 to-addresses=185.199.109.0/24 comment="GitHub_Fastly_fix_output"; :put "Add nat rule GitHub_Fastly_fix_output"}
 
 /ip firewall mangle
 :if ([:len [find comment="YT_MSS"]] = 0) do={add action=change-mss chain=forward dst-address-list=YT in-interface=MihomoProxyRoS new-mss=88 protocol=tcp tcp-flags=syn connection-state=new comment="YT_MSS"; :put "Add mangle rule YT_MSS"}
