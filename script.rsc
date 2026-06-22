@@ -437,7 +437,6 @@ add name=FWD_update source="# Define global variables\r\
 \n\"twitch\";\r\
 \n\"supercell\";\r\
 \n\"xbox\";\r\
-\n\"roblox\";\r\
 \n\"pornhub\";\r\
 \n}\r\
 \n\r\
