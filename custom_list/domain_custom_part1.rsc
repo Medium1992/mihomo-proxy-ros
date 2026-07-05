@@ -18,3 +18,8 @@
 :if ([:len [find name="flexcdn.cloud"]] = 0) do={ add address-list=$AddressList forward-to=$ForwardTo comment="kinopub" match-subdomain=yes type=FWD name="flexcdn.cloud" }
 :if ([:len [find name="trbcdn.net"]] = 0) do={ add address-list=$AddressList forward-to=$ForwardTo comment="kinopub" match-subdomain=yes type=FWD name="trbcdn.net" }
 :if ([:len [find name="boramoraboom.ru"]] = 0) do={ add address-list=$AddressList forward-to=$ForwardTo comment="kinopub" match-subdomain=yes type=FWD name="boramoraboom.ru" }
+:if ([:len [find name="flashscorekz.com"]] = 0) do={ add address-list=$AddressList forward-to=$ForwardTo comment="flashscore" match-subdomain=yes type=FWD name="flashscorekz.com" }
+:if ([:len [find name="fsdatacentre.com"]] = 0) do={ add address-list=$AddressList forward-to=$ForwardTo comment="flashscore" match-subdomain=yes type=FWD name="fsdatacentre.com" }
+:if ([:len [find name="flashscore.com"]] = 0) do={ add address-list=$AddressList forward-to=$ForwardTo comment="flashscore" match-subdomain=yes type=FWD name="flashscore.com" }
+:if ([:len [find name="flashscore.ninja"]] = 0) do={ add address-list=$AddressList forward-to=$ForwardTo comment="flashscore" match-subdomain=yes type=FWD name="flashscore.ninja" }
+:if ([:len [find name="static.flashscore.com.cdn.cloudflare.net"]] = 0) do={ add address-list=$AddressList forward-to=$ForwardTo comment="flashscore" match-subdomain=yes type=FWD name="static.flashscore.com.cdn.cloudflare.net" }
