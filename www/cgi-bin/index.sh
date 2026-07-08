@@ -969,6 +969,7 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
       <p>Контейнер не извлекает <code>youtube.com/watch</code> в прямые потоки. Можно попробовать получить прямую ссылку на видеопоток внешним инструментом <a class="doc-link" href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp/yt-dlp</a>.</p>
       <p>Пример строки для поля <b>Домены</b>: <code>@full https://...googlevideo.com/videoplayback?...</code></p>
       <p><code>@full</code> для <code>googlevideo.com/videoplayback</code> включает YouTube-комплект: <code>www.youtube.com</code>, <code>redirector.googlevideo.com</code>, <code>i.ytimg.com</code> и сам видеопоток. Поток должен отдать 2 МБ за 5 секунд — ориентир для 480p. Та же googlevideo-ссылка без <code>@full</code> проверяет только видеопоток.</p>
+      <p>⚠ <b>Ссылка живёт ~6 часов.</b> <code>videoplayback</code>-URL подписан параметром <code>expire</code>; протухшая ссылка отдаёт <b>HTTP 403</b>. Проверка это ловит: перед прогоном бьёт по ссылке напрямую, а по завершении — предупреждает, если все видео-пробы вернули 403. Увидели такое — возьмите свежую ссылку и запустите заново.</p>
     </div>
   </details>
   <div class="grid bc-grid">
@@ -1100,6 +1101,7 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
       <p>Контейнер не извлекает <code>youtube.com/watch</code> в прямые потоки. Можно попробовать получить прямую ссылку на видеопоток внешним инструментом <a class="doc-link" href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp/yt-dlp</a>.</p>
       <p>Пример строки для поля <b>Домены</b>: <code>@full https://...googlevideo.com/videoplayback?...</code></p>
       <p><code>@full</code> для <code>googlevideo.com/videoplayback</code> включает YouTube-комплект: <code>www.youtube.com</code>, <code>redirector.googlevideo.com</code>, <code>i.ytimg.com</code> и сам видеопоток. Поток должен отдать 2 МБ за 5 секунд — ориентир для 480p. Та же googlevideo-ссылка без <code>@full</code> проверяет только видеопоток.</p>
+      <p>⚠ <b>Ссылка живёт ~6 часов.</b> <code>videoplayback</code>-URL подписан параметром <code>expire</code>; протухшая ссылка отдаёт <b>HTTP 403</b>. Проверка это ловит: перед прогоном бьёт по ссылке напрямую, а по завершении — предупреждает, если все видео-пробы вернули 403. Увидели такое — возьмите свежую ссылку и запустите заново.</p>
     </div>
   </details>
   <div class="grid bc-grid">
@@ -1240,6 +1242,7 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
       <p>Контейнер не извлекает <code>youtube.com/watch</code> в прямые потоки. Можно попробовать получить прямую ссылку на видеопоток внешним инструментом <a class="doc-link" href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp/yt-dlp</a>.</p>
       <p>Пример строки для поля <b>Домены</b>: <code>@full https://...googlevideo.com/videoplayback?...</code></p>
       <p><code>@full</code> для <code>googlevideo.com/videoplayback</code> включает YouTube-комплект: <code>www.youtube.com</code>, <code>redirector.googlevideo.com</code>, <code>i.ytimg.com</code> и сам видеопоток. Поток должен отдать 2 МБ за 5 секунд — ориентир для 480p. Та же googlevideo-ссылка без <code>@full</code> проверяет только видеопоток.</p>
+      <p>⚠ <b>Ссылка живёт ~6 часов.</b> <code>videoplayback</code>-URL подписан параметром <code>expire</code>; протухшая ссылка отдаёт <b>HTTP 403</b>. Проверка это ловит: перед прогоном бьёт по ссылке напрямую, а по завершении — предупреждает, если все видео-пробы вернули 403. Увидели такое — возьмите свежую ссылку и запустите заново.</p>
     </div>
   </details>
   <div class="grid bc-grid">

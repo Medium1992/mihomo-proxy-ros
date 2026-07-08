@@ -246,6 +246,30 @@ else
   bc_event baseline "host=$BC_BASELINE_HOST" "result=unresolved"
 fi
 
+# ---- Pre-flight: validate signed / expiring video links -----------------
+# googlevideo /videoplayback URLs are signed and die after ~6h → HTTP 403.
+# An expired link makes EVERY youtube strategy "fail", falsely reporting
+# "0 working strategies". So probe each throughput target once, DIRECT (no
+# nfqws), before grinding the whole queue:
+#   403           → server reachable but link dead → stop, ask for a fresh one.
+#   2xx           → link alive, proceed.
+#   unreachable   → NOT conclusive: this is exactly the DPI case we're about
+#                   to test (ISP blocks googlevideo directly) — proceed and
+#                   let the post-run analysis flag an all-403 outcome.
+while IFS=$(printf '\t') read -r pf_host pf_ip pf_path pf_mode; do
+  case "$pf_mode" in youtube_throughput) ;; *) continue ;; esac
+  [ -z "$pf_ip" ] && continue
+  pf_status=$(bc_link_status "$pf_host" "$pf_ip" "$pf_path")
+  bc_event link_preflight "host=$pf_host" "status=${pf_status:-none}"
+  if [ "$pf_status" = 403 ]; then
+    bc_event link_expired "host=$pf_host" "phase=preflight" \
+      "msg=Ссылка на видео устарела (HTTP 403). Она подписана и живёт ~6 часов — получите свежую googlevideo-ссылку и запустите проверку заново."
+    BC_FINAL_STATUS=link_expired
+    printf 'link_expired\n' > "$STATUS"
+    exit 1
+  fi
+done < "$RESOLVED"
+
 # ---- Build expanded strategy queue --------------------------------------
 # Each line: NAME|PROTO|ARGS
 STRAT_Q="$JOB_DIR/queue.txt"
@@ -334,10 +358,20 @@ run_strategy() {
         bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
         thr_tag="throughput-${tp_kb}k/${tp_sec}s"
       fi
-      case "$ok" in
-        1) pass=$((pass + 1)); detail="${detail:+$detail,}$host/$thr_tag=ok" ;;
-        0) fail=$((fail + 1)); detail="${detail:+$detail,}$host/$thr_tag=fail" ;;
-      esac
+      if [ "$ok" = 1 ]; then
+        pass=$((pass + 1)); detail="${detail:+$detail,}$host/$thr_tag=ok"
+      else
+        fail=$((fail + 1))
+        # 403 = стратегия достучалась до сервера (TLS прошёл), но подписанная
+        # ссылка мертва. Метим отдельным тегом, чтобы финальный отчёт отличил
+        # протухшую ссылку от реального DPI-блока (=fail).
+        thr_st=$(cat "${BC_STATE_DIR}/.thr_status_w${k}" 2>/dev/null)
+        if [ "$thr_st" = 403 ]; then
+          detail="${detail:+$detail,}$host/$thr_tag=403"
+        else
+          detail="${detail:+$detail,}$host/$thr_tag=fail"
+        fi
+      fi
       continue
     fi
     if [ -n "$path" ]; then
@@ -505,6 +539,21 @@ build_combined() {
 }
 COMBINED=$(build_combined)
 
+# Post-run link-health check: если ВСЕ throughput/youtube-пробы вернули 403
+# и ни одной =ok — подписанная видео-ссылка почти наверняка протухла (в т.ч.
+# мид-скан на 6ч-границе, или ISP режет direct и пред-флайт не смог поймать).
+# Предупреждаем явно, иначе «0 рабочих» читается как «DPI блокирует всё».
+link_403=$(grep -c 'youtube-[^,"]*=403' "$LOG" 2>/dev/null)
+case "$link_403" in ''|*[!0-9]*) link_403=0 ;; esac
+link_thr_ok=$(grep -c 'youtube-[^,"]*=ok' "$LOG" 2>/dev/null)
+case "$link_thr_ok" in ''|*[!0-9]*) link_thr_ok=0 ;; esac
+LINK_EXPIRED=0
+if [ "$link_403" -gt 0 ] && [ "$link_thr_ok" = 0 ]; then
+  LINK_EXPIRED=1
+  bc_event link_expired "phase=postrun" "count403=$link_403" \
+    "msg=Все проверки видеопотока вернули 403 — ссылка устарела (~6ч). Замените googlevideo-ссылку и запустите заново; результаты по видео недостоверны."
+fi
+
 # Все рабочие комбинации http × tls × quic (как в UI «Сборные стратегии
 # из рабочих»). Ограничиваем разумно: top-3 от каждого proto → max 27.
 COMBINED_LIST=$(
@@ -529,6 +578,15 @@ COMBINED_LIST=$(
 )
 
 {
+  if [ "$LINK_EXPIRED" = 1 ]; then
+    echo "################################################################"
+    echo "!!  ССЫЛКА НА ВИДЕО УСТАРЕЛА (HTTP 403)"
+    echo "    Все проверки googlevideo вернули 403. Подписанная ссылка живёт"
+    echo "    ~6 часов — результаты по видеопотоку НЕДОСТОВЕРНЫ. Получите"
+    echo "    свежую googlevideo-ссылку и запустите проверку заново."
+    echo "################################################################"
+    echo
+  fi
   echo "blockcheck2 job: $JOB"
   echo "workers: $WORKERS  tests: $TESTS"
   echo "domains:"

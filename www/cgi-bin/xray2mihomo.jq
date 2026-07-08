@@ -161,10 +161,8 @@ def streamParams($stream):
   | pset("seed"; $kcp.seed)
   | (if tv($kcp.header.type) then pset("headerType"; $kcp.header.type) else . end)
   | (if tv($tcp.header.request.headers.Host) then pset("host"; (if ($tcp.header.request.headers.Host | type) == "array" then ($tcp.header.request.headers.Host | join(",")) else $tcp.header.request.headers.Host end)) else . end);
-  # NOTE: finalmask is a JSON-only Xray streamSettings feature with no share-link/URI
-  # representation. Only its salamander mask maps to a standard URI param (hysteria2
-  # obfs), handled in buildHy2. The worker emits fm=<json> here, but no client reads
-  # it, so we intentionally drop it.
+  # finalmask/fm is an Xray-specific, non-standard extension. It is intentionally
+  # not mapped to mihomo URI/YAML keys.
 
 # ---------- URI builders ----------
 def buildVless:
@@ -231,14 +229,11 @@ def buildHy2:
   | ($hy.auth // $hy.password // $s.password // $s.auth // $ob.settings.password // $ob.settings.auth) as $pw
   | if (tv($host) and tv($pw)) then
       ($ob.streamSettings.tlsSettings // {}) as $tls
-      | ($ob.streamSettings.finalmask) as $fm
-      | (($fm.udp // []) | map(select((.type == "salamander") and ((((.settings // {}).password) // "") != ""))) | .[0]) as $sal
       | ( []
           | pset("sni"; ($tls.serverName // $s.serverName))
           | pset("alpn"; (if ($tls.alpn | type) == "array" then ($tls.alpn | join(",")) else $tls.alpn end))
           | pset("insecure"; (if tv($tls.allowInsecure) then "1" else "" end))
-          | pset("obfs"; ($hy.obfs // $ob.settings.obfs // $s.obfs))
-          | (if $sal != null then (pset("obfs"; "salamander") | pset("obfs-password"; $sal.settings.password)) else . end) ) as $p
+          | pset("obfs"; ($hy.obfs // $ob.settings.obfs // $s.obfs)) ) as $p
       | (if (($hy.version // $ob.settings.version // $ob.version // "2") | tostring) == "1" then "hysteria" else "hysteria2" end) as $scheme
       | $scheme + "://" + ($pw | encComp) + "@" + hostPort($host; $port) + "?" + ($p | pstr) + "#" + ($ob | tagOf($host) | encComp)
     else null end;
@@ -489,15 +484,12 @@ def hyProxy($idx):
   | ($hy.auth // $hy.password // $s.password // $s.auth // $ob.settings.password // $ob.settings.auth) as $pw
   | if (tv($host) and tv($pw)) then
       ($ob.streamSettings.tlsSettings // {}) as $tls
-      | ($ob.streamSettings.finalmask) as $fm
-      | (($fm.udp // []) | map(select((.type == "salamander") and ((((.settings // {}).password) // "") != ""))) | .[0]) as $sal
       | (if (($hy.version // $ob.settings.version // $ob.version // "2") | tostring) == "1" then "hysteria" else "hysteria2" end) as $type
       | ({name: ($ob | tagOf($type + "-" + (($idx + 1) | tostring))), type: $type, server: $host, port: (($port // 443) | tonumber? // ($port // 443)), password: $pw, udp: true}
          | setIf("sni"; ($tls.serverName // $s.serverName))
          | setIf("alpn"; asList($tls.alpn))
          | (if tv($tls.allowInsecure) then . + {"skip-cert-verify": true} else . end)
-         | setIf("obfs"; ($hy.obfs // $ob.settings.obfs // $s.obfs))
-         | (if $sal != null then (. + {obfs: "salamander", "obfs-password": $sal.settings.password}) else . end))
+         | setIf("obfs"; ($hy.obfs // $ob.settings.obfs // $s.obfs)))
     else null end;
 
 def toProxy($idx):

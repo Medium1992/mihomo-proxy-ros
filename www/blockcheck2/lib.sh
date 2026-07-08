@@ -461,6 +461,24 @@ bc_probe_quic() {
   return 1
 }
 
+# bc_link_status HOST IP PATH — прямая HTTPS-проба БЕЗ nfqws для пред-флайта
+# подписанных/протухающих видео-ссылок. Не биндит source-port → ОС берёт
+# эфемерный (>32768), вне worker-sport-диапазона (16000-18000), поэтому nft
+# `*sport`-правило не ставит ct mark и пакет не уходит в queue → чистый
+# direct. Печатает HTTP-статус (или пусто, если сервер недостижим).
+bc_link_status() {
+  local host="$1" ip="$2" path="$3" out_file status
+  [ -z "$path" ] && path="/"
+  out_file="${BC_STATE_DIR:-/dev/shm/mihomo-blockcheck2}/.linkpf.$$"
+  printf 'GET %s HTTP/1.1\r\nHost: %s\r\nRange: bytes=0-1023\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n' \
+    "$path" "$host" \
+  | timeout -k 2 "$BC_PROBE_TIMEOUT" openssl s_client -tls1_3 -quiet -ign_eof -alpn http/1.1 \
+      -connect "$ip:443" -servername "$host" 2>/dev/null > "$out_file"
+  status=$(head -c 32 "$out_file" 2>/dev/null | awk 'NR==1 {print $2; exit}')
+  rm -f "$out_file"
+  printf '%s' "$status"
+}
+
 # Throughput-probe для @full и googlevideo /videoplayback. Тянем
 # BC_THROUGHPUT_BYTES за ≤BC_THROUGHPUT_MAX_SEC; имплицитный порог kbps.
 bc_probe_throughput() {
@@ -473,6 +491,7 @@ bc_probe_throughput() {
   [ -z "$path" ] && path="/"
 
   local out_file="${BC_STATE_DIR:-/dev/shm/mihomo-blockcheck2}/.thr_w${k}.$$"
+  [ -n "$BC_STATE_DIR" ] && rm -f "${BC_STATE_DIR}/.thr_status_w${k}" 2>/dev/null
   printf 'GET %s HTTP/1.1\r\nHost: %s\r\nRange: bytes=0-%s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n' \
     "$path" "$host" "$((bytes - 1))" \
   | timeout -k 2 "$max" openssl s_client -tls1_3 -quiet -ign_eof -alpn http/1.1 \
@@ -488,6 +507,13 @@ bc_probe_throughput() {
     printf 'size=%s need=%s max_sec=%s status=%s port=%s host=%s path=%.200s\n' \
       "$size" "$bytes" "$max" "$status" "$port" "$host" "$path" \
       > "${BC_STATE_DIR}/.thr_diag_w${k}" 2>/dev/null
+    # Expose the last HTTP status so the runner can tell a dead signed link
+    # (403 on a googlevideo /videoplayback URL whose `expire` param lapsed —
+    # such links live only ~6h) apart from a genuine DPI block. A 403 can
+    # only arrive AFTER TLS completed, i.e. the strategy actually reached the
+    # server → it's a reliable "replace the link" signal, not a strategy
+    # failure. Worker K runs strategies one at a time, so no concurrent write.
+    printf '%s' "${status:-0}" > "${BC_STATE_DIR}/.thr_status_w${k}" 2>/dev/null
   fi
   rm -f "$out_file"
 
