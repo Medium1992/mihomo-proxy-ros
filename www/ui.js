@@ -1136,27 +1136,6 @@ function toolInferProtocol(ob) {
   return "";
 }
 
-function toolFinalMaskParams(params, finalmask) {
-  // finalmask is a JSON-only Xray streamSettings feature — it has no share-link/URI
-  // representation. Only its salamander mask maps to a URI param (hysteria2 obfs),
-  // handled by toolApplyHy2Salamander. So we intentionally emit nothing here.
-}
-
-function toolApplyHy2Salamander(params, finalmask) {
-  if (!finalmask || typeof finalmask !== "object") return;
-  const masks = Array.isArray(finalmask.udp) ? finalmask.udp : [];
-  for (const raw of masks) {
-    const mask = raw || {};
-    if (mask.type !== "salamander") continue;
-    const settings = mask.settings || {};
-    if (settings.password) {
-      toolParam(params, "obfs", "salamander");
-      toolParam(params, "obfs-password", settings.password);
-      break;
-    }
-  }
-}
-
 function toolNormalizeOutbound(ob) {
   ob = toolNormalizeJson(ob || {});
   if (!ob || typeof ob !== "object") return {};
@@ -1203,7 +1182,6 @@ function toolStreamParams(params, stream) {
     const hosts = tcp.header.request.headers.Host;
     toolParam(params, "host", Array.isArray(hosts) ? hosts.join(",") : hosts);
   }
-  toolFinalMaskParams(params, stream.finalmask);
 }
 
 function toolVnextEndpoint(settings) {
@@ -1293,8 +1271,6 @@ function toolBuildHy2(ob) {
   toolParam(params, "alpn", Array.isArray(tls.alpn) ? tls.alpn.join(",") : tls.alpn);
   toolParam(params, "insecure", tls.allowInsecure ? "1" : "");
   toolParam(params, "obfs", hy.obfs || ob.settings?.obfs || s.obfs);
-  toolApplyHy2Salamander(params, ob.streamSettings?.finalmask);
-  toolFinalMaskParams(params, ob.streamSettings?.finalmask);
   const scheme = String(hy.version || ob.settings?.version || ob.version || "2") === "1" ? "hysteria" : "hysteria2";
   return `${scheme}://${encodeURIComponent(password)}@${toolHostPort(host, port)}?${params.toString()}#${encodeURIComponent(toolTag(ob, host))}`;
 }
@@ -4900,6 +4876,17 @@ function bcHandleEvent(ev) {
       bcAppendLog("[resolve_fail] " + (ev.host || "") + "\n");
       break;
     }
+    case "link_preflight": {
+      bcAppendLog("предпроверка ссылки " + (ev.host || "") + ": HTTP " +
+                  (ev.status || "?") + "\n");
+      break;
+    }
+    case "link_expired": {
+      bcAppendLog("⚠ " + (ev.msg ||
+        "ссылка на видео устарела (403) — замените googlevideo-ссылку") + "\n");
+      bcSetStatus("ссылка на видео устарела (403)", false);
+      break;
+    }
     case "nft_ready": {
       bcSetStatus("nft готов, начинаю перебор", true);
       break;
@@ -5486,7 +5473,9 @@ function blockcheck2Poll() {
               return;
             case "teardown":
             case "strategy_skip":
-              // silent
+            case "link_preflight":
+            case "link_expired":
+              // silent here — surfaced by bcHandleEvent above
               return;
             case "report_building":
               bcSetStatus("формирую отчёт…", true);
@@ -5509,11 +5498,15 @@ function blockcheck2Poll() {
       // Download button enabled как только есть job — отчёт-снимок CGI
       // сам отдаст с пометкой PARTIAL пока тест идёт, или полный после.
       if (BC.jobId) document.getElementById("bcDownloadBtn").disabled = false;
-      if (data.status === "done" || data.status === "error" || data.status === "cancelled") {
+      if (data.status === "done" || data.status === "error" ||
+          data.status === "cancelled" || data.status === "link_expired") {
         if (BC.pollTimer) { clearInterval(BC.pollTimer); BC.pollTimer = null; }
-        bcSetStatus(data.status === "done"
-          ? "готово (" + BC.counts.ok + " рабочих из " + BC.results.length + ")"
-          : data.status, false);
+        bcSetStatus(
+          data.status === "done"
+            ? "готово (" + BC.counts.ok + " рабочих из " + BC.results.length + ")"
+            : data.status === "link_expired"
+              ? "ссылка на видео устарела (403) — замените googlevideo-ссылку и запустите заново"
+              : data.status, false);
       }
     }).catch(() => {}).finally(() => { BC.pollInFlight = false; });
 }
@@ -5684,6 +5677,17 @@ function bc1HandleEvent(ev) {
     }
     case "resolve_fail": {
       bc1AppendLog("[resolve_fail] " + (ev.host || "") + "\n");
+      break;
+    }
+    case "link_preflight": {
+      bc1AppendLog("предпроверка ссылки " + (ev.host || "") + ": HTTP " +
+                   (ev.status || "?") + "\n");
+      break;
+    }
+    case "link_expired": {
+      bc1AppendLog("⚠ " + (ev.msg ||
+        "ссылка на видео устарела (403) — замените googlevideo-ссылку") + "\n");
+      bc1SetStatus("ссылка на видео устарела (403)", false);
       break;
     }
     case "nft_ready": {
@@ -6248,7 +6252,9 @@ function blockcheck1Poll() {
               return;
             case "teardown":
             case "strategy_skip":
-              // silent
+            case "link_preflight":
+            case "link_expired":
+              // silent here — surfaced by bc1HandleEvent above
               return;
             case "report_building":
               bc1SetStatus("формирую отчёт…", true);
@@ -6271,11 +6277,15 @@ function blockcheck1Poll() {
       // Download button enabled как только есть job — отчёт-снимок CGI
       // сам отдаст с пометкой PARTIAL пока тест идёт, или полный после.
       if (BC1.jobId) document.getElementById("bc1DownloadBtn").disabled = false;
-      if (data.status === "done" || data.status === "error" || data.status === "cancelled") {
+      if (data.status === "done" || data.status === "error" ||
+          data.status === "cancelled" || data.status === "link_expired") {
         if (BC1.pollTimer) { clearInterval(BC1.pollTimer); BC1.pollTimer = null; }
-        bc1SetStatus(data.status === "done"
-          ? "готово (" + BC1.counts.ok + " рабочих из " + BC1.results.length + ")"
-          : data.status, false);
+        bc1SetStatus(
+          data.status === "done"
+            ? "готово (" + BC1.counts.ok + " рабочих из " + BC1.results.length + ")"
+            : data.status === "link_expired"
+              ? "ссылка на видео устарела (403) — замените googlevideo-ссылку и запустите заново"
+              : data.status, false);
       }
     }).catch(() => {}).finally(() => { BC1.pollInFlight = false; });
 }
@@ -6376,6 +6386,17 @@ function bdcHandleEvent(ev) {
     }
     case "resolve_fail": {
       bdcAppendLog("[resolve_fail] " + (ev.host || "") + "\n");
+      break;
+    }
+    case "link_preflight": {
+      bdcAppendLog("предпроверка ссылки " + (ev.host || "") + ": HTTP " +
+                   (ev.status || "?") + "\n");
+      break;
+    }
+    case "link_expired": {
+      bdcAppendLog("⚠ " + (ev.msg ||
+        "ссылка на видео устарела (403) — замените googlevideo-ссылку") + "\n");
+      bdcSetStatus("ссылка на видео устарела (403)", false);
       break;
     }
     case "nft_ready": {
@@ -6591,10 +6612,15 @@ function byedpiCheckPoll() {
       BDC.offset = data.offset || BDC.offset;
       const tail = bdcDecode(data.log_b64);
       if (tail) tail.split(/\n/).forEach((line) => { if (!line.trim()) return; try { bdcHandleEvent(JSON.parse(line)); } catch (e) { bdcAppendLog(line + "\n"); } });
-      if (data.status === "done" || data.status === "error" || data.status === "cancelled") {
+      if (data.status === "done" || data.status === "error" ||
+          data.status === "cancelled" || data.status === "link_expired") {
         if (BDC.pollTimer) { clearInterval(BDC.pollTimer); BDC.pollTimer = null; }
         document.getElementById("bdcDownloadBtn").disabled = false;
-        bdcSetStatus(data.status === "done" ? "готово" : data.status, false);
+        bdcSetStatus(
+          data.status === "done" ? "готово"
+          : data.status === "link_expired"
+            ? "ссылка на видео устарела (403) — замените googlevideo-ссылку и запустите заново"
+            : data.status, false);
       }
     }).catch(err => { BDC.pollInFlight = false; bdcSetStatus("ошибка polling: " + err, false); });
 }

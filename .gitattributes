@@ -1,0 +1,11 @@
+* text=auto
+
+*.sh text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.jq text eol=lf
+www/cgi-bin/* text eol=lf
+www/blockcheck*/run text eol=lf
+www/byedpi-check/run text eol=lf
+entrypoint* text eol=lf

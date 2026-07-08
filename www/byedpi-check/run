@@ -180,6 +180,27 @@ else
   bc_event baseline "host=$BC_BASELINE_HOST" "ip=$baseline_ip" "result=fail"
 fi
 
+# ---- Pre-flight: validate signed / expiring video links -----------------
+# googlevideo /videoplayback URLs are signed and die after ~6h → HTTP 403.
+# Probe each throughput target once DIRECT (bypassing byedpi) before the
+# queue: a 403 means server reachable but link dead → stop, ask for a fresh
+# link. Unreachable is inconclusive (that's the DPI case we're testing) →
+# proceed; post-run analysis flags an all-403 outcome. bc_link_status lives
+# in the shared /www/blockcheck2/lib.sh sourced by our lib.sh.
+while IFS=$(printf '\t') read -r pf_host pf_ip pf_path pf_mode; do
+  case "$pf_mode" in youtube_throughput) ;; *) continue ;; esac
+  [ -z "$pf_ip" ] && continue
+  pf_status=$(bc_link_status "$pf_host" "$pf_ip" "$pf_path")
+  bc_event link_preflight "host=$pf_host" "status=${pf_status:-none}"
+  if [ "$pf_status" = 403 ]; then
+    bc_event link_expired "host=$pf_host" "phase=preflight" \
+      "msg=Ссылка на видео устарела (HTTP 403). Она подписана и живёт ~6 часов — получите свежую googlevideo-ссылку и запустите проверку заново."
+    BC_FINAL_STATUS=link_expired
+    printf 'link_expired\n' > "$STATUS"
+    exit 1
+  fi
+done < "$RESOLVED"
+
 STRAT_Q="$JOB_DIR/queue.txt"
 grep -vE '^[[:space:]]*(#|$)' "$STRAT_FILE" > "$STRAT_Q"
 TOTAL=$(wc -l < "$STRAT_Q" | tr -d ' ')
@@ -251,10 +272,19 @@ run_strategy() {
         bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
         thr_tag="throughput"
       fi
-      case "$ok" in
-        1) pass=$((pass + 1)); detail="${detail:+$detail,}$host/$thr_tag=ok" ;;
-        0) fail=$((fail + 1)); detail="${detail:+$detail,}$host/$thr_tag=fail" ;;
-      esac
+      if [ "$ok" = 1 ]; then
+        pass=$((pass + 1)); detail="${detail:+$detail,}$host/$thr_tag=ok"
+      else
+        fail=$((fail + 1))
+        # 403 = достучались до сервера, но подписанная ссылка мертва. Метим
+        # отдельно, чтобы отчёт отличил протухшую ссылку от реального блока.
+        thr_st=$(cat "${BC_STATE_DIR}/.thr_status_w${k}" 2>/dev/null)
+        if [ "$thr_st" = 403 ]; then
+          detail="${detail:+$detail,}$host/$thr_tag=403"
+        else
+          detail="${detail:+$detail,}$host/$thr_tag=fail"
+        fi
+      fi
       continue
     fi
     if [ -n "$path" ]; then
@@ -367,7 +397,30 @@ awk '
 
 FIRST_ARGS=$(awk -F'\t' '{print $7; exit}' "$WORK_TSV" 2>/dev/null)
 
+# Post-run link-health check: все throughput/youtube-пробы вернули 403 и ни
+# одной =ok → подписанная видео-ссылка почти наверняка протухла. Предупреждаем,
+# иначе «0 рабочих» читается как «блокируется всё».
+link_403=$(grep -c 'youtube-[^,"]*=403' "$LOG" 2>/dev/null)
+case "$link_403" in ''|*[!0-9]*) link_403=0 ;; esac
+link_thr_ok=$(grep -c 'youtube-[^,"]*=ok' "$LOG" 2>/dev/null)
+case "$link_thr_ok" in ''|*[!0-9]*) link_thr_ok=0 ;; esac
+LINK_EXPIRED=0
+if [ "$link_403" -gt 0 ] && [ "$link_thr_ok" = 0 ]; then
+  LINK_EXPIRED=1
+  bc_event link_expired "phase=postrun" "count403=$link_403" \
+    "msg=Все проверки видеопотока вернули 403 — ссылка устарела (~6ч). Замените googlevideo-ссылку и запустите заново; результаты по видео недостоверны."
+fi
+
 {
+  if [ "$LINK_EXPIRED" = 1 ]; then
+    echo "################################################################"
+    echo "!!  ССЫЛКА НА ВИДЕО УСТАРЕЛА (HTTP 403)"
+    echo "    Все проверки googlevideo вернули 403. Подписанная ссылка живёт"
+    echo "    ~6 часов — результаты по видеопотоку НЕДОСТОВЕРНЫ. Получите"
+    echo "    свежую googlevideo-ссылку и запустите проверку заново."
+    echo "################################################################"
+    echo
+  fi
   echo "byedpi-check job: $JOB"
   echo "workers: $WORKERS  tests: $TESTS"
   echo "domains:"

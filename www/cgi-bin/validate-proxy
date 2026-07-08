@@ -85,6 +85,11 @@ mode: rule
 log-level: silent
 HEAD
   cat "$inline_file"
+  # Гарантируем перевод строки после прокси пользователя: если во вводе нет
+  # завершающего \n, последняя строка прокси склеивается с `proxy-groups:`
+  # из TAIL → YAML ломается и mihomo -t падает на валидном по сути вводе.
+  # Лишняя пустая строка для YAML безвредна.
+  printf '\n'
   cat <<'TAIL'
 proxy-groups:
   - name: VALIDATE
