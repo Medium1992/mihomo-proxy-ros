@@ -44,13 +44,13 @@ RUN curl -s https://api.github.com/repos/bol-van/zapret2/releases/latest | \
     tar -xzf zapret2.tar.gz -C /zapret2 --strip-components=1 && \
     rm zapret2.tar.gz
 
-RUN curl -s https://api.github.com/repos/Flowseal/zapret-discord-youtube/releases/latest | \
-    jq -r '.assets[].browser_download_url | select(endswith(".zip"))' | \
-    head -1 | \
-    xargs -I {} curl -L {} -o zapret-discord-youtube.zip && \
-    mkdir -p /zapret-discord-youtube && \
-    unzip zapret-discord-youtube.zip -d /zapret-discord-youtube && \
-    rm zapret-discord-youtube.zip
+# RUN curl -s https://api.github.com/repos/Flowseal/zapret-discord-youtube/releases/latest | \
+#    jq -r '.assets[].browser_download_url | select(endswith(".zip"))' | \
+#    head -1 | \
+#    xargs -I {} curl -L {} -o zapret-discord-youtube.zip && \
+#    mkdir -p /zapret-discord-youtube && \
+#    unzip zapret-discord-youtube.zip -d /zapret-discord-youtube && \
+#    rm zapret-discord-youtube.zip
 
 RUN curl -L https://github.com/IndeecFOX/zapret4rocket/archive/refs/heads/master.zip \
         -o zapret4rocket.zip && \
@@ -96,18 +96,18 @@ RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
     if [ -d "$Z4R/fake" ] && ls "$Z4R"/fake/*.bin >/dev/null 2>&1; then \
         cp "$Z4R"/fake/*.bin /final/zapret-fakebin/; \
     fi; \
-    if [ -d zapret-discord-youtube/bin ] && ls zapret-discord-youtube/bin/*.bin >/dev/null 2>&1; then \
-        cp zapret-discord-youtube/bin/*.bin /final/zapret-fakebin/; \
-    fi; \
+#    if [ -d zapret-discord-youtube/bin ] && ls zapret-discord-youtube/bin/*.bin >/dev/null 2>&1; then \
+#        cp zapret-discord-youtube/bin/*.bin /final/zapret-fakebin/; \
+#    fi; \
     if [ -d zapret2/files/fake ] && ls zapret2/files/fake/*.bin >/dev/null 2>&1; then \
         cp zapret2/files/fake/*.bin /final/zapret-fakebin/; \
     fi; \
     if [ -d "$Z4R/lists" ] && ls "$Z4R"/lists/*.txt >/dev/null 2>&1; then \
         cp "$Z4R"/lists/*.txt /final/zapret-lists/; \
     fi; \
-    if [ -d zapret-discord-youtube/lists ] && ls zapret-discord-youtube/lists/*.txt >/dev/null 2>&1; then \
-        cp zapret-discord-youtube/lists/*.txt /final/zapret-lists/; \
-    fi; \
+#    if [ -d zapret-discord-youtube/lists ] && ls zapret-discord-youtube/lists/*.txt >/dev/null 2>&1; then \
+#        cp zapret-discord-youtube/lists/*.txt /final/zapret-lists/; \
+#    fi; \
 fi
 
 COPY entrypoint.sh entrypoint_armv5.sh /final/
