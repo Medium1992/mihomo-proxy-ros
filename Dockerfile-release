@@ -27,11 +27,15 @@ RUN go version
 RUN mkdir -p /final 
 
 # Клонируем репозиторий
-RUN git clone https://github.com/MetaCubeX/mihomo.git /src
+RUN git clone --depth=1 https://github.com/MetaCubeX/mihomo.git /src
+
 WORKDIR /src
 
-# Переключаемся на нужный тэг
-RUN git fetch --all --tags --prune && git switch --detach "$TAG" 2>/dev/null || git switch "$TAG"
+# Универсальное переключение: работает и с тегами (v1.xx), и с short hash из Alpha
+RUN git fetch --all --tags --prune && \
+    git fetch origin "$TAG" --depth=10 2>/dev/null || true && \
+    (git checkout --detach "$TAG" 2>/dev/null || git checkout "$TAG") || \
+    { echo "ERROR: Failed to checkout $TAG"; git branch -a; exit 1; }
 
 RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ]; then \
         echo "Applying mihomo-proxy-ros updater patches"; \
