@@ -545,7 +545,7 @@ core_page() {
 
   section_start_tab dns "DNS и fake-ip" "Параметры, которые попадают в блок dns и fake-ip-filter."
   echo '<div class="grid">'
-  select_field DNS_MODE "DNS mode" "mihomo <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/dns/#enhanced-mode\" target=\"_blank\" rel=\"noopener\">enhanced-mode</a>: fake-ip или redir-host." fake-ip "fake-ip redir-host"
+  select_field DNS_MODE "DNS mode" "mihomo <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/dns/#enhanced-mode\" target=\"_blank\" rel=\"noopener\">enhanced-mode</a>: fake-ip, redir-host или normal." fake-ip "fake-ip redir-host normal"
   field FAKE_IP_RANGE "Fake-IP range" "Диапазон <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/dns/#fake-ip-range\" target=\"_blank\" rel=\"noopener\">fake-ip-range</a>." "198.18.0.0/15" text "198.18.0.0/15"
   field FAKE_IP_TTL "Fake-IP TTL" "TTL записей <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/dns/#fake-ip-ttl\" target=\"_blank\" rel=\"noopener\">fake-ip</a>." "1" number "1"
   dns_policy_editor
