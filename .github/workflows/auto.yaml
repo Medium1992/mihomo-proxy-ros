@@ -403,6 +403,15 @@ jobs:
             medium1992/mihomo-proxy-ros:${{ env.mihomo }}
             medium1992/mihomo-proxy-ros:latest
 
+      - name: Commit and push VERSIONS
+        if: steps.check_versions.outputs.build_needed == 'true'
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add VERSIONS
+          git commit -m "Auto-update: VERSIONS" || exit 0
+          git push
+
       - name: Publish container archives to Telegram
         if: steps.check_versions.outputs.build_needed == 'true'
         env:
@@ -498,15 +507,6 @@ jobs:
             "${thread_form_args[@]}" \
             -F "document=@telegram-images/sha256sums.txt" \
             -F "caption=sha256sums.txt"
-          
-      - name: Commit and push VERSIONS
-        if: steps.check_versions.outputs.build_needed == 'true'
-        run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add VERSIONS
-          git commit -m "Auto-update: VERSIONS" || exit 0
-          git push
 
       - name: Log in to GHCR with crane
         if: steps.check_versions.outputs.build_needed == 'true'
