@@ -44,6 +44,18 @@
 
 **`http://<ip-контейнера>:80/`** — локальная панель управления, которая раздаётся busybox httpd прямо из контейнера.
 
+> [!IMPORTANT]
+> Панель закрыта HTTP basic auth. **По умолчанию `admin` / `admin` — смените пароль.**
+> *Инструменты → Пароль вебки*: введите новый пароль, получите md5-хеш и готовые команды RouterOS.
+> Сам пароль никуда не сохраняется — в env уезжает только хеш (`BASIC_AUTH_HASH`).
+> Забыли пароль — удалите env `BASIC_AUTH_HASH` и перезапустите контейнер, вернётся дефолтный `admin`.
+
+Значения секретных ENV (`LINK*`, `SUB_LINK*`, `SUB_LINK*_HEADERS`, `SOCKS*`, `MIXED_IN_USER*`, `UI_SECRET`)
+в HTML не печатаются и не сохраняются в localStorage браузера: в поле показывается «•••••••• задано»,
+настоящее значение подгружается по кнопке «Показать». Черновик правок живёт на сервере
+(`/dev/shm/mihomo-ui/draft.json`, tmpfs) — чистый браузер без кеша и кук по-прежнему открывает
+панель в актуальном состоянии.
+
 <p align="center">
   <img src="docs/screenshots/webui-1.png" width="800" alt="Веб-панель — обзор">
 </p>
@@ -149,6 +161,30 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 | `LOG_LEVEL` | `error` | Уровень логов mihomo: `silent`/`error`/`warning`/`info`/`debug`. [Docs](https://wiki.metacubex.one/ru/config/general/#_5). |
 | `EXTERNAL_UI_URL` | [ссылка](https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip) | ZIP-источник для панели mihomo на `:9090`. [Docs](https://wiki.metacubex.one/ru/config/general/#url). |
 | `UI_SECRET` | — | Секрет для external-controller (порт `9090`). Пусто = без авторизации (только LAN). |
+
+### Веб-панель на `:80`
+
+| ENV | По умолчанию | Описание |
+|---|---|---|
+| `BASIC_AUTH_USER` | `admin` | Логин basic auth веб-панели. Пустое значение вместе с `BASIC_AUTH_HASH` отключает авторизацию. |
+| `BASIC_AUTH_HASH` | хеш пароля `admin` | md5-хеш пароля (`$1$соль$хеш`). Генерируется в *Инструменты → Пароль вебки*. Открытый пароль в env не хранится. |
+| `WEB_CSRF` | `on` | Проверка `Referer` на изменяющих запросах CGI. `off` — если дёргаете эндпоинты панели из своих скриптов. |
+| `ALLOW_PRIVATE_FETCH` | `false` | Разрешить `http-fetch` / `xray2mihomo-sub` ходить на loopback и приватные подсети (например, подписка на своём NAS). |
+| `WEB_API_PORT` | `81` | Порт служебного слушателя на `127.0.0.1` с конвертером `xray2mihomo-sub` — его качает сам mihomo из `SUB_LINK*`, поэтому он без пароля. Из LAN недоступен. `0` = выключить. |
+
+#### Конвертер подписок в `SUB_LINK*`
+
+Ссылку из *Инструменты → xray2mihomo* можно класть в `SUB_LINK*` как есть:
+
+```
+SUB_LINK1=http://127.0.0.1:81/cgi-bin/xray2mihomo-sub?sub=https://provider.example/sub&format=yaml
+```
+
+Порт `81` живёт только на loopback контейнера и не закрыт паролем — иначе mihomo,
+который обновляет провайдер по `interval`, получал бы 401 от панели на `:80`.
+В этом вебруте лежит **единственный** CGI — конвертер; ничего читающего или пишущего файлы там нет.
+Старые конфиги со ссылкой на порт 80 переписываются на `:81` автоматически при старте
+(значение env не меняется, правится только сгенерированный `config.yaml`).
 
 ### Health-check
 

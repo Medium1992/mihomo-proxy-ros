@@ -44,6 +44,19 @@
 
 **`http://<container-ip>:80/`** — local management panel served by busybox httpd from the container itself.
 
+> [!IMPORTANT]
+> The panel is protected by HTTP basic auth. **The default is `admin` / `admin` — change it.**
+> Go to *Tools → Web UI password*, type a new password and get the md5 hash plus ready-made
+> RouterOS commands. The plaintext password is never stored — only the hash goes into
+> `BASIC_AUTH_HASH`. Locked out? Remove the `BASIC_AUTH_HASH` env and restart the container
+> to fall back to `admin`.
+
+Secret ENV values (`LINK*`, `SUB_LINK*`, `SUB_LINK*_HEADERS`, `SOCKS*`, `MIXED_IN_USER*`, `UI_SECRET`)
+are never printed into the HTML and never stored in browser localStorage: the field shows
+“•••••••• задано” and the real value is fetched on demand via the “Показать” button. Draft edits
+live on the server (`/dev/shm/mihomo-ui/draft.json`, tmpfs), so a fresh browser with no cache and
+no cookies still opens the panel in its current state.
+
 <p align="center">
   <img src="docs/screenshots/webui-1.png" width="800" alt="WebUI — overview">
 </p>
@@ -149,6 +162,30 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 | `LOG_LEVEL` | `error` | mihomo log level: `silent`/`error`/`warning`/`info`/`debug`. [Docs](https://wiki.metacubex.one/en/config/general/#_5). |
 | `EXTERNAL_UI_URL` | [MetaCube zip](https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip) | Source zip for the panel served on `:9090`. [Docs](https://wiki.metacubex.one/en/config/general/#url). |
 | `UI_SECRET` | — | Secret for the external controller (port `9090`). Empty = no auth (LAN-only setups). |
+
+### Web UI on `:80`
+
+| ENV | Default | Description |
+|---|---|---|
+| `BASIC_AUTH_USER` | `admin` | Basic auth login for the web UI. Leaving both this and `BASIC_AUTH_HASH` empty disables auth. |
+| `BASIC_AUTH_HASH` | hash of `admin` | md5 hash of the password (`$1$salt$hash`). Generate it in *Tools → Web UI password*; the plaintext password is never stored in env. |
+| `WEB_CSRF` | `on` | `Referer` check on state-changing CGI requests. Set to `off` if you call the panel endpoints from your own scripts. |
+| `ALLOW_PRIVATE_FETCH` | `false` | Let `http-fetch` / `xray2mihomo-sub` reach loopback and private subnets (e.g. a subscription hosted on your own NAS). |
+| `WEB_API_PORT` | `81` | Port of the helper listener bound to `127.0.0.1` that serves `xray2mihomo-sub` — mihomo fetches it from `SUB_LINK*`, so it carries no password. Not reachable from the LAN. `0` disables it. |
+
+#### Subscription converter in `SUB_LINK*`
+
+The link from *Tools → xray2mihomo* can go straight into `SUB_LINK*`:
+
+```
+SUB_LINK1=http://127.0.0.1:81/cgi-bin/xray2mihomo-sub?sub=https://provider.example/sub&format=yaml
+```
+
+Port `81` exists only on the container's loopback and is not password-protected — otherwise mihomo,
+which refreshes the provider on `interval`, would get a 401 from the panel on `:80`. That webroot
+holds a **single** CGI, the converter; nothing that reads or writes files is exposed there.
+Configs still pointing at port 80 are rewritten to `:81` automatically at startup (the env value is
+left untouched — only the generated `config.yaml` is adjusted).
 
 ### Health-check
 

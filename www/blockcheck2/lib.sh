@@ -272,11 +272,47 @@ bc_kill_stale_nfqws() {
   done
 }
 
+# Аргументы стратегий приходят из браузера (strategies_b64) и подставляются в
+# командную строку nfqws2, который работает от root. Инлайновый --lua-init
+# исполняет произвольный Lua, а @-ссылки читают произвольные файлы, поэтому:
+#   * служебные флаги (lua-init, qnum, user, daemon, pidfile) ставит только
+#     сам bc_nfqws_start, из стратегии они запрещены;
+#   * любой @путь обязан лежать в доверенном каталоге.
+BC_ALLOWED_BLOB_DIRS="${BC_ALLOWED_BLOB_DIRS:-/zapret-fakebin /zapret-lists /lua}"
+
+bc_args_safe() {
+  local args=" $1 " tok path ok d rc=0
+  case "$args" in
+    *' --lua-init'*|*' --daemon'*|*' --pidfile'*|*' --user'*|*' --uid'*|*' --qnum'*)
+      return 1 ;;
+  esac
+  set -f
+  for tok in $1; do
+    case "$tok" in
+      *@/*)
+        path="/${tok#*@/}"
+        ok=0
+        for d in $BC_ALLOWED_BLOB_DIRS; do
+          case "$path" in "$d"/*) ok=1 ;; esac
+        done
+        case "$path" in *..*) ok=0 ;; esac
+        [ "$ok" = 1 ] || rc=1
+        ;;
+    esac
+  done
+  set +f
+  return "$rc"
+}
+
 # bc_nfqws_start K PROTO ARGS PIDFILE LOG
 bc_nfqws_start() {
   local k="$1" proto="$2" args="$3" pidfile="$4" logfile="$5"
   local queue=$((BC_QUEUE_BASE + k))
   local filter
+  if ! bc_args_safe "$args"; then
+    printf '=== [k=%s] REJECTED unsafe args: %s\n' "$k" "$args" >>"$logfile" 2>/dev/null
+    return 1
+  fi
   # Если в args уже есть свой --filter-*, не добавляем дефолтный (multi-profile через --new).
   case " $args " in
     *' --filter-tcp='*|*' --filter-udp='*) filter="" ;;

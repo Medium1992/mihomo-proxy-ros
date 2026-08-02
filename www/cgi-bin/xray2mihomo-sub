@@ -305,6 +305,13 @@ resolve=$(urldecode "$(field_qs resolve)")
 case "$sub" in http://*|https://*) ;; *) emit_error 400 "sub/url/target must be http:// or https://" ;; esac
 case "$format" in uri|base64|yaml) ;; *) emit_error 400 "unsupported format" ;; esac
 
+# Эндпоинт доступен обычной ссылкой (его кладут в provider url), поэтому
+# csrf-guard тут неприменим — но SSRF во внутреннюю сеть закрываем.
+. /www/cgi-bin/_guard.sh
+if host_is_private "$(url_host "$sub")"; then
+  emit_error 403 "private/loopback addresses are blocked (set ALLOW_PRIVATE_FETCH=true to allow)"
+fi
+
 JQ_PROG="${XRAY2MIHOMO_JQ:-/www/cgi-bin/xray2mihomo.jq}"
 
 hf="$STATE_DIR/headers.$$"

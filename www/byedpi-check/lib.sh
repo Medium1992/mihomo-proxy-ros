@@ -404,9 +404,30 @@ bc_kill_stale_byedpi() {
   done
 }
 
+# Аргументы приходят из браузера (strategies_b64) и уходят в byedpi от root.
+# Кроме служебных флагов режем @-ссылки на файлы вне доверенных каталогов:
+# `--fake-data @/path` иначе прочитал бы что угодно (ключи AWG, конфиги).
+BC_ALLOWED_BLOB_DIRS="${BC_ALLOWED_BLOB_DIRS:-/zapret-fakebin /zapret-lists /lua}"
+
 bc_byedpi_args_safe() {
   printf '%s\n' "$1" | grep -Eq '(^|[[:space:]])(--port(=|[[:space:]])|-p([[:space:]]|$)|--transparent([[:space:]]|$)|-E([[:space:]]|$)|--daemon([[:space:]]|$)|-D([[:space:]]|$)|--pidfile(=|[[:space:]])|-w([[:space:]]|$))' && return 1
-  return 0
+  local tok path ok d rc=0
+  set -f
+  for tok in $1; do
+    case "$tok" in
+      *@/*)
+        path="/${tok#*@/}"
+        ok=0
+        for d in $BC_ALLOWED_BLOB_DIRS; do
+          case "$path" in "$d"/*) ok=1 ;; esac
+        done
+        case "$path" in *..*) ok=0 ;; esac
+        [ "$ok" = 1 ] || rc=1
+        ;;
+    esac
+  done
+  set +f
+  return "$rc"
 }
 
 bc_byedpi_start() {

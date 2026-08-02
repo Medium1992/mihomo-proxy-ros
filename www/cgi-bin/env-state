@@ -15,6 +15,58 @@ env_present() {
   fi
 }
 
+# Whitelist имён, которые вообще можно спрашивать. Раньше эндпоинт отдавал
+# значение любой переменной процесса — то есть работал как дамп окружения
+# контейнера. Теперь только то, что реально рисует панель.
+env_allowed() {
+  case "$1" in
+    *[!A-Z0-9_]*|'') return 1 ;;
+  esac
+  case "$1" in
+    LINK*|SUB_LINK*|SOCKS*|MIXED_IN_USER*|ZAPRET*|BYEDPI*|RULE_SET*|GROUP*|\
+    HEALTHCHECK*|FAKE_IP*|DNS*|NAMESERVER*|SNIFFER*|TPROXY|LOG_LEVEL|UI_SECRET|\
+    EXTERNAL_UI_URL|SUB_LINK_INTERVAL|AMNEZIA*|MIXED*|TUN*|LISTENER*|\
+    BASIC_AUTH_USER|BASIC_AUTH_HASH)
+      return 0 ;;
+  esac
+  # Остальное — только если это env группы правил из GROUP (XXX_GEOSITE и т.п.).
+  case "$1" in
+    *_GEOSITE|*_GEOIP|*_AS|*_PRIORITY|*_KEYWORD|*_DOMAIN|*_SUFFIX|*_PROCESS|\
+    *_SRC_IP|*_DST_PORT|*_DSCP|*_USE|*_PROXIES|*_HIDDEN|*_TYPE|*_URL|*_INTERVAL|\
+    *_TOLERANCE|*_STRATEGY|*_FILTER|*_EXCLUDE|*_HEADERS|*_PROXY|*_DIALER_PROXY|\
+    *_AMNEZIA_COUNTRY|*_PACKETS|*_CMD|*_BASE64)
+      return 0 ;;
+  esac
+  return 1
+}
+
+# Секретные значения по умолчанию не печатаем — только факт наличия.
+# Настоящее значение отдаётся только по явному ?reveal=1 (кнопка «Показать»).
+env_secret() {
+  _n="$1"
+  case "$_n" in
+    UI_SECRET|*_HEADERS|BASIC_AUTH_HASH) return 0 ;;
+  esac
+  for _p in SUB_LINK MIXED_IN_USER SOCKS LINK; do
+    case "$_n" in
+      "$_p") return 0 ;;
+      "$_p"*)
+        _s="${_n#$_p}"
+        case "$_s" in
+          ''|*[!0-9]*) ;;
+          *) return 0 ;;
+        esac
+        ;;
+    esac
+  done
+  return 1
+}
+
+reveal=0
+case "${QUERY_STRING:-}" in
+  *reveal=1*) reveal=1 ;;
+esac
+
 len="${CONTENT_LENGTH:-0}"
 case "$len" in
   ''|*[!0-9]*) len=0 ;;
@@ -25,15 +77,16 @@ if [ "$len" -gt 0 ]; then
 fi
 
 echo "Content-Type: application/json; charset=utf-8"
+echo "Cache-Control: no-store"
 echo
+
+. /www/cgi-bin/_guard.sh
+csrf_guard_json
+
 printf '{"ok":true,"env":{'
 first=true
-printf '%s\n' "$body" | while IFS= read -r name; do
-  case "$name" in
-    ''|*[!A-Z0-9_]*)
-      continue
-      ;;
-  esac
+printf '%s\n' "$body" | tr -d '\r' | while IFS= read -r name; do
+  env_allowed "$name" || continue
   value="$(printenv "$name" 2>/dev/null || true)"
   if env_present "$name"; then
     present=true
@@ -46,6 +99,18 @@ printf '%s\n' "$body" | while IFS= read -r name; do
   else
     printf ','
   fi
-  printf '"%s":{"present":%s,"value":"%s"}' "$(json_escape "$name")" "$present" "$(json_escape "$value")"
+  if env_secret "$name"; then
+    # Хеш пароля панели не отдаём никогда: UI нужен только факт наличия,
+    # чтобы выбрать между envs/add и envs/set.
+    if [ "$name" = "BASIC_AUTH_HASH" ]; then
+      printf '"%s":{"present":%s,"secret":true}' "$(json_escape "$name")" "$present"
+    elif [ "$reveal" = 1 ]; then
+      printf '"%s":{"present":%s,"secret":true,"value":"%s"}' "$(json_escape "$name")" "$present" "$(json_escape "$value")"
+    else
+      printf '"%s":{"present":%s,"secret":true}' "$(json_escape "$name")" "$present"
+    fi
+  else
+    printf '"%s":{"present":%s,"value":"%s"}' "$(json_escape "$name")" "$present" "$(json_escape "$value")"
+  fi
 done
 printf '}}\n'

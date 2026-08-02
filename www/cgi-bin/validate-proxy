@@ -2,6 +2,10 @@
 echo "Content-Type: application/json; charset=utf-8"
 echo ""
 
+. /www/cgi-bin/_guard.sh
+csrf_guard_json
+
+
 MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
 
 if [ "$REQUEST_METHOD" != "POST" ]; then

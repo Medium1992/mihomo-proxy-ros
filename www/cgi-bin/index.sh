@@ -15,7 +15,11 @@ qs_get() {
 }
 
 page="$(qs_get page)"
-[ -z "$page" ] && page="overview"
+# Значение уходит в атрибут <body data-page="...">, поэтому только [a-z0-9-].
+# Раньше сюда попадала сырая строка из QUERY_STRING.
+case "$page" in
+  ''|*[!a-z0-9-]*) page="overview" ;;
+esac
 STATIC_MODE="${STATIC_MODE:-false}"
 
 page_url() {
@@ -62,6 +66,54 @@ env_default() {
 
 env_attr() {
   env_default "$1" "$2" | h
+}
+
+# --- Маскировка секретов ---
+# Значения этих env — UUID прокси, пароли подписок, токены в headers, secret
+# external-controller. В HTML они не печатаются: страницы пре-рендерятся в
+# статические *.html и оседают в дисковом кэше браузера. Вместо значения идёт
+# метка «задано» + кнопка «Показать», которая тянет значение через env-state.
+is_secret_env() {
+  _n="$1"
+  case "$_n" in
+    UI_SECRET|*_HEADERS) return 0 ;;
+  esac
+  for _p in SUB_LINK MIXED_IN_USER SOCKS LINK; do
+    case "$_n" in
+      "$_p") return 0 ;;
+      "$_p"*)
+        # секретна только сама ссылка (LINK1), но не её под-ключи
+        # (LINK1_DIALER_PROXY) — значит после префикса должны быть цифры.
+        _s="${_n#$_p}"
+        case "$_s" in
+          ''|*[!0-9]*) ;;
+          *) return 0 ;;
+        esac
+        ;;
+    esac
+  done
+  return 1
+}
+
+# Значение env скрыто? (секретное И реально задано на сервере)
+env_masked() {
+  is_secret_env "$1" && env_exists "$1"
+}
+
+# value="..." для инпута с учётом маскировки
+env_attr_masked() {
+  env_masked "$1" && return 0
+  env_attr "$1" "${2:-}"
+}
+
+# data-атрибуты и placeholder для скрытого поля
+secret_attrs() {
+  env_masked "$1" && printf ' data-secret="1" data-secret-hidden="1" placeholder="•••••••• задано"'
+}
+
+# кнопка раскрытия; $2 — необязательный CSS-класс
+secret_btn() {
+  env_masked "$1" && printf '<button type="button" class="secret-reveal %s" data-secret-for="%s" onclick="revealSecret(this)" title="Показать сохранённое значение">Показать</button>' "${2:-}" "$1"
 }
 
 yaml_link_name() {
@@ -206,12 +258,17 @@ active_yaml_files() {
 
 field() {
   name="$1"; label="$2"; hint="$3"; placeholder="$4"; type="${5:-text}"; default="${6:-}"
-  value="$(env_attr "$name" "$default")"
+  value="$(env_attr_masked "$name" "$default")"
   state="$(is_set "$name")"
+  if env_masked "$name"; then
+    ph_attr="$(secret_attrs "$name")"
+  else
+    ph_attr=" placeholder=\"$(printf '%s' "$placeholder" | h)\""
+  fi
   cat <<EOF
 <label class="field" data-env="$name">
   <span><b>$label</b><em>$name</em></span>
-  <input type="$type" name="$name" value="$value" placeholder="$(printf '%s' "$placeholder" | h)" data-default="$(printf '%s' "$default" | h)">
+  <input type="$type" name="$name" value="$value"$ph_attr data-default="$(printf '%s' "$default" | h)">$(secret_btn "$name")
   <small>$hint</small>
   <i>$state</i>
 </label>
@@ -371,6 +428,16 @@ nav_item() {
 
 header() {
   echo "Content-Type: text/html; charset=utf-8"
+  # Страница содержит значения env — в кэш её класть нельзя.
+  # 'unsafe-inline' обязателен: инлайн-бутстрап темы в <head> и onclick-хендлеры.
+  # connect-src 'self' — даже при XSS утечь наружу нечему: все fetch локальные.
+  echo "Cache-Control: no-store"
+  # same-origin, а не no-referrer: Referer — единственный сигнал происхождения,
+  # который busybox httpd пробрасывает в CGI, на нём построен csrf-guard.
+  echo "Referrer-Policy: same-origin"
+  echo "X-Content-Type-Options: nosniff"
+  echo "X-Frame-Options: DENY"
+  echo "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
   echo
   cat <<EOF
 <!DOCTYPE html>
@@ -378,6 +445,11 @@ header() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Дублируем политику в meta: пре-рендеренные *.html отдаёт busybox httpd,
+       а он не умеет добавлять заголовки. frame-ancestors в meta игнорируется,
+       поэтому от кликджекинга статику прикрывает только basic auth. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'none'">
+  <meta name="referrer" content="same-origin">
   <script>(function(){try{var t=localStorage.getItem("mihomo-theme")||"dark";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","dark");}})();</script>
   <link rel="icon" href="$(asset_url favicon.png)">
   <link rel="stylesheet" href="$(asset_url style.css)">
@@ -600,10 +672,11 @@ providers_page() {
   section_start_tab link "LINK*" "Одиночные ссылки: vless/vmess/ss/trojan/base64/vpn://. Для каждого можно задать DIALER_PROXY."
   echo '<div class="subhead"><b>LINK</b><button type="button" onclick="addRow('\''links'\'', '\''LINK'\'', false)">Добавить LINK</button></div><div id="links" class="rows">'
   for name in $(env_names '^LINK[0-9]*='); do
-    val="$(env_attr "$name" "")"; idx="$(printf '%s' "$name" | sed 's/LINK//')"; [ -z "$idx" ] && idx=0
+    val="$(env_attr_masked "$name" "")"; idx="$(printf '%s' "$name" | sed 's/LINK//')"; [ -z "$idx" ] && idx=0
+    if env_masked "$name"; then link_ph="$(secret_attrs "$name")"; else link_ph=' placeholder="vless://..."'; fi
     cat <<EOF
 <div class="env-row env-row-stack link-row" data-index="$idx">
-  <label><span>$name</span><input name="$name" value="$val" placeholder="vless://..."></label>
+  <label><span>$name</span><input name="$name" value="$val"$link_ph>$(secret_btn "$name" "inline")</label>
   <label class="field-validated" data-validate="proxy_name"><span>${name}_DIALER_PROXY</span><input name="${name}_DIALER_PROXY" value="$(env_attr "${name}_DIALER_PROXY" "")" placeholder="GLOBAL"></label>
   <label><span>${name}_AMNEZIA_COUNTRY</span><input name="${name}_AMNEZIA_COUNTRY" value="$(env_attr "${name}_AMNEZIA_COUNTRY" "")" placeholder="nl"></label>
   <button type="button" onclick="removeEnvRow(this)">Удалить</button>
@@ -624,10 +697,11 @@ EOF
   field SUB_LINK_INTERVAL "Default interval" "Дефолт для SUB_LINK*_INTERVAL." "3600" number "3600"
   echo '<div class="subhead"><b>SUB_LINK</b><button type="button" onclick="addRow('\''subs'\'', '\''SUB_LINK'\'', false)">Добавить SUB_LINK</button></div><div id="subs" class="rows">'
   for name in $(env_names '^SUB_LINK[0-9]+='); do
-    val="$(env_attr "$name" "")"; idx="$(printf '%s' "$name" | sed 's/SUB_LINK//')"
+    val="$(env_attr_masked "$name" "")"; idx="$(printf '%s' "$name" | sed 's/SUB_LINK//')"
+    if env_masked "$name"; then sub_ph="$(secret_attrs "$name")"; else sub_ph=' placeholder="https://subscription"'; fi
     cat <<EOF
 <div class="env-row env-row-stack sub-link-row" data-index="$idx">
-  <label><span>$name</span><input name="$name" value="$val" placeholder="https://subscription"></label>
+  <label><span>$name</span><input name="$name" value="$val"$sub_ph>$(secret_btn "$name" "inline")</label>
   <label><span>${name}_INTERVAL</span><input type="number" name="${name}_INTERVAL" value="$(env_attr "${name}_INTERVAL" "")" placeholder="3600"></label>
   <label><span>${name}_PROXY</span><input name="${name}_PROXY" value="$(env_attr "${name}_PROXY" "")" placeholder="DIRECT"></label>
   <label class="field-validated" data-validate="proxy_name"><span>${name}_DIALER_PROXY</span><input name="${name}_DIALER_PROXY" value="$(env_attr "${name}_DIALER_PROXY" "")" placeholder="GLOBAL"></label>
@@ -639,8 +713,8 @@ EOF
     <label><span>${name}_ADDITIONAL_SUFFIX</span><input name="${name}_ADDITIONAL_SUFFIX" value="$(env_attr "${name}_ADDITIONAL_SUFFIX" "")" placeholder=" | ${name}"></label>
   </div>
   <div class="headers-editor">
-    <span>${name}_HEADERS</span>
-    <input type="hidden" class="sub-link-headers-value" name="${name}_HEADERS" value="$(env_attr "${name}_HEADERS" "")">
+    <span>${name}_HEADERS $(secret_btn "${name}_HEADERS" "inline")</span>
+    <input type="hidden" class="sub-link-headers-value" name="${name}_HEADERS" value="$(env_attr_masked "${name}_HEADERS" "")"$(secret_attrs "${name}_HEADERS")>
     <div class="headers-rows"></div>
     <button type="button" class="headers-add">Добавить header</button>
   </div>
@@ -692,14 +766,14 @@ EOF
     IFS=$OLDIFS
     cat <<EOF
 <div class="env-row socks-row" data-index="$idx" data-max-index="99">
-  <input type="hidden" name="$sname" value="$(printf '%s' "$svalue" | h)" data-default="" data-base="SOCKS">
+  <input type="hidden" name="$sname" value="$(env_attr_masked "$sname" "")" data-default="" data-base="SOCKS"$(secret_attrs "$sname")>
   <div class="socks-content">
-    <b class="socks-title">$sname</b>
+    <b class="socks-title">$sname $(secret_btn "$sname" "inline")</b>
     <div class="socks-grid">
-      <label><span>server *</span><input class="socks-server" value="$(printf '%s' "$s_server" | h)" placeholder="1.2.3.4 / host"></label>
-      <label><span>port *</span><input class="socks-port" type="number" value="$(printf '%s' "$s_port" | h)" placeholder="1080"></label>
-      <label><span>username</span><input class="socks-username" value="$(printf '%s' "$s_user" | h)"></label>
-      <label><span>password</span><input class="socks-password" value="$(printf '%s' "$s_pass" | h)"></label>
+      <label><span>server *</span><input class="socks-server" value="$(env_masked "$sname" || printf '%s' "$s_server" | h)" placeholder="1.2.3.4 / host"></label>
+      <label><span>port *</span><input class="socks-port" type="number" value="$(env_masked "$sname" || printf '%s' "$s_port" | h)" placeholder="1080"></label>
+      <label><span>username</span><input class="socks-username" value="$(env_masked "$sname" || printf '%s' "$s_user" | h)"></label>
+      <label><span>password</span><input class="socks-password" type="password" value="$(env_masked "$sname" || printf '%s' "$s_pass" | h)"></label>
       <label><span>fingerprint</span><input class="socks-fingerprint" value="$(printf '%s' "$s_fp" | h)" placeholder="chrome / firefox / …"></label>
       <label><span>ip-version</span>
         <select class="socks-ip-version">
@@ -1769,7 +1843,7 @@ EOF
     esac
     idx="$(printf '%s' "$name" | sed 's/MIXED_IN_USER//')"; [ -z "$idx" ] && idx=0
     cat <<EOF
-<div class="env-row env-row-stack mixed-user-row" data-index="$idx" data-prefix="MIXED_IN_USER" data-max-index="99"><div class="mixed-user-fields"><label><span>Логин</span><input class="mixed-user-name" value="$(printf '%s' "$username" | h)" placeholder="username"></label><label><span>Пароль</span><input class="mixed-user-pass" type="password" value="$(printf '%s' "$password" | h)" placeholder="password"></label></div><input type="hidden" name="$name" value="$(printf '%s' "$value" | h)" data-mixed-user-value><button type="button" onclick="removeEnvRow(this)">Удалить</button></div>
+<div class="env-row env-row-stack mixed-user-row" data-index="$idx" data-prefix="MIXED_IN_USER" data-max-index="99"><div class="mixed-user-fields"><label><span>Логин $(secret_btn "$name" "inline")</span><input class="mixed-user-name" value="$(env_masked "$name" || printf '%s' "$username" | h)" placeholder="username"></label><label><span>Пароль</span><input class="mixed-user-pass" type="password" value="$(env_masked "$name" || printf '%s' "$password" | h)" placeholder="password"></label></div><input type="hidden" name="$name" value="$(env_attr_masked "$name" "")" data-mixed-user-value$(secret_attrs "$name")><button type="button" onclick="removeEnvRow(this)">Удалить</button></div>
 EOF
     mixed_found=1
   done
@@ -1797,6 +1871,7 @@ tools_page() {
     <button type="button" data-tool-tab="vanya"><b>Дядя Ваня ВПН</b><small>ssconf → config</small></button>
     <button type="button" data-tool-tab="http"><b>HTTP запрос</b><small>url + headers → ответ</small></button>
     <button type="button" data-tool-tab="x2m"><b>xray2mihomo</b><small>Xray sub → mihomo</small></button>
+    <button type="button" data-tool-tab="authhash"><b>Пароль вебки</b><small>пароль → md5-хеш</small></button>
   </aside>
   <div class="tool-panes">
     <article class="tool-pane active" data-tool-pane="b64enc">
@@ -1913,9 +1988,10 @@ tools_page() {
       <div class="tool-status" id="toolHttpStatus"></div>
     </article>
     <article class="tool-pane" data-tool-pane="x2m" hidden>
-      <label class="field field-wide"><span><b>Endpoint</b><em>локально: http://127.0.0.1/cgi-bin/xray2mihomo-sub · или Cloudflare worker: https://xray2mihomo.solomon-tools.workers.dev/</em></span><input id="toolX2mEndpoint" spellcheck="false" value="http://127.0.0.1/cgi-bin/xray2mihomo-sub"></label>
+      <label class="field field-wide"><span><b>Endpoint</b><em>локально: http://127.0.0.1:81/cgi-bin/xray2mihomo-sub · или Cloudflare worker: https://xray2mihomo.solomon-tools.workers.dev/</em></span><input id="toolX2mEndpoint" spellcheck="false" value="http://127.0.0.1:81/cgi-bin/xray2mihomo-sub"></label>
       <label class="field field-wide"><span><b>URL подписки</b><em>Xray JSON sub (sub/url/target)</em></span><textarea id="toolX2mSub" rows="2" spellcheck="false" placeholder="https://provider.example/sub/path"></textarea></label>
       <label class="field field-wide"><span><b>Готовая ссылка</b><em>для mihomo provider url или проверки</em></span><textarea id="toolX2mLink" rows="3" readonly spellcheck="false"></textarea></label>
+      <div class="notice"><b>Готовую ссылку можно класть в <code>SUB_LINK</code></b><span>Порт <code>81</code> — служебный слушатель внутри контейнера: только <code>127.0.0.1</code>, без пароля, и в нём лежит ровно один этот конвертер. Его качает сам mihomo по <code>interval</code>, поэтому basic auth панели (порт <code>80</code>) ему не мешает. Из LAN порт 81 недоступен. Выключается через <code>WEB_API_PORT=0</code>.<br>Кнопка «Запросить» ниже к порту 81 не ходит: браузеру loopback контейнера не виден, поэтому предпросмотр идёт через панель на порту 80 с вашими кредами. Результат тот же — CGI один и тот же.</span></div>
       <div class="tool-compact-grid cols2">
         <label class="field"><span><b>Формат</b><em>uri / mihomo yaml / base64</em></span><select id="toolX2mFormat"><option value="uri">URI строки</option><option value="yaml">mihomo YAML</option><option value="base64">base64</option></select></label>
         <label class="field"><span><b>DNS/fetch</b><em>openssl резолв как в DPI (для локального endpoint)</em></span><select id="toolX2mResolve"><option value="openssl">openssl</option><option value="wget">wget</option></select></label>
@@ -1935,6 +2011,29 @@ tools_page() {
       </div>
       <label class="field field-wide"><span><b>Ответ</b><em>результат конвертера как есть</em></span><textarea id="toolX2mResult" rows="14" readonly spellcheck="false"></textarea></label>
       <div class="tool-status" id="toolX2mStatus"></div>
+    </article>
+    <article class="tool-pane" data-tool-pane="authhash" hidden>
+      <div class="notice"><b>Пароль на веб-панель</b><span>Панель закрыта HTTP basic auth. Логин задаётся в <code>BASIC_AUTH_USER</code> (по умолчанию <code>admin</code>), пароль — <b>только хешем</b> в <code>BASIC_AUTH_HASH</code>. По умолчанию пароль <code>admin</code> — смените его.</span></div>
+      <div class="tool-compact-grid cols2">
+        <label class="field"><span><b>Логин</b><em>BASIC_AUTH_USER</em></span><input id="toolAuthUser" spellcheck="false" autocomplete="off" value="admin" placeholder="admin"></label>
+        <label class="field"><span><b>Новый пароль</b><em>в env не попадёт, только хеш</em></span><input id="toolAuthPass" type="password" spellcheck="false" autocomplete="new-password" placeholder="придумайте пароль"></label>
+      </div>
+      <div class="bc-actions">
+        <button type="button" class="primary" onclick="toolAuthHash()">Сгенерировать хеш</button>
+        <button type="button" onclick="toolCopy('toolAuthHashOut', this)">Скопировать хеш</button>
+        <button type="button" onclick="toolCopy('toolAuthCommands', this)">Скопировать команды</button>
+        <span class="tool-status" id="toolAuthStatus"></span>
+      </div>
+      <label class="field field-wide"><span><b>Хеш</b><em>значение для BASIC_AUTH_HASH</em></span><textarea id="toolAuthHashOut" rows="2" readonly spellcheck="false" placeholder="$1$..."></textarea></label>
+      <label class="field field-wide"><span><b>Команды RouterOS</b><em>добавить/обновить env и перезапустить контейнер</em></span><textarea id="toolAuthCommands" rows="8" readonly spellcheck="false"></textarea></label>
+      <details class="bc-tier-info">
+        <summary>Как это работает</summary>
+        <div class="bc-tier-info-body">
+          <p>Пароль уходит на <code>/cgi-bin/gen-hash</code> внутри контейнера, там <code>openssl passwd -1</code> считает md5-хеш формата <code>$1$соль$хеш</code>. Сам пароль нигде не сохраняется — ни в env, ни в черновике панели, ни в localStorage браузера.</p>
+          <p>Хеш кладётся в env <code>BASIC_AUTH_HASH</code>, entrypoint пишет из него <code>/etc/httpd.conf</code> строкой <code>/:логин:хеш</code>, и busybox httpd закрывает весь сайт целиком — и страницы, и <code>/cgi-bin</code>.</p>
+          <p>Забыли пароль — удалите env <code>BASIC_AUTH_HASH</code> и перезапустите контейнер: вернётся дефолтный <code>admin</code>/<code>admin</code>.</p>
+        </div>
+      </details>
     </article>
   </div>
 </div>

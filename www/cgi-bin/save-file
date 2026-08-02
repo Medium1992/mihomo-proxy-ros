@@ -2,6 +2,10 @@
 echo "Content-Type: text/plain; charset=utf-8"
 echo ""
 
+. /www/cgi-bin/_guard.sh
+csrf_guard_text
+
+
 CONFIG_DIR="${CONFIG_DIR:-/root/.config/mihomo}"
 
 if [ "$REQUEST_METHOD" != "POST" ]; then

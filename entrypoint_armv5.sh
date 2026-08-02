@@ -89,6 +89,18 @@ GROUP_INTERVAL="${GROUP_INTERVAL:-60}"
 GROUP_TOLERANCE="${GROUP_TOLERANCE:-20}"
 GROUP_STRATEGY="${GROUP_STRATEGY:-consistent-hashing}"
 
+# Web UI basic auth. BASIC_AUTH_HASH — готовый md5-хеш ($1$...), генерится
+# на странице «Инструменты». Дефолт соответствует паролю "admin".
+BASIC_AUTH_HASH_DEFAULT='$1$mihomors$BipEGg3TOdgaQSFfGtisO1'
+BASIC_AUTH_USER="${BASIC_AUTH_USER:-admin}"
+BASIC_AUTH_HASH="${BASIC_AUTH_HASH:-$BASIC_AUTH_HASH_DEFAULT}"
+HTTPD_CONF="${HTTPD_CONF:-/etc/httpd.conf}"
+# Служебный слушатель для machine-to-machine вызовов (xray2mihomo-sub из
+# SUB_LINK*): только 127.0.0.1, без авторизации. 0 = выключить.
+WEB_API_PORT="${WEB_API_PORT:-81}"
+API_ROOT=/dev/shm/webapi
+export WEB_API_PORT
+
 # Amnezia Premium vpn:// support.
 # Per-provider country override example: LINK1_AMNEZIA_COUNTRY=nl
 AMNEZIA_PREMIUM_GATEWAY="http://gw.amnezia.org:80/"
@@ -2885,6 +2897,7 @@ EOF
   while IFS= read -r var; do
     name=$(echo "$var" | cut -d '=' -f1)
     url=$(echo "$var" | cut -d '=' -f2- | tr -d '\r')
+    url=$(normalize_local_sub_url "$url")
     interval=$(printenv "${name}_INTERVAL" || echo "$SUB_LINK_INTERVAL")
     proxy="DIRECT"
     eval "proxy=\"\${${name}_PROXY:-DIRECT}\"" 2>/dev/null
@@ -3949,6 +3962,61 @@ wait_for_meta() {
   return 1
 }
 
+# ------------------- WEB UI BASIC AUTH -------------------
+# busybox httpd читает авторизацию из httpd.conf: строка "/:user:pass"
+# закрывает весь сайт целиком, включая /cgi-bin и статику. Файл лежит ВНЕ
+# вебрута, иначе httpd отдал бы его как обычный файл.
+setup_basic_auth() {
+  : > "$HTTPD_CONF" 2>/dev/null || { log "Cannot write $HTTPD_CONF — web UI starts WITHOUT auth"; return 0; }
+  chmod 600 "$HTTPD_CONF" 2>/dev/null || true
+  if [ -n "$BASIC_AUTH_USER" ] && [ -n "$BASIC_AUTH_HASH" ]; then
+    printf '/:%s:%s\n' "$BASIC_AUTH_USER" "$BASIC_AUTH_HASH" >> "$HTTPD_CONF"
+    log "Web UI basic auth enabled for user '$BASIC_AUTH_USER'"
+    case "$BASIC_AUTH_HASH" in
+      "$BASIC_AUTH_HASH_DEFAULT")
+        log "WARNING: default web UI password is in use — set BASIC_AUTH_HASH (Инструменты → Хеш пароля)"
+        ;;
+    esac
+  else
+    log "WARNING: web UI basic auth DISABLED (set BASIC_AUTH_USER / BASIC_AUTH_HASH)"
+  fi
+}
+
+# Старые конфиги ссылались на конвертер подписок через порт 80
+# (http://127.0.0.1/cgi-bin/xray2mihomo-sub?...). Теперь там basic auth и
+# mihomo получил бы 401, поэтому молча переводим такие URL на служебный
+# loopback-порт. Значение env при этом не меняется — правится только то,
+# что уходит в config.yaml.
+normalize_local_sub_url() {
+  _u="$1"
+  [ "${WEB_API_PORT:-81}" = "0" ] && { printf '%s' "$_u"; return 0; }
+  case "$_u" in
+    http://127.0.0.1/cgi-bin/xray2mihomo-sub*|http://localhost/cgi-bin/xray2mihomo-sub*)
+      _tail="${_u#*/cgi-bin/xray2mihomo-sub}"
+      # log пишет в stdout, а stdout этой функции — сам URL: только в stderr.
+      log "SUB_LINK: rewrote local converter URL to 127.0.0.1:${WEB_API_PORT} (port 80 is behind basic auth now)" >&2
+      printf 'http://127.0.0.1:%s/cgi-bin/xray2mihomo-sub%s' "${WEB_API_PORT:-81}" "$_tail"
+      ;;
+    *) printf '%s' "$_u" ;;
+  esac
+}
+
+# ------------------- LOOPBACK API LISTENER -------------------
+# xray2mihomo-sub дёргает не человек, а сам mihomo: ссылку на него кладут в
+# SUB_LINK*, и провайдер обновляется по interval. Через порт 80 это больше не
+# работает — там basic auth, а у mihomo нет пароля (в env лежит только хеш).
+# Поэтому поднимаем второй httpd: слушает ТОЛЬКО 127.0.0.1 и раздаёт вебрут
+# с единственным CGI — конвертером подписок. Отключить: WEB_API_PORT=0
+setup_api_listener() {
+  [ "${WEB_API_PORT:-81}" = "0" ] && { log "Loopback API listener disabled (WEB_API_PORT=0)"; return 0; }
+  rm -rf "$API_ROOT"
+  mkdir -p "$API_ROOT/cgi-bin"
+  cp /www/cgi-bin/xray2mihomo-sub "$API_ROOT/cgi-bin/xray2mihomo-sub" 2>/dev/null || return 0
+  chmod +x "$API_ROOT/cgi-bin/xray2mihomo-sub" 2>/dev/null || true
+  httpd -f -p "127.0.0.1:${WEB_API_PORT:-81}" -h "$API_ROOT" >/dev/null 2>&1 &
+  log "Loopback API listener on 127.0.0.1:${WEB_API_PORT:-81} (xray2mihomo-sub for SUB_LINK*)"
+}
+
 run() {
   mkdir -p "$CONFIG_DIR" "$AWG_DIR" "$TRUSTTUNNEL_DIR" "$OPENVPN_DIR" "$PROXIES_DIR" "$RULE_SET_DIR"
   rm -rf "$RUNTIME_DIR" "$HS5T_DIR"
@@ -4009,7 +4077,9 @@ run() {
   WWW_DIR="$WEBROOT" /bin/sh /www/render_static.sh >/dev/null 2>&1 &
   RENDER_PID=$!
   wait "$RENDER_PID" 2>/dev/null || true
-  httpd -f -p 80 -h "$WEBROOT" >/dev/null 2>&1 &
+  setup_basic_auth
+  httpd -f -p 80 -h "$WEBROOT" -c "$HTTPD_CONF" >/dev/null 2>&1 &
+  setup_api_listener
 
   wait $MIHOMO_PID
 }
