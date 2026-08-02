@@ -44,9 +44,9 @@ RUN curl -s https://api.github.com/repos/bol-van/zapret2/releases/latest | \
     tar -xzf zapret2.tar.gz -C /zapret2 --strip-components=1 && \
     rm zapret2.tar.gz
 
-RUN ZDY_TAG="$(curl -fsSL https://api.github.com/repos/loanelly/zapret-discord-youtube/tags?per_page=1 | jq -r '.[0].name')" && \
+RUN ZDY_TAG="$(curl -fsSL https://api.github.com/repos/Flowseal/zapret-discord-youtube/tags?per_page=1 | jq -r '.[0].name')" && \
     [ -n "$ZDY_TAG" ] && [ "$ZDY_TAG" != "null" ] && \
-    curl -fsSL "https://github.com/loanelly/zapret-discord-youtube/archive/refs/tags/${ZDY_TAG}.zip" \
+    curl -fsSL "https://github.com/Flowseal/zapret-discord-youtube/archive/refs/tags/${ZDY_TAG}.zip" \
         -o zapret-discord-youtube.zip && \
     mkdir -p /tmp/zapret-discord-youtube /zapret-discord-youtube && \
     unzip zapret-discord-youtube.zip -d /tmp/zapret-discord-youtube && \
