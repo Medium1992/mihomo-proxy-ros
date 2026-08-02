@@ -6,54 +6,77 @@ ARG TARGETVARIANT
 ARG AMD64VERSION
 ARG MIHOMO_RELEASE_TAG=latest
 RUN apk add --no-cache curl jq gzip tar unzip
+# gh_api — запросы к api.github.com: без токена лимит 60/час на общий IP раннера.
+# dl — скачивание ассета: без -f curl пишет тело ошибки прямо в файл бинарника.
+RUN cat > /gh.sh <<'SH'
+gh_api() {
+  _a="-fsSL --retry 5 --retry-all-errors --retry-delay 3"
+  if [ -s /run/secrets/gh_token ]; then
+    curl $_a -H "Authorization: Bearer $(cat /run/secrets/gh_token)" "$@"
+  else
+    curl $_a "$@"
+  fi
+}
+dl() { curl -fL --retry 5 --retry-all-errors --retry-delay 3 -o "$(basename "$1")" "$1"; }
+SH
 RUN mkdir -p /final
 
-RUN if [ "$MIHOMO_RELEASE_TAG" = "latest" ]; then \
-      MIHOMO_API_URL="https://api.github.com/repos/medium1992/mihomo-proxy-ros/releases/latest"; \
+RUN --mount=type=secret,id=gh_token set -eu; . /gh.sh; \
+    if [ "$MIHOMO_RELEASE_TAG" = "latest" ]; then \
+      U="https://api.github.com/repos/medium1992/mihomo-proxy-ros/releases/latest"; \
     else \
-      MIHOMO_API_URL="https://api.github.com/repos/medium1992/mihomo-proxy-ros/releases/tags/${MIHOMO_RELEASE_TAG}"; \
-    fi && \
-    curl -s "$MIHOMO_API_URL" | \
-    jq -r '.assets[].browser_download_url' | grep -E 'mihomo-linux-(amd64|arm64|armv7|armv5)' | \
-    while read url; do curl -L "$url" -o "$(basename "$url")"; done
+      U="https://api.github.com/repos/medium1992/mihomo-proxy-ros/releases/tags/${MIHOMO_RELEASE_TAG}"; \
+    fi; \
+    urls="$(gh_api "$U" | jq -r '.assets[].browser_download_url' | grep -E 'mihomo-linux-(amd64|arm64|armv7|armv5)')" || true; \
+    [ -n "$urls" ] || { echo "mihomo: нет подходящих ассетов в $U" >&2; exit 1; }; \
+    for u in $urls; do dl "$u"; done
 
-RUN curl -s https://api.github.com/repos/heiher/hev-socks5-tunnel/releases/latest | \
-    jq -r '.assets[].browser_download_url' | grep -E 'arm32|arm32v7|arm64|x86_64' | \
-    while read url; do curl -L "$url" -o "$(basename "$url")"; done
+RUN --mount=type=secret,id=gh_token set -eu; . /gh.sh; \
+    urls="$(gh_api https://api.github.com/repos/heiher/hev-socks5-tunnel/releases/latest \
+      | jq -r '.assets[].browser_download_url' | grep -E 'arm32|arm32v7|arm64|x86_64')" || true;\
+    [ -n "$urls" ] || { echo "hev-socks5-tunnel: нет подходящих ассетов в релизе" >&2; exit 1; };\
+    for u in $urls; do dl "$u"; done
 
-RUN curl -s https://api.github.com/repos/hufrea/byedpi/releases/latest | \
-    jq -r '.assets[].browser_download_url' | grep -E 'armv6|armv7l|aarch64|x86_64' | \
-    while read url; do curl -L "$url" -o "$(basename "$url")"; done
+RUN --mount=type=secret,id=gh_token set -eu; . /gh.sh; \
+    urls="$(gh_api https://api.github.com/repos/hufrea/byedpi/releases/latest \
+      | jq -r '.assets[].browser_download_url' | grep -E 'armv6|armv7l|aarch64|x86_64')" || true;\
+    [ -n "$urls" ] || { echo "byedpi: нет подходящих ассетов в релизе" >&2; exit 1; };\
+    for u in $urls; do dl "$u"; done
 
 RUN for f in *.tar.gz; do tar -xzf "$f"; done
 RUN for f in *.gz; do gunzip "$f"; done
 
-RUN curl -s https://api.github.com/repos/bol-van/zapret/releases/latest | \
-    jq -r '.tag_name as $tag | .assets[].browser_download_url | select(endswith(".tar.gz") and (contains("openwrt-embedded") | not))' | \
-    head -1 | \
-    xargs -I {} curl -L {} -o zapret.tar.gz && \
-    mkdir /zapret && \
+RUN --mount=type=secret,id=gh_token set -eu; . /gh.sh; \
+    u="$(gh_api https://api.github.com/repos/bol-van/zapret/releases/latest \
+      | jq -r '.assets[].browser_download_url | select(endswith(".tar.gz") and (contains("openwrt-embedded") | not))' \
+      | head -1)";\
+    [ -n "$u" ] || { echo "zapret: подходящий ассет не найден" >&2; exit 1; };\
+    curl -fL --retry 5 --retry-all-errors --retry-delay 3 "$u" -o zapret.tar.gz;\
+    mkdir /zapret;\
     tar -xzf zapret.tar.gz -C /zapret --strip-components=1 && \
     rm zapret.tar.gz
 
-RUN curl -s https://api.github.com/repos/bol-van/zapret2/releases/latest | \
-    jq -r '.tag_name as $tag | .assets[].browser_download_url | select(endswith(".tar.gz") and (contains("openwrt-embedded") | not))' | \
-    head -1 | \
-    xargs -I {} curl -L {} -o zapret2.tar.gz && \
-    mkdir /zapret2 && \
+RUN --mount=type=secret,id=gh_token set -eu; . /gh.sh; \
+    u="$(gh_api https://api.github.com/repos/bol-van/zapret2/releases/latest \
+      | jq -r '.assets[].browser_download_url | select(endswith(".tar.gz") and (contains("openwrt-embedded") | not))' \
+      | head -1)";\
+    [ -n "$u" ] || { echo "zapret2: подходящий ассет не найден" >&2; exit 1; };\
+    curl -fL --retry 5 --retry-all-errors --retry-delay 3 "$u" -o zapret2.tar.gz;\
+    mkdir /zapret2;\
     tar -xzf zapret2.tar.gz -C /zapret2 --strip-components=1 && \
     rm zapret2.tar.gz
 
-RUN ZDY_TAG="$(curl -fsSL https://api.github.com/repos/Flowseal/zapret-discord-youtube/tags?per_page=1 | jq -r '.[0].name')" && \
+RUN --mount=type=secret,id=gh_token . /gh.sh && \
+    ZDY_TAG="$(gh_api https://api.github.com/repos/Flowseal/zapret-discord-youtube/tags?per_page=1 | jq -r '.[0].name')" && \
     [ -n "$ZDY_TAG" ] && [ "$ZDY_TAG" != "null" ] && \
-    curl -fsSL "https://github.com/Flowseal/zapret-discord-youtube/archive/refs/tags/${ZDY_TAG}.zip" \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 "https://github.com/Flowseal/zapret-discord-youtube/archive/refs/tags/${ZDY_TAG}.zip" \
         -o zapret-discord-youtube.zip && \
     mkdir -p /tmp/zapret-discord-youtube /zapret-discord-youtube && \
     unzip zapret-discord-youtube.zip -d /tmp/zapret-discord-youtube && \
     mv /tmp/zapret-discord-youtube/zapret-discord-youtube-*/* /zapret-discord-youtube/ && \
     rm -rf zapret-discord-youtube.zip /tmp/zapret-discord-youtube
 
-RUN curl -L https://github.com/IndeecFOX/zapret4rocket/archive/refs/heads/master.zip \
+RUN curl -fL --retry 5 --retry-all-errors --retry-delay 3 https://github.com/IndeecFOX/zapret4rocket/archive/refs/heads/master.zip \
         -o zapret4rocket.zip && \
     mkdir -p /zapret4rocket && \
     unzip zapret4rocket.zip -d /zapret4rocket && \
