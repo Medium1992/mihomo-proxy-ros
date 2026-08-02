@@ -51,11 +51,13 @@
 > `BASIC_AUTH_HASH`. Locked out? Remove the `BASIC_AUTH_HASH` env and restart the container
 > to fall back to `admin`.
 
-Secret ENV values (`LINK*`, `SUB_LINK*`, `SUB_LINK*_HEADERS`, `SOCKS*`, `MIXED_IN_USER*`, `UI_SECRET`)
-are never printed into the HTML and never stored in browser localStorage: the field shows
-“•••••••• задано” and the real value is fetched on demand via the “Показать” button. Draft edits
-live on the server (`/dev/shm/mihomo-ui/draft.json`, tmpfs), so a fresh browser with no cache and
-no cookies still opens the panel in its current state.
+ENV values are not stored in browser localStorage — draft edits live on the server
+(`/dev/shm/mihomo-ui/draft.json`, tmpfs), so a fresh browser with no cache and no cookies opens the
+panel in its current state and no secrets are left on disk.
+
+`WEB_MASK_SECRETS=true` additionally hides `LINK*`, `SUB_LINK*`, `SUB_LINK*_HEADERS`, `SOCKS*`,
+`MIXED_IN_USER*` and `UI_SECRET` values in the HTML: the field shows a placeholder and the real
+value is fetched on demand via a reveal button. Off by default — the panel exists to edit them.
 
 <p align="center">
   <img src="docs/screenshots/webui-1.png" width="800" alt="WebUI — overview">
@@ -169,6 +171,7 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 |---|---|---|
 | `BASIC_AUTH_USER` | `admin` | Basic auth login for the web UI. Leaving both this and `BASIC_AUTH_HASH` empty disables auth. |
 | `BASIC_AUTH_HASH` | hash of `admin` | md5 hash of the password (`$1$salt$hash`). Generate it in *Tools → Web UI password*; the plaintext password is never stored in env. |
+| `WEB_MASK_SECRETS` | `false` | Hide `LINK*`/`SUB_LINK*`/`SOCKS*`/`MIXED_IN_USER*`/`UI_SECRET` values in the panel HTML behind a reveal button. Off by default. |
 | `WEB_CSRF` | `on` | `Referer` check on state-changing CGI requests. Set to `off` if you call the panel endpoints from your own scripts. |
 | `ALLOW_PRIVATE_FETCH` | `false` | Let `http-fetch` / `xray2mihomo-sub` reach loopback and private subnets (e.g. a subscription hosted on your own NAS). |
 | `WEB_API_PORT` | `81` | Port of the helper listener bound to `127.0.0.1` that serves `xray2mihomo-sub` — mihomo fetches it from `SUB_LINK*`, so it carries no password. Not reachable from the LAN. `0` disables it. |

@@ -2220,3 +2220,22 @@ nav a .nav-badge[data-kind="changed"] + .nav-badge[data-kind="error"] {
 .bc-filter { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
 #bcPreviewModal .modal-window { max-width: 920px; width: 90vw; max-height: 80vh; }
 #bcPreviewBody { white-space: pre; overflow: auto; max-height: 60vh; font-size: 12px; line-height: 1.4; }
+
+/* Кнопка закрытия панели сгенерированных команд */
+.command-panel { position: relative; }
+
+.command-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.command-close:hover,
+.command-close:focus-visible { color: var(--ink); }
