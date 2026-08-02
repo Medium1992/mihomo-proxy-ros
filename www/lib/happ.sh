@@ -155,22 +155,22 @@ happ_decrypt() {
     happ://crypt3/*) _mode=2; _payload="${_link#happ://crypt3/}" ;;
     happ://crypt2/*) _mode=1; _payload="${_link#happ://crypt2/}" ;;
     happ://crypt/*)  _mode=0; _payload="${_link#happ://crypt/}" ;;
-    *) happ_err "не ссылка happ://crypt*"; return 1 ;;
+    *) happ_err "not a happ://crypt* link"; return 1 ;;
   esac
-  [ -r "$HAPP_JS" ] || { happ_err "нет файла с ключами: $HAPP_JS"; return 1; }
-  command -v openssl >/dev/null 2>&1 || { happ_err "нет openssl"; return 1; }
+  [ -r "$HAPP_JS" ] || { happ_err "key file not found: $HAPP_JS"; return 1; }
+  command -v openssl >/dev/null 2>&1 || { happ_err "openssl not found"; return 1; }
 
   # tmpfs: во временных файлах лежит расшифрованный ключ ChaCha20
-  _dir=$(mktemp -d /dev/shm/happ.XXXXXX 2>/dev/null) || { happ_err "не создать каталог в /dev/shm"; return 1; }
+  _dir=$(mktemp -d /dev/shm/happ.XXXXXX 2>/dev/null) || { happ_err "cannot create a directory in /dev/shm"; return 1; }
   chmod 700 "$_dir" 2>/dev/null
 
   _rc=1
   if [ "$_mode" != "4" ]; then
     _key=$(happ_native_key "$_mode")
     if [ -n "$_key" ]; then
-      happ_rsa_decrypt "$_payload" "$_key" "$_dir" && _rc=0 || happ_err "RSA не расшифровался"
+      happ_rsa_decrypt "$_payload" "$_key" "$_dir" && _rc=0 || happ_err "RSA decryption failed"
     else
-      happ_err "нет ключа для режима $_mode"
+      happ_err "no key for mode $_mode"
     fi
     rm -rf "$_dir"
     return "$_rc"
@@ -178,13 +178,13 @@ happ_decrypt() {
 
   _shuffled=$(printf '%s' "$_payload" | happ_permute4)
   _len=${#_shuffled}
-  [ "$_len" -ge 8 ] || { happ_err "payload короче 8 символов"; rm -rf "$_dir"; return 1; }
+  [ "$_len" -ge 8 ] || { happ_err "payload shorter than 8 chars"; rm -rf "$_dir"; return 1; }
   _marker="$(printf '%s' "$_shuffled" | cut -c1-4)$(printf '%s' "$_shuffled" | cut -c$((_len - 3))-)"
   _body=$(printf '%s' "$_shuffled" | cut -c5-$((_len - 4)))
-  [ "${#_body}" -ge 13 ] || { happ_err "тело короче 13 символов"; rm -rf "$_dir"; return 1; }
+  [ "${#_body}" -ge 13 ] || { happ_err "body shorter than 13 chars"; rm -rf "$_dir"; return 1; }
   _key=$(happ_crypt5_key "$_marker")
   if [ -z "$_key" ]; then
-    happ_err "неизвестный маркер crypt5: $_marker (обновите HAPP1..HAPP4)"
+    happ_err "unknown crypt5 marker: $_marker (refresh HAPP1..HAPP4)"
     rm -rf "$_dir"; return 1
   fi
 
@@ -201,7 +201,7 @@ happ_decrypt() {
       break
     fi
   done
-  [ "$_rc" = "0" ] || happ_err "не расшифровать тело crypt5 (маркер $_marker)"
+  [ "$_rc" = "0" ] || happ_err "cannot decrypt crypt5 body (marker $_marker)"
   rm -rf "$_dir"
   return "$_rc"
 }

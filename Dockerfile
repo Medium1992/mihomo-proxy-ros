@@ -28,19 +28,19 @@ RUN --mount=type=secret,id=gh_token set -eu; . /gh.sh; \
       U="https://api.github.com/repos/medium1992/mihomo-proxy-ros/releases/tags/${MIHOMO_RELEASE_TAG}"; \
     fi; \
     urls="$(gh_api "$U" | jq -r '.assets[].browser_download_url' | grep -E 'mihomo-linux-(amd64|arm64|armv7|armv5)')" || true; \
-    [ -n "$urls" ] || { echo "mihomo: нет подходящих ассетов в $U" >&2; exit 1; }; \
+    [ -n "$urls" ] || { echo "mihomo: no matching assets at $U" >&2; exit 1; }; \
     for u in $urls; do dl "$u"; done
 
 RUN --mount=type=secret,id=gh_token set -eu; . /gh.sh; \
     urls="$(gh_api https://api.github.com/repos/heiher/hev-socks5-tunnel/releases/latest \
       | jq -r '.assets[].browser_download_url' | grep -E 'arm32|arm32v7|arm64|x86_64')" || true;\
-    [ -n "$urls" ] || { echo "hev-socks5-tunnel: нет подходящих ассетов в релизе" >&2; exit 1; };\
+    [ -n "$urls" ] || { echo "hev-socks5-tunnel: no matching assets in the release" >&2; exit 1; };\
     for u in $urls; do dl "$u"; done
 
 RUN --mount=type=secret,id=gh_token set -eu; . /gh.sh; \
     urls="$(gh_api https://api.github.com/repos/hufrea/byedpi/releases/latest \
       | jq -r '.assets[].browser_download_url' | grep -E 'armv6|armv7l|aarch64|x86_64')" || true;\
-    [ -n "$urls" ] || { echo "byedpi: нет подходящих ассетов в релизе" >&2; exit 1; };\
+    [ -n "$urls" ] || { echo "byedpi: no matching assets in the release" >&2; exit 1; };\
     for u in $urls; do dl "$u"; done
 
 RUN set -e; for f in *.tar.gz; do [ -e "$f" ] || continue; tar -xzf "$f"; done
@@ -50,7 +50,7 @@ RUN --mount=type=secret,id=gh_token set -eu; . /gh.sh; \
     u="$(gh_api https://api.github.com/repos/bol-van/zapret/releases/latest \
       | jq -r '.assets[].browser_download_url | select(endswith(".tar.gz") and (contains("openwrt-embedded") | not))' \
       | head -1)";\
-    [ -n "$u" ] || { echo "zapret: подходящий ассет не найден" >&2; exit 1; };\
+    [ -n "$u" ] || { echo "zapret: no suitable asset found" >&2; exit 1; };\
     curl -fL --retry 5 --retry-all-errors --retry-delay 3 "$u" -o zapret.tar.gz;\
     mkdir /zapret;\
     tar -xzf zapret.tar.gz -C /zapret --strip-components=1 && \
@@ -60,7 +60,7 @@ RUN --mount=type=secret,id=gh_token set -eu; . /gh.sh; \
     u="$(gh_api https://api.github.com/repos/bol-van/zapret2/releases/latest \
       | jq -r '.assets[].browser_download_url | select(endswith(".tar.gz") and (contains("openwrt-embedded") | not))' \
       | head -1)";\
-    [ -n "$u" ] || { echo "zapret2: подходящий ассет не найден" >&2; exit 1; };\
+    [ -n "$u" ] || { echo "zapret2: no suitable asset found" >&2; exit 1; };\
     curl -fL --retry 5 --retry-all-errors --retry-delay 3 "$u" -o zapret2.tar.gz;\
     mkdir /zapret2;\
     tar -xzf zapret2.tar.gz -C /zapret2 --strip-components=1 && \
@@ -135,7 +135,7 @@ RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
     for d in /final/lua:lua /final/zapret-fakebin:bin /final/zapret-lists:txt; do \
       dir="${d%:*}"; ext="${d#*:}"; \
       ls "$dir"/*."$ext" >/dev/null 2>&1 \
-        || { echo "$dir пуст: ни одного *.$ext не скопировалось, upstream переехал?" >&2; exit 1; }; \
+        || { echo "$dir is empty: no *.$ext copied, did upstream move?" >&2; exit 1; }; \
     done; \
 fi
 

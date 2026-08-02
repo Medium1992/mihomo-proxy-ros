@@ -311,7 +311,7 @@ jobs:
           for v in MIHOMO HS5T BYEDPI ZAPRET ZAPRET2; do
             val="${!v}"
             case "$val" in
-              ''|null) echo "$v не определился (пустой или null) — прерываю, иначе уедет в тег образа"; exit 1 ;;
+              ''|null) echo "$v is unset (empty or null), aborting: it would end up in the image tag"; exit 1 ;;
             esac
           done
           echo "mihomo=$MIHOMO" >> $GITHUB_ENV
