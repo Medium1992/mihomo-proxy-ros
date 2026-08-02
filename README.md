@@ -206,6 +206,25 @@ holds a **single** CGI, the converter; nothing that reads or writes files is exp
 Configs still pointing at port 80 are rewritten to `:81` automatically at startup (the env value is
 left untouched — only the generated `config.yaml` is adjusted).
 
+### Interfaces (VETH)
+
+| ENV | Default | Description |
+|---|---|---|
+| `<iface>_GATEWAY` | network + 1 | Overrides the interface gateway. The address must belong to the interface subnet — otherwise it is ignored (with a log line) and the derived one is used, so connectivity is never lost. By default it is guessed as "network address + 1" (`192.168.5.0/24` → `192.168.5.1`); if the real gateway differs, that interface does not work as an outbound. |
+| `<iface>_GATEWAY1`, `_GATEWAY2`, … | — | `ip#name`. Each one adds a separate outbound to mihomo under that name: its own fwmark, its own routing table (600+), traffic leaves via the given gateway on the same interface. Without `#name` the outbound is called `<iface>_GATEWAYn`. An address outside the interface subnet is rejected. |
+
+The env name matches the interface name; both the exact case and an uppercased form with special characters replaced are accepted — `eth1_GATEWAY` and `ETH1_GATEWAY` both work for `eth1`, `VETH_LAN_GATEWAY` for `veth-lan`.
+
+This is how a neighbouring container becomes an outbound: run it in the same subnet, point a gateway at its address, and a button with your chosen name shows up in mihomo.
+
+```
+ETH1_GATEWAY=192.168.5.254
+ETH1_GATEWAY1=192.168.5.10#neighbour-vpn
+ETH1_GATEWAY2=192.168.5.11#neighbour-tor
+```
+
+Special characters in the name (space, comma, colon, quotes, slashes) are replaced with `_` — the name ends up as a YAML key, a filename, and inside comma-separated `GROUP_USE` lists.
+
 ### Health-check
 
 | ENV | Default | Description |

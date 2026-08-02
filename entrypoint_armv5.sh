@@ -2649,6 +2649,53 @@ generate_nameserver_policy() {
   fi
 }
 
+# env по имени интерфейса: eth1_GATEWAY или ETH1_GATEWAY, veth-lan -> VETH_LAN_
+iface_env_name() {
+  printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | sed 's/[^A-Z0-9_]/_/g'
+}
+
+iface_env() {
+  _ie_val=$(printenv "$1$2" 2>/dev/null || true)
+  [ -n "$_ie_val" ] || _ie_val=$(printenv "$(iface_env_name "$1")$2" 2>/dev/null || true)
+  [ -n "$_ie_val" ] || return 1
+  printf '%s' "$_ie_val"
+}
+
+# $1 = ip, $2 = сеть/префикс. По октетам: сдвиг на 24 переполнит long на armv5.
+ip_in_net() {
+  _n_len="${2#*/}"
+  case "$_n_len" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$_n_len" -le 32 ] || return 1
+  IFS=. read -r _a1 _a2 _a3 _a4 <<EOF
+$1
+EOF
+  IFS=. read -r _b1 _b2 _b3 _b4 <<EOF
+${2%%/*}
+EOF
+  for _o in 1 2 3 4; do
+    eval "_x=\$_a$_o; _y=\$_b$_o"
+    case "$_x" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$_x" -le 255 ] || return 1
+    _bits=$(( _n_len - (_o - 1) * 8 ))
+    if [ "$_bits" -ge 8 ]; then
+      [ "$_x" = "$_y" ] || return 1
+    elif [ "$_bits" -le 0 ]; then
+      break
+    else
+      _m=$(( 255 << (8 - _bits) & 255 ))
+      [ $(( _x & _m )) -eq $(( _y & _m )) ] || return 1
+    fi
+  done
+  return 0
+}
+
+# GATEWAY1, GATEWAY2, ... (GATEWAY без номера — подмена шлюза, не выход)
+iface_gateway_suffixes() {
+  printenv | cut -d= -f1 | awk -v a="$1" -v b="$(iface_env_name "$1")" '
+    $0 ~ "^(" a "|" b ")_GATEWAY[0-9]+$" { sub(/^.*_GATEWAY/, "GATEWAY"); print }
+  ' | sort -u -V
+}
+
 prepare_interface_routes() {
   local i=200
   local iface route_line network mask net_addr gw
@@ -2660,10 +2707,16 @@ prepare_interface_routes() {
     mask=$(echo "$network" | cut -d/ -f2)
     net_addr=$(echo "$network" | cut -d/ -f1)
     if [ "$mask" -eq 31 ] || [ "$mask" -eq 32 ]; then
-      gw="$net_addr"
+      gw_auto="$net_addr"
     else
-      gw=$(echo "$net_addr" | awk -F. '{printf "%d.%d.%d.%d", $1, $2, $3, $4+1}')
+      gw_auto=$(echo "$net_addr" | awk -F. '{printf "%d.%d.%d.%d", $1, $2, $3, $4+1}')
     fi
+    gw=$(iface_env "$iface" "_GATEWAY") || true
+    if [ -n "$gw" ] && ! ip_in_net "$gw" "$network"; then
+      log "$iface: шлюз $gw вне подсети $network, беру вычисленный $gw_auto" >&2
+      gw=""
+    fi
+    [ -n "$gw" ] || gw="$gw_auto"
 
     if [ "$i" -eq 200 ]; then
       ip route del default 2>/dev/null || true
@@ -3211,6 +3264,8 @@ EOF
   
   # all interfaces
 reverse_providers=""
+gw_names=""
+gw_mark=600   # 200+ интерфейсы, 300/400 zapret, 500 byedpi
 i=200
 for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo") print $2}'); do
     route_line=$(ip route list dev "$iface" proto kernel scope link | head -n1)
@@ -3224,10 +3279,16 @@ for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2
       dns_ifaces="$dns_ifaces $iface"
     fi
     if [ "$mask" -eq 31 ] || [ "$mask" -eq 32 ]; then
-        gw="$net_addr"
+        gw_auto="$net_addr"
     else
-        gw=$(echo "$net_addr" | awk -F. '{printf "%d.%d.%d.%d", $1, $2, $3, $4+1}')
+        gw_auto=$(echo "$net_addr" | awk -F. '{printf "%d.%d.%d.%d", $1, $2, $3, $4+1}')
     fi
+    gw=$(iface_env "$iface" "_GATEWAY") || true
+    if [ -n "$gw" ] && ! ip_in_net "$gw" "$network"; then
+      log "$iface: шлюз $gw вне подсети $network, беру вычисленный $gw_auto" >&2
+      gw=""
+    fi
+    [ -n "$gw" ] || gw="$gw_auto"
   if [ $i = 200 ]; then
     ip route del default 2>/dev/null || true
     ip route replace default via "$gw" dev "$iface"
@@ -3264,10 +3325,67 @@ $(health_check_block)
 EOF
     fi
  
+
+  # <iface>_GATEWAY<N>=ip#имя -> отдельный выход, своя метка и таблица
+  for gw_suffix in $(iface_gateway_suffixes "$iface"); do
+    gw_raw=$(iface_env "$iface" "_$gw_suffix") || continue
+    gw_ip="${gw_raw%%#*}"
+    gw_name="${gw_raw#*#}"
+    [ "$gw_name" = "$gw_raw" ] && gw_name="${iface}_${gw_suffix}"
+    gw_name=$(printf '%s' "$gw_name" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    # имя идёт в YAML-ключ, имя файла и GROUP_USE через запятую
+    gw_clean=$(printf '%s' "$gw_name" | tr ' 	,:#"'"'"'/\\' '_______')
+    if [ "$gw_clean" != "$gw_name" ]; then
+      log "$iface $gw_suffix: имя '$gw_name' -> '$gw_clean' (убраны спецсимволы)" >&2
+      gw_name="$gw_clean"
+    fi
+    case "$gw_ip" in
+      ''|*[!0-9.]*) log "$iface $gw_suffix: '$gw_ip' не похоже на IPv4 — пропускаю" >&2; continue ;;
+    esac
+    if ! ip_in_net "$gw_ip" "$network"; then
+      log "$iface $gw_suffix: $gw_ip вне подсети $network — пропускаю" >&2
+      continue
+    fi
+    if [ -z "$gw_name" ]; then
+      log "$iface $gw_suffix: пустое имя выхода — пропускаю" >&2
+      continue
+    fi
+    case " $providers $reverse_providers $gw_names " in
+      *" $gw_name "*) log "$iface $gw_suffix: имя '$gw_name' уже занято — пропускаю" >&2; continue ;;
+    esac
+
+    ip route replace default via "$gw_ip" dev "$iface" table $gw_mark
+    ip rule del table $gw_mark 2>/dev/null || true
+    ip rule add fwmark $gw_mark table $gw_mark pref 150
+
+    cat > "$RUNTIME_DIR/${gw_name}.yaml" <<EOF
+proxies:
+  - name: "$gw_name"
+    type: direct
+    udp: true
+    ip-version: ipv4
+    interface-name: "$iface"
+    routing-mark: $gw_mark
+EOF
+    cat >> "$CONFIG_YAML" <<EOF
+  $gw_name:
+    type: file
+    path: $RUNTIME_DIR/${gw_name}.yaml
+EOF
+    if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
+      cat >> "$CONFIG_YAML" <<EOF
+$(health_check_block)
+EOF
+    fi
+    log "$iface $gw_suffix: выход '$gw_name' через $gw_ip (таблица $gw_mark)"
+    gw_names="$gw_names $gw_name"
+    gw_mark=$((gw_mark + 1))
+  done
+
   reverse_providers="$iface $reverse_providers"
   i=$((i+1))
 done
-  providers="$providers $reverse_providers"
+  providers="$providers $reverse_providers $gw_names"
 
 for var in $ZAPRET_LIST; do
   base="${var%%_CMD*}"
