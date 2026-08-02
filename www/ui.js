@@ -1942,6 +1942,122 @@ function syncMixedUserRow(row) {
   rememberField(hidden);
 }
 
+// Доп. шлюзы интерфейса: <IFACE>_GATEWAY<N> = ip#имя, в UI это два поля.
+function splitGatewayValue(value) {
+  const raw = String(value || "");
+  const pos = raw.indexOf("#");
+  if (pos < 0) return { ip: raw, name: "" };
+  return { ip: raw.slice(0, pos), name: raw.slice(pos + 1) };
+}
+
+function syncGatewayRow(row) {
+  if (!row) return;
+  const hidden = row.querySelector("input[data-gw-value][name]");
+  const ip = row.querySelector(".gw-ip");
+  const name = row.querySelector(".gw-name");
+  if (!hidden || !ip || !name) return;
+  const ipVal = ip.value.trim();
+  const nameVal = name.value.trim();
+  hidden.value = ipVal ? (nameVal ? `${ipVal}#${nameVal}` : ipVal) : "";
+  rememberField(hidden);
+}
+
+function initGatewayRow(row) {
+  if (!row || row.dataset.gwWired === "true") return;
+  const hidden = row.querySelector("input[data-gw-value][name]");
+  const ip = row.querySelector(".gw-ip");
+  const name = row.querySelector(".gw-name");
+  if (!hidden || !ip || !name) return;
+  const current = splitGatewayValue(hidden.value);
+  if (!ip.value && current.ip) ip.value = current.ip;
+  if (!name.value && current.name) name.value = current.name;
+  const onInput = () => {
+    syncGatewayRow(row);
+    if (typeof refreshAllBadges === "function") refreshAllBadges();
+  };
+  [ip, name].forEach((el) => {
+    el.addEventListener("input", onInput);
+    el.addEventListener("change", onInput);
+  });
+  row.dataset.gwWired = "true";
+  syncGatewayRow(row);
+}
+
+function gatewayRowHtml(wrap, idx, value) {
+  const key = `${wrap.dataset.ifaceEnv}_GATEWAY${idx}`;
+  const parts = splitGatewayValue(value);
+  const ph = wrap.dataset.gwPlaceholder || "10.0.0.5";
+  const div = document.createElement("div");
+  div.className = "env-row gw-row";
+  div.dataset.index = String(idx);
+  div.innerHTML =
+    `<input type="hidden" name="${escapeAttr(key)}" value="${escapeAttr(value || "")}" data-gw-value>` +
+    `<div class="gw-fields">` +
+      `<label><span>IP шлюза</span><input class="gw-ip" value="${escapeAttr(parts.ip)}" placeholder="${escapeAttr(ph)}"></label>` +
+      `<label><span>Имя выхода в mihomo</span><input class="gw-name" value="${escapeAttr(parts.name)}" placeholder="сосед-vpn"></label>` +
+    `</div>` +
+    `<button type="button" onclick="removeGatewayRow(this)">Удалить</button>`;
+  return div;
+}
+
+function addGatewayRow(btn) {
+  const block = btn.closest(".gw-block");
+  const wrap = block && block.querySelector(".gw-rows");
+  if (!wrap) return;
+  const max = Number(wrap.dataset.maxIndex) || 99;
+  const used = [...wrap.querySelectorAll(".gw-row[data-index]")].map((x) => Number(x.dataset.index)).filter(Number.isFinite);
+  let idx = 1;
+  while (used.includes(idx)) idx++;
+  if (idx > max) return;
+  const div = gatewayRowHtml(wrap, idx, "");
+  wrap.appendChild(div);
+  div.querySelectorAll("input[name]").forEach((el) => { el.dataset.fromDraft = "true"; });
+  wireFieldEvents(div);
+  initGatewayRow(div);
+  const ip = div.querySelector(".gw-ip");
+  if (ip) ip.focus();
+  if (typeof refreshAllBadges === "function") refreshAllBadges();
+}
+
+function removeGatewayRow(btn) {
+  const row = btn.closest(".gw-row");
+  if (!row) return;
+  const hidden = row.querySelector("input[data-gw-value][name]");
+  if (hidden && hidden.name) {
+    try { Store.set(envKey(hidden.name), ""); } catch (e) {}
+  }
+  row.remove();
+  if (typeof refreshAllBadges === "function") refreshAllBadges();
+}
+
+function initGatewayRows(root) {
+  const scope = root || document;
+  scope.querySelectorAll(".gw-row").forEach(initGatewayRow);
+  // Черновик мог добавить строки, которых ещё нет в env контейнера.
+  scope.querySelectorAll(".gw-rows[data-iface-env]").forEach((wrap) => {
+    const re = new RegExp(`^${wrap.dataset.ifaceEnv}_GATEWAY([0-9]+)$`);
+    const have = new Set([...wrap.querySelectorAll(".gw-row[data-index]")].map((x) => Number(x.dataset.index)));
+    for (const key of Store.keys()) {
+      if (!key || !key.startsWith("mihomo-env:")) continue;
+      const value = Store.get(key) || "";
+      if (value === "") continue;
+      const m = re.exec(key.slice("mihomo-env:".length));
+      if (!m) continue;
+      const idx = Number(m[1]);
+      if (have.has(idx)) continue;
+      have.add(idx);
+      const div = gatewayRowHtml(wrap, idx, value);
+      wrap.appendChild(div);
+      // строки из черновика сервер не отдавал: original должен остаться пустым
+      div.querySelectorAll("input[name]").forEach((el) => { el.dataset.fromDraft = "true"; });
+      wireFieldEvents(div);
+      initGatewayRow(div);
+    }
+    const rows = [...wrap.querySelectorAll(".gw-row[data-index]")];
+    rows.sort((a, b) => Number(a.dataset.index) - Number(b.dataset.index)).forEach((r) => wrap.appendChild(r));
+  });
+}
+
 function initMixedUserRow(row) {
   if (!row || row.dataset.mixedUserWired === "true") return;
   const hidden = row.querySelector("input[data-mixed-user-value][name]");
@@ -5057,6 +5173,7 @@ function bootstrapUI() {
   initHeadersEditors(document);
   initWgEndpointEditors(document);
   initMixedUsers(document);
+  initGatewayRows(document);
   initPasswordToggles(document);
   initPageTabs();
   initSocksEditor();

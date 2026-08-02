@@ -2239,3 +2239,23 @@ nav a .nav-badge[data-kind="changed"] + .nav-badge[data-kind="error"] {
 
 .command-close:hover,
 .command-close:focus-visible { color: var(--ink); }
+
+.gw-block { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; background: var(--panel-2, transparent); }
+.gw-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.gw-head b { font-size: 15px; }
+.gw-head span { font-size: 12px; opacity: .7; }
+.gw-rows { display: flex; flex-direction: column; gap: 8px; }
+.gw-rows:empty { display: none; }
+.gw-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.gw-row > button { flex: 0 0 auto; align-self: end; }
+.gw-block > .grid { margin-bottom: 12px; grid-template-columns: minmax(0, 1fr); }
+.gw-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; flex: 1; min-width: 0; }
+.gw-fields label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.gw-fields label span { font-size: 11px; opacity: .7; }
+.gw-actions { margin-top: 10px; }
+@media (max-width: 720px) {
+  .gw-fields { grid-template-columns: minmax(0, 1fr); }
+  /* глобальное button{width:100%} ниже 560px распирает flex-строку */
+  .gw-row { flex-direction: column; align-items: stretch; }
+  .gw-block { padding: 12px; }
+}

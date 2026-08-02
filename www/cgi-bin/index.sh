@@ -819,12 +819,11 @@ EOF
   cat <<'EOF'
 <div class="note-list">
   <div><b>&lt;iface&gt;_GATEWAY</b><span>Подменяет шлюз интерфейса. По умолчанию он вычисляется как «адрес сети + 1» (для <code>192.168.5.0/24</code> это <code>192.168.5.1</code>); если реальный шлюз другой, выход через интерфейс не заработает. Адрес обязан лежать в подсети интерфейса: иначе он игнорируется, и берётся вычисленный — связность контейнера не теряется.</span></div>
-  <div><b>&lt;iface&gt;_GATEWAY1, _GATEWAY2, …</b><span>Формат <code>ip#имя</code>. Каждый добавляет в mihomo отдельный выход с этим именем: своя метка, своя таблица маршрутизации (600+), трафик уходит через указанный шлюз на том же интерфейсе — так соседний контейнер становится проксивыходом. Без <code>#имя</code> выход назовётся <code>&lt;iface&gt;_GATEWAYn</code>. Адрес вне подсети интерфейса отбрасывается.</span></div>
+  <div><b>&lt;iface&gt;_GATEWAY1, _GATEWAY2, …</b><span>Доп. выход через тот же интерфейс: своя метка, своя таблица маршрутизации (600+), трафик уходит через указанный шлюз — так соседний контейнер становится проксивыходом. В env пишется как <code>ip#имя</code>, ниже это два поля. Без имени выход назовётся <code>&lt;iface&gt;_GATEWAYn</code>. Адрес вне подсети интерфейса отбрасывается.</span></div>
   <div><b>Регистр имени</b><span>Ищется и точное имя интерфейса, и версия в верхнем регистре со заменой спецсимволов: для <code>eth1</code> подойдут <code>eth1_GATEWAY</code> и <code>ETH1_GATEWAY</code>, для <code>veth-lan</code> — <code>VETH_LAN_GATEWAY</code>.</span></div>
 </div>
 EOF
   veth_ip=$(ip_bin) || veth_ip=""
-  echo '<div class="grid">'
   veth_i=0
   for veth_if in $([ -n "$veth_ip" ] && "$veth_ip" -o link show up 2>/dev/null | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
     veth_net="$("$veth_ip" route list dev "$veth_if" proto kernel scope link 2>/dev/null | awk '{print $1; exit}')"
@@ -844,10 +843,19 @@ EOF
     else
       veth_role="прокси-выход"
     fi
-    field "${veth_env}_GATEWAY" "$veth_if" "Сеть <code>${veth_net:-неизвестна}</code>, вычисленный шлюз <code>${veth_auto:-нет}</code>. Роль: $veth_role." "$veth_auto" text ""
+    printf '<div class="gw-block"><div class="gw-head"><b>%s</b><span>%s, вычисленный шлюз <code>%s</code> · %s</span></div>'       "$(printf '%s' "$veth_if" | h)" "${veth_net:-сеть неизвестна}" "${veth_auto:-нет}" "$veth_role"
+    echo '<div class="grid">'
+    field "${veth_env}_GATEWAY" "Шлюз по умолчанию" "Подменяет вычисленный шлюз. Адрес обязан лежать в подсети интерфейса." "$veth_auto" text ""
+    echo '</div>'
+    printf '<div class="gw-rows" data-iface="%s" data-iface-env="%s" data-gw-placeholder="%s" data-max-index="99">' "$(printf '%s' "$veth_if" | h)" "$veth_env" "$(printf '%s' "${veth_auto:-10.0.0.5}" | h)"
     for veth_gw in $(printenv | cut -d= -f1 | grep -E "^${veth_env}_GATEWAY[0-9]+$" | sort -V); do
-      field "$veth_gw" "$veth_gw" "Доп. выход через этот интерфейс, формат <code>ip#имя</code>." "10.0.0.5#сосед" text ""
+      veth_val="$(env_raw "$veth_gw")"
+      veth_gw_ip="${veth_val%%#*}"
+      veth_gw_nm=""
+      case "$veth_val" in *#*) veth_gw_nm="${veth_val#*#}" ;; esac
+      printf '<div class="env-row gw-row" data-index="%s"><input type="hidden" name="%s" value="%s" data-gw-value><div class="gw-fields"><label><span>IP шлюза</span><input class="gw-ip" value="%s" placeholder="%s"></label><label><span>Имя выхода в mihomo</span><input class="gw-name" value="%s" placeholder="сосед-vpn"></label></div><button type="button" onclick="removeGatewayRow(this)">Удалить</button></div>'         "$(printf '%s' "$veth_gw" | sed "s/^${veth_env}_GATEWAY//")"         "$veth_gw" "$(printf '%s' "$veth_val" | h)"         "$(printf '%s' "$veth_gw_ip" | h)" "${veth_auto:-10.0.0.5}"         "$(printf '%s' "$veth_gw_nm" | h)"
     done
+    printf '</div><div class="gw-actions"><button type="button" onclick="addGatewayRow(this)">Добавить шлюз</button></div></div>'
     veth_i=$((veth_i + 1))
   done
   if [ "$veth_i" -eq 0 ]; then
@@ -857,7 +865,6 @@ EOF
       echo '<div class="empty">Интерфейсы с MAC-адресом не найдены.</div>'
     fi
   fi
-  echo '</div>'
   section_end
 
   section_start_tab mounted "Mounted providers" "Файлы, которые entrypoint читает из каталогов: AWG configs, TrustTunnel configs, OpenVPN configs, proxies_mount."
