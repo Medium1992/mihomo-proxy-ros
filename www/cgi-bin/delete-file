@@ -1,17 +1,42 @@
 #!/bin/sh
+# POST body: type=<dir>&file=<name>
+# Раньше принимал GET — любой сторонний сайт мог удалить конфиг простым
+# <img src=...>. Теперь только POST + csrf-guard.
 echo "Content-type: text/plain"
 echo ""
 
+. /www/cgi-bin/_guard.sh
+csrf_guard_text
+
 CONFIG_DIR="${CONFIG_DIR:-/root/.config/mihomo}"
 
-qs_get() {
-  printf '%s' "$QUERY_STRING" | tr '&' '\n' | awk -F= -v k="$1" '$1==k{print $2; exit}'
+if [ "$REQUEST_METHOD" != "POST" ]; then
+  echo "Error: POST required"
+  exit 1
+fi
+
+case "$CONTENT_LENGTH" in
+  ''|*[!0-9]*) CONTENT_LENGTH=0 ;;
+esac
+if [ "$CONTENT_LENGTH" -gt 8192 ]; then
+  echo "Error: request body too large"
+  exit 1
+fi
+body=$(head -c "$CONTENT_LENGTH")
+
+field() {
+  printf '%s' "$body" | awk -F'&' -v key="$1" '{
+    for(i=1;i<=NF;i++) {
+      n=length(key)+1
+      if (substr($i,1,n) == key"=") { print substr($i,n+1); exit }
+    }
+  }'
 }
 urldecode() {
   printf '%s\n' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\\x\1/g' | while IFS= read -r line; do printf '%b' "$line"; done
 }
 
-dir_type=$(qs_get type)
+dir_type=$(field type)
 [ -z "$dir_type" ] && dir_type="ruleset"
 case "$dir_type" in
   ruleset) TARGET_DIR="$CONFIG_DIR/rule_set_list" ;;
@@ -24,7 +49,7 @@ case "$dir_type" in
   *) echo "Error: invalid type"; exit 1 ;;
 esac
 
-file=$(urldecode "$(qs_get file)")
+file=$(urldecode "$(field file)")
 base=$(basename "$file")
 if [ "$base" != "$file" ] || [ -z "$base" ]; then
   echo "Error: invalid filename"

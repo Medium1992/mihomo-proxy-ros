@@ -2,7 +2,9 @@ const containerName = "mihomo-proxy-ros";
 const defaultEnvListName = "MihomoProxyRoS";
 
 function mtEscape(value) {
-  let s = String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  // `$` в двойных кавычках RouterOS раскрывает как подстановку переменной
+  // ($1 в md5-хеше пароля превратился бы в пустоту) — экранируем как \$.
+  let s = String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\$/g, "\\$");
   // Winbox/SSH-терминал MikroTik режет не-ASCII (особенно supplementary-plane:
   // флаги 🇷🇺 = два U+1F1xx). RouterOS строки поддерживают hex-escape \HH
   // (без `x`, в отличие от C/Python — `\xHH` парсер отвергает как "expected
@@ -24,10 +26,81 @@ function originalKey(name) { return "mihomo-original:" + name; }
 function originalPresentKey(name) { return "mihomo-original-present:" + name; }
 function pageKey(name) { return "mihomo-page:" + name; }
 
+// --- Хранилище состояния панели ---
+// Значения env — это секреты: LINK/SUB_LINK с UUID и паролями, SUB_LINK_HEADERS
+// с токенами, UI_SECRET, пароли SOCKS/MIXED_IN_USER, а в mihomo-tool:* оседают
+// сконвертированные подписки. localStorage лежит в профиле браузера открытым
+// текстом и переживает закрытие вкладки, поэтому такие ключи туда больше не
+// пишутся: они живут в памяти вкладки, а персистентность даёт серверный
+// черновик /cgi-bin/draft (tmpfs контейнера, закрыт basic auth).
+// На диск браузера кладём только не-секретный UI-стейт.
+const DISK_KEYS_RE = /^mihomo-(theme$|tab:|command-env-list$|bc-form:|bc1-form:|bdc-form:|bc-domains$|bc1-domains$|bdc-domains$|bc-job$|bc1-job$|bdc-job$)/;
+let draftSyncTimer = null;
+let draftLoadInFlight = false;
+const Store = {
+  mem: new Map(),
+  migrated: false,
+
+  // Разовый перенос: старые версии писали секреты на диск. Поднимаем их в
+  // память, чтобы ничего не потерять, и вычищаем с диска.
+  init() {
+    let ls;
+    try { ls = window.localStorage; } catch (e) { return; }
+    const evict = [];
+    for (let i = 0; i < ls.length; i++) {
+      const k = ls.key(i);
+      if (!k || !k.startsWith("mihomo-") || DISK_KEYS_RE.test(k)) continue;
+      this.mem.set(k, ls.getItem(k));
+      evict.push(k);
+    }
+    evict.forEach((k) => { try { ls.removeItem(k); } catch (e) {} });
+    this.migrated = evict.length > 0;
+  },
+
+  get(k) {
+    if (this.mem.has(k)) return this.mem.get(k);
+    try { return window.localStorage.getItem(k); } catch (e) { return null; }
+  },
+
+  set(k, v) {
+    const value = String(v);
+    if (DISK_KEYS_RE.test(k)) {
+      try { window.localStorage.setItem(k, value); } catch (e) { this.mem.set(k, value); }
+    } else {
+      this.mem.set(k, value);
+    }
+    // Раньше синк вызывался вручную в отдельных местах, и часть setItem'ов
+    // оставалась только в localStorage. Теперь хранилище невечное (память),
+    // поэтому любой записанный ключ обязан уехать на сервер сам.
+    if (!draftLoadInFlight && isPersistedDraftKey(k)) draftSaveDebounced();
+  },
+
+  remove(k) {
+    this.mem.delete(k);
+    try { window.localStorage.removeItem(k); } catch (e) {}
+    if (!draftLoadInFlight && isPersistedDraftKey(k)) draftSaveDebounced();
+  },
+
+  keys() {
+    const out = [];
+    const seen = new Set();
+    this.mem.forEach((_, k) => { seen.add(k); out.push(k); });
+    try {
+      const ls = window.localStorage;
+      for (let i = 0; i < ls.length; i++) {
+        const k = ls.key(i);
+        if (k && !seen.has(k)) { seen.add(k); out.push(k); }
+      }
+    } catch (e) {}
+    return out;
+  }
+};
+Store.init();
+
 // --- Серверная персистентность черновика ---
-// Зеркалит localStorage в /dev/shm/mihomo-ui/draft.json на сервере. Нужно
-// для случая когда браузер чистит localStorage на закрытии (Chrome/Edge
-// privacy option, аддоны и т.п.). Сбрасывается рестартом контейнера.
+// Зеркалит состояние панели в /dev/shm/mihomo-ui/draft.json на сервере.
+// Это единственное место, где черновик переживает перезагрузку страницы,
+// закрытие браузера и чистый профиль. Сбрасывается рестартом контейнера.
 // Регекс матчит ключи которые надо собирать в server-side draft и которые
 // сигнализируют «локальные данные свежие» в draftLoadFromServer. Кроме того
 // в whitelist'е ниже есть несколько фиксированных ключей без двоеточия
@@ -36,19 +109,16 @@ function pageKey(name) { return "mihomo-page:" + name; }
 // иначе после browser-clear localStorage бейджи валидации остаются пустыми
 // пока пользователь не зайдёт на проблемную страницу и не запустит валидатор.
 const DRAFT_KEYS_RE = /^mihomo-(env|original|original-present|page|tab|theme|command-env-list|invalid|bc-form|bc1-form|bdc-form|tool):/;
-let draftSyncTimer = null;
-let draftLoadInFlight = false;
 function draftCollect() {
   const out = {};
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
+  for (const k of Store.keys()) {
     if (!k) continue;
     if (k === "mihomo-theme" || k === "mihomo-command-env-list" ||
         k === "mihomo-bc-domains"  || k === "mihomo-bc-job" ||
         k === "mihomo-bc1-domains" || k === "mihomo-bc1-job" ||
         k === "mihomo-bdc-domains" || k === "mihomo-bdc-job" ||
-        DRAFT_KEYS_RE.test(k)) {
-      out[k] = localStorage.getItem(k);
+        isPersistedDraftKey(k)) {
+      out[k] = Store.get(k);
     }
   }
   return out;
@@ -67,6 +137,10 @@ function draftSaveDebounced() {
 function isPersistedDraftKey(k) {
   if (!k) return false;
   if (DRAFT_KEYS_RE.test(k)) return true;
+  // Сгенерированные команды RouterOS содержат значения env в открытом виде,
+  // поэтому на диск браузера они не идут — но переживать переход между
+  // страницами должны, значит едут в серверный черновик.
+  if (k.startsWith("mihomo-last-commands-")) return true;
   // Фиксированные ключи (без двоеточия) — должны учитываться так же.
   if (k === "mihomo-bc-domains"  || k === "mihomo-bc-job")  return true;
   if (k === "mihomo-bc1-domains" || k === "mihomo-bc1-job") return true;
@@ -75,14 +149,15 @@ function isPersistedDraftKey(k) {
 }
 
 function draftLoadFromServer() {
-  // Если в localStorage уже есть свои данные — берём локальный (он свежее).
-  // Иначе подтягиваем с сервера и наполняем localStorage до того как
-  // wireFieldEvents начнёт читать. БЕЗ этой проверки fresh-bc-domains
-  // (введённые юзером и сохранённые на input) затирались бы старым серверным
-  // снапшотом потому что DRAFT_KEYS_RE их не матчил.
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (isPersistedDraftKey(k)) return Promise.resolve(false);
+  // Черновик тянем с сервера ВСЕГДА: секретные ключи живут в памяти вкладки и
+  // умирают на каждом переходе между страницами, так что сервер — единственный
+  // носитель состояния. Раньше загрузка пропускалась при непустом localStorage.
+  // Исключение — разовая миграция со старой версии: поднятые с диска данные
+  // свежее серверных, их наоборот отправляем наверх.
+  if (Store.migrated) {
+    Store.migrated = false;
+    draftSaveDebounced();
+    return Promise.resolve(false);
   }
   draftLoadInFlight = true;
   return fetch("/cgi-bin/draft")
@@ -92,7 +167,7 @@ function draftLoadFromServer() {
       let n = 0;
       for (const k in data) {
         if (typeof data[k] === "string") {
-          localStorage.setItem(k, data[k]);
+          Store.set(k, data[k]);
           n++;
         }
       }
@@ -101,6 +176,41 @@ function draftLoadFromServer() {
     .catch(() => false)
     .finally(() => { draftLoadInFlight = false; });
 }
+// Дебаунс в 500 мс успевает не всегда: пользователь может уйти на другую
+// страницу панели или закрыть вкладку сразу после ввода, а память вкладки
+// умирает вместе с документом. Поэтому досылаем черновик принудительно.
+function draftFlushNow() {
+  if (!draftSyncTimer) return Promise.resolve();
+  clearTimeout(draftSyncTimer);
+  draftSyncTimer = null;
+  const body = JSON.stringify(draftCollect());
+  return fetch("/cgi-bin/draft", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+    keepalive: true
+  }).catch(() => {});
+}
+
+// Переход по внутренней ссылке ждёт отправки черновика: иначе новая страница
+// успела бы прочитать /cgi-bin/draft раньше, чем долетел POST со старой.
+// Закрытие вкладки и уход в фон закрывает draftFlushSync (beforeunload /
+// visibilitychange), он объявлен ниже.
+function initDraftNavigationGuard() {
+  document.addEventListener("click", (e) => {
+    if (!draftSyncTimer || e.defaultPrevented || e.button !== 0) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const a = e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+    let url;
+    try { url = new URL(a.getAttribute("href"), location.href); } catch (err) { return; }
+    if (url.origin !== location.origin) return;
+    if (url.pathname === location.pathname && url.search === location.search) return;
+    e.preventDefault();
+    draftFlushNow().then(() => { location.href = url.href; });
+  }, true);
+}
+
 function draftDeleteOnServer() {
   // resetUiDraft / resetCurrentPageDraft не должны оставлять серверный
   // снапшот — иначе после reload черновик «возродится» с сервера.
@@ -133,15 +243,167 @@ function checkerDomainsValue(id) {
     .join("\n");
 }
 
+// --- Скрытые значения секретов ---
+// Секретные env (LINK*, SUB_LINK*, *_HEADERS, SOCKS*, MIXED_IN_USER*,
+// UI_SECRET) сервер в HTML не печатает: в поле пусто + data-secret-hidden.
+// Пока поле не раскрыто, старое значение нам неизвестно — вместо него
+// в original кладётся этот маркер. Он никогда не равен введённому значению,
+// поэтому команда `envs/set` формируется корректно и без знания старого.
+const SECRET_UNKNOWN = "\u0000secret-unknown";
+
+function isSecretHidden(el) {
+  return !!(el && el.dataset && el.dataset.secretHidden === "1");
+}
+
 function rememberField(el) {
   if (!el.name) return;
-  if (localStorage.getItem(originalKey(el.name)) === null) {
-    localStorage.setItem(originalKey(el.name), fieldValue(el));
-    localStorage.setItem(originalPresentKey(el.name), "0");
+  if (isSecretHidden(el)) {
+    // Поле ещё замаскировано. Пустое — пользователь ничего не вводил,
+    // значит и менять нечего: не затираем серверное значение.
+    if (fieldValue(el) === "") return;
+    // Первый ввод в скрытое поле: старое значение так и осталось неизвестным.
+    Store.set(originalKey(el.name), SECRET_UNKNOWN);
+    Store.set(originalPresentKey(el.name), "1");
+    secretMarkRevealed(el);
   }
-  localStorage.setItem(envKey(el.name), fieldValue(el));
-  localStorage.setItem(pageKey(el.name), location.pathname);
+  if (Store.get(originalKey(el.name)) === null) {
+    Store.set(originalKey(el.name), fieldValue(el));
+    Store.set(originalPresentKey(el.name), "0");
+  }
+  Store.set(envKey(el.name), fieldValue(el));
+  Store.set(pageKey(el.name), location.pathname);
   draftSaveDebounced();
+}
+
+function secretInputByName(name) {
+  return document.querySelector(`[name="${cssEscape(name)}"][data-secret]`);
+}
+
+function cssEscape(value) {
+  if (window.CSS && CSS.escape) return CSS.escape(value);
+  return String(value).replace(/["\\]/g, "\\$&");
+}
+
+// Снимает маску с поля: убирает placeholder-«задано» и кнопку «Показать».
+function secretMarkRevealed(el) {
+  if (!el) return;
+  delete el.dataset.secretHidden;
+  el.removeAttribute("placeholder");
+  const btn = document.querySelector(`.secret-reveal[data-secret-for="${cssEscape(el.name)}"]`);
+  if (btn) btn.remove();
+}
+
+// Запрос значений с сервера. Возвращает {NAME: value}. Секреты отдаются
+// только по явному reveal=1 — обычный env-state их не печатает, чтобы они
+// не оседали в ответах, которые можно закэшировать.
+async function fetchSecretValues(names) {
+  if (!names || !names.length) return {};
+  const res = await fetch("/cgi-bin/env-state?reveal=1", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain; charset=UTF-8" },
+    body: names.join("\n")
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  const env = (data && data.env) || {};
+  const out = {};
+  names.forEach((n) => {
+    const item = env[n];
+    if (item && item.present) out[n] = String(item.value || "");
+  });
+  return out;
+}
+
+// Раскрыть одно поле по кнопке «Показать» или по клику внутрь составной строки.
+async function revealSecret(node) {
+  const input = node && node.dataset && node.dataset.secretFor
+    ? secretInputByName(node.dataset.secretFor)
+    : node;
+  if (!isSecretHidden(input) || input.dataset.secretBusy === "1") return;
+  input.dataset.secretBusy = "1";
+  try {
+    const values = await fetchSecretValues([input.name]);
+    const value = values[input.name];
+    if (value === undefined) throw new Error("значение не найдено");
+    input.value = value;
+    secretMarkRevealed(input);
+    Store.set(originalKey(input.name), value);
+    Store.set(originalPresentKey(input.name), "1");
+    if (Store.get(envKey(input.name)) === null) Store.set(envKey(input.name), value);
+    hydrateAfterReveal(input);
+    if (typeof refreshAllBadges === "function") refreshAllBadges();
+  } catch (e) {
+    console.warn("reveal failed:", e);
+  } finally {
+    delete input.dataset.secretBusy;
+  }
+}
+
+// Составные редакторы (SOCKS, mixed-user, headers) держат значение в скрытом
+// input и раскладывают его по под-полям. После раскрытия раскладываем заново.
+function hydrateAfterReveal(input) {
+  const socksRow = input.closest ? input.closest(".socks-row") : null;
+  if (socksRow) {
+    const map = {};
+    input.value.split("#").forEach((pair) => {
+      if (!pair) return;
+      const pos = pair.indexOf("=");
+      if (pos < 0) return;
+      map[pair.slice(0, pos)] = pair.slice(pos + 1);
+    });
+    const set = (sel, v) => { const el = socksRow.querySelector(sel); if (el) el.value = v || ""; };
+    set(".socks-server", map.server);
+    set(".socks-port", map.port);
+    set(".socks-username", map.username);
+    set(".socks-password", map.password);
+    set(".socks-fingerprint", map.fingerprint);
+    const ipv = socksRow.querySelector(".socks-ip-version");
+    if (ipv) ipv.value = map["ip-version"] || "";
+    const check = (sel, v) => { const el = socksRow.querySelector(sel); if (el) el.checked = v; };
+    check(".socks-tls", map.tls === "true");
+    check(".socks-skip-cert-verify", map["skip-cert-verify"] === "true");
+    check(".socks-udp", map.udp !== "false");
+    return;
+  }
+  if (input.hasAttribute("data-mixed-user-value")) {
+    const row = input.closest(".mixed-user-row");
+    if (!row) return;
+    const parts = splitMixedUserValue(input.value);
+    const u = row.querySelector(".mixed-user-name");
+    const p = row.querySelector(".mixed-user-pass");
+    if (u) u.value = parts.username || "";
+    if (p) p.value = parts.password || "";
+    return;
+  }
+  if (input.classList.contains("sub-link-headers-value")) {
+    const editor = input.closest(".headers-editor");
+    if (!editor) return;
+    const rows = editor.querySelector(".headers-rows");
+    if (rows) rows.innerHTML = "";
+    const current = input.value.trim();
+    if (current) {
+      current.split("#").forEach((item) => {
+        const pair = splitHeaderItem(item);
+        addHeadersRow(editor, pair.key, pair.value);
+      });
+    } else {
+      addHeadersRow(editor, "", "");
+    }
+  }
+}
+
+// Составную строку нельзя редактировать в замаскированном виде: сериализатор
+// собрал бы env из пустых под-полей и затёр реальное значение. Поэтому первый
+// же клик внутрь такой строки раскрывает её автоматически.
+function initSecretAutoReveal() {
+  document.addEventListener("focusin", (e) => {
+    const scope = e.target.closest
+      ? e.target.closest(".socks-row, .mixed-user-row, .headers-editor")
+      : null;
+    if (!scope) return;
+    const hidden = scope.querySelector('[data-secret-hidden="1"]');
+    if (hidden) revealSecret(hidden);
+  });
 }
 
 function fieldStatusText(el) {
@@ -158,7 +420,7 @@ function serverHasEnv(el, fromDraft, serverValue) {
 }
 
 function originalWasPresent(name) {
-  const flag = localStorage.getItem(originalPresentKey(name));
+  const flag = Store.get(originalPresentKey(name));
   if (flag !== null) return flag === "1";
   return false;
 }
@@ -167,32 +429,62 @@ function wireFieldEvents(root) {
   // `el.dataset.fromDraft="true"` is set by restoreMissingIndexedRows so we
   // don't overwrite the stored original (which represents what the SERVER
   // actually had) with a user-typed draft value.
+  const revealQueue = [];
   root.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
+    if (isSecretHidden(el)) {
+      // Сервер значение не прислал. Оно есть — просто скрыто.
+      Store.set(originalPresentKey(el.name), "1");
+      Store.set(pageKey(el.name), location.pathname);
+      const draftValue = Store.get(envKey(el.name));
+      if (draftValue !== null && draftValue !== "") {
+        // В черновике лежит своя версия — показываем её, а настоящее значение
+        // догружаем пакетом, чтобы дифф «изменено/не изменено» был точным.
+        setFieldValue(el, draftValue);
+        secretMarkRevealed(el);
+        if (Store.get(originalKey(el.name)) === null) Store.set(originalKey(el.name), SECRET_UNKNOWN);
+        revealQueue.push(el.name);
+        hydrateAfterReveal(el);
+      }
+      el.addEventListener("input", () => rememberField(el));
+      el.addEventListener("change", () => rememberField(el));
+      return;
+    }
     const serverValue = fieldValue(el);
     const fromDraft = el.dataset.fromDraft === "true";
     const presentOnServer = serverHasEnv(el, fromDraft, serverValue);
-    const storedOriginal = localStorage.getItem(originalKey(el.name));
+    const storedOriginal = Store.get(originalKey(el.name));
     if (storedOriginal === null) {
       // First time we see this name. For draft-restored inputs the server
       // never had this env, so original should remain "" (empty).
-      localStorage.setItem(originalKey(el.name), fromDraft ? "" : serverValue);
-      if (!fromDraft) localStorage.setItem(envKey(el.name), serverValue);
+      Store.set(originalKey(el.name), fromDraft ? "" : serverValue);
+      if (!fromDraft) Store.set(envKey(el.name), serverValue);
     } else if (!fromDraft && serverValue !== "" && storedOriginal !== serverValue) {
       // Server rendered a NEW value that differs from what we'd seen before.
       // Update original; envKey will be re-saved from server unless user
       // had a draft.
-      localStorage.setItem(originalKey(el.name), serverValue);
-      if ((localStorage.getItem(envKey(el.name)) || "") === storedOriginal) {
-        localStorage.setItem(envKey(el.name), serverValue);
+      Store.set(originalKey(el.name), serverValue);
+      if ((Store.get(envKey(el.name)) || "") === storedOriginal) {
+        Store.set(envKey(el.name), serverValue);
       }
     }
-    localStorage.setItem(originalPresentKey(el.name), presentOnServer ? "1" : "0");
-    localStorage.setItem(pageKey(el.name), location.pathname);
-    const saved = localStorage.getItem(envKey(el.name));
+    Store.set(originalPresentKey(el.name), presentOnServer ? "1" : "0");
+    Store.set(pageKey(el.name), location.pathname);
+    const saved = Store.get(envKey(el.name));
     if (saved !== null) setFieldValue(el, saved);
     el.addEventListener("input", () => rememberField(el));
     el.addEventListener("change", () => rememberField(el));
   });
+  // Одним запросом уточняем настоящие значения тех секретов, по которым в
+  // черновике уже есть правка: без этого дифф показывал бы «изменено» даже
+  // когда пользователь вернул исходное значение.
+  if (revealQueue.length) {
+    fetchSecretValues(revealQueue)
+      .then((values) => {
+        Object.keys(values).forEach((name) => Store.set(originalKey(name), values[name]));
+        if (typeof refreshAllBadges === "function") refreshAllBadges();
+      })
+      .catch((e) => console.warn("secret originals refresh failed:", e));
+  }
 }
 
 function normalizeFieldMeta(root) {
@@ -239,12 +531,11 @@ function currentCommandNames() {
   document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]").forEach((el) => {
     if (el.name) names.add(el.name);
   });
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
+  for (const key of Store.keys()) {
     if (!key || !key.startsWith("mihomo-env:")) continue;
     const name = key.slice("mihomo-env:".length);
-    const value = localStorage.getItem(key) || "";
-    const original = localStorage.getItem(originalKey(name)) || "";
+    const value = Store.get(key) || "";
+    const original = Store.get(originalKey(name)) || "";
     const present = originalWasPresent(name);
     if (value !== original || (present && value === "") || (!present && value !== "" && value !== defaultEnvValue(name))) {
       names.add(name);
@@ -268,8 +559,15 @@ async function refreshOriginalsFromServer(names) {
       if (!Object.prototype.hasOwnProperty.call(env, name)) return;
       const item = env[name] || {};
       const present = !!item.present;
-      localStorage.setItem(originalPresentKey(name), present ? "1" : "0");
-      if (present) localStorage.setItem(originalKey(name), String(item.value || ""));
+      Store.set(originalPresentKey(name), present ? "1" : "0");
+      if (!present) return;
+      // Секрет без reveal=1 приходит без значения. Ставить "" нельзя — дифф
+      // решил бы, что env опустел, и сгенерировал бы envs/remove.
+      if (item.secret && item.value === undefined) {
+        if (Store.get(originalKey(name)) === null) Store.set(originalKey(name), SECRET_UNKNOWN);
+        return;
+      }
+      Store.set(originalKey(name), String(item.value || ""));
     });
     return true;
   } catch (e) {
@@ -285,8 +583,11 @@ function collectPageCommands() {
   fields.forEach((el) => {
     if (seen.has(el.name)) return;
     seen.add(el.name);
+    // Замаскированный секрет: значение на сервере есть, в поле пусто, потому
+    // что его не раскрывали. Пустое поле здесь НЕ означает «удалить env».
+    if (isSecretHidden(el)) return;
     rememberField(el);
-    const original = localStorage.getItem(originalKey(el.name)) || "";
+    const original = Store.get(originalKey(el.name)) || "";
     const originalPresent = originalWasPresent(el.name);
     const value = fieldValue(el);
     const cmd = commandFor(el.name, original, value, originalPresent);
@@ -298,14 +599,13 @@ function collectPageCommands() {
 function collectAllCommands() {
   const commands = [];
   const names = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
+  for (const key of Store.keys()) {
     if (key && key.startsWith("mihomo-env:")) names.push(key.slice("mihomo-env:".length));
   }
   names.sort().forEach((name) => {
-    const original = localStorage.getItem(originalKey(name)) || "";
+    const original = Store.get(originalKey(name)) || "";
     const originalPresent = originalWasPresent(name);
-    const value = localStorage.getItem(envKey(name)) || "";
+    const value = Store.get(envKey(name)) || "";
     const cmd = commandFor(name, original, value, originalPresent);
     if (cmd) commands.push(cmd);
   });
@@ -357,7 +657,7 @@ async function generateCommands() {
   syncDnsPolicy();
   syncWgDst();
   syncMixedUsers();
-  localStorage.setItem("mihomo-command-env-list", getEnvListName());
+  Store.set("mihomo-command-env-list", getEnvListName());
   await refreshOriginalsFromServer(currentCommandNames());
   const pageCommands = collectPageCommands();
   const allCommands = collectAllCommands();
@@ -365,9 +665,9 @@ async function generateCommands() {
   const allText = formatCommands("Суммарные команды для всех измененных env", allCommands);
   document.getElementById("commandsText").value = pageText;
   document.getElementById("commandsAllText").value = allText;
-  localStorage.setItem("mihomo-last-commands-page", pageText);
-  localStorage.setItem("mihomo-last-commands-all", allText);
-  localStorage.setItem("mihomo-last-commands-at", new Date().toISOString());
+  Store.set("mihomo-last-commands-page", pageText);
+  Store.set("mihomo-last-commands-all", allText);
+  Store.set("mihomo-last-commands-at", new Date().toISOString());
   document.getElementById("commands").hidden = false;
   document.getElementById("commands").scrollIntoView({behavior: "smooth", block: "start"});
 }
@@ -381,8 +681,8 @@ function restoreLastCommands() {
   const pageEl = document.getElementById("commandsText");
   const allEl = document.getElementById("commandsAllText");
   if (!panel || !pageEl || !allEl) return;
-  const pageText = localStorage.getItem("mihomo-last-commands-page") || "";
-  const allText = localStorage.getItem("mihomo-last-commands-all") || "";
+  const pageText = Store.get("mihomo-last-commands-page") || "";
+  const allText = Store.get("mihomo-last-commands-all") || "";
   if (!pageText && !allText) return;
   pageEl.value = pageText;
   allEl.value = allText;
@@ -425,7 +725,8 @@ function initToolsPage() {
     ["toolX2mSub", () => toolX2mBuild(true)],
     ["toolX2mEndpoint", () => toolX2mBuild(true)],
     ["toolX2mFormat", () => toolX2mBuild(true)],
-    ["toolX2mResolve", () => toolX2mBuild(true)]
+    ["toolX2mResolve", () => toolX2mBuild(true)],
+    ["toolAuthUser", () => {}]
   ].forEach(([id, fn]) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -450,6 +751,67 @@ function initToolsPage() {
   toolVanyaRestore();
   toolHttpInit();
   toolX2mInit();
+  const authPass = document.getElementById("toolAuthPass");
+  if (authPass) {
+    authPass.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); toolAuthHash(); }
+    });
+  }
+}
+
+// --- Инструменты → Пароль вебки ---
+// Пароль уходит на /cgi-bin/gen-hash сырым телом и нигде не сохраняется:
+// ни в env, ни в черновике, ни в localStorage (см. toolSaveInput).
+async function toolAuthHash() {
+  const passEl = document.getElementById("toolAuthPass");
+  const userEl = document.getElementById("toolAuthUser");
+  const outEl = document.getElementById("toolAuthHashOut");
+  const cmdEl = document.getElementById("toolAuthCommands");
+  const pass = passEl ? passEl.value : "";
+  const user = ((userEl ? userEl.value : "") || "admin").trim();
+  if (!pass) {
+    toolSetStatus("toolAuthStatus", "Введите пароль.", false);
+    return;
+  }
+  toolSetStatus("toolAuthStatus", "Считаю хеш...", true);
+  try {
+    const res = await fetch("/cgi-bin/gen-hash", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain; charset=UTF-8" },
+      body: pass
+    });
+    const data = await res.json();
+    if (!data || !data.ok) throw new Error((data && data.error) || "HTTP " + res.status);
+    if (outEl) outEl.value = data.hash;
+    if (cmdEl) cmdEl.value = await toolAuthBuildCommands(user, data.hash);
+    toolSetStatus("toolAuthStatus", "Готово. Скопируйте команды и выполните их в терминале RouterOS.", true);
+  } catch (e) {
+    if (outEl) outEl.value = "";
+    if (cmdEl) cmdEl.value = "";
+    toolSetStatus("toolAuthStatus", "Не удалось: " + e.message, false);
+  }
+}
+
+async function toolAuthBuildCommands(user, hash) {
+  // present=true → env уже есть, нужен set; иначе add. Значения хеша сервер
+  // не отдаёт, нам достаточно факта наличия.
+  let present = { BASIC_AUTH_USER: false, BASIC_AUTH_HASH: false };
+  try {
+    const res = await fetch("/cgi-bin/env-state", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain; charset=UTF-8" },
+      body: "BASIC_AUTH_USER\nBASIC_AUTH_HASH"
+    });
+    const data = await res.json();
+    const env = (data && data.env) || {};
+    present.BASIC_AUTH_USER = !!(env.BASIC_AUTH_USER && env.BASIC_AUTH_USER.present);
+    present.BASIC_AUTH_HASH = !!(env.BASIC_AUTH_HASH && env.BASIC_AUTH_HASH.present);
+  } catch (e) { /* нет ответа — считаем что env ещё нет, add отработает */ }
+  const list = getEnvListName();
+  const line = (key, value) => present[key]
+    ? `/container/envs/set [find list="${list}" key="${key}"] value="${mtEscape(value)}"`
+    : `/container/envs/add list="${list}" key="${key}" value="${mtEscape(value)}"`;
+  return formatCommands("Пароль веб-панели", [line("BASIC_AUTH_USER", user), line("BASIC_AUTH_HASH", hash)]);
 }
 
 function switchToolPane(id) {
@@ -477,20 +839,22 @@ function toolStorageKey(id) {
 
 function toolSaveInput(el) {
   if (!el || !el.id || el.readOnly) return;
+  // Пароли не персистим никогда — ни в память, ни на диск, ни в черновик.
+  if (el.type === "password") return;
   try {
-    localStorage.setItem(toolStorageKey(el.id), el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value);
+    Store.set(toolStorageKey(el.id), el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value);
     draftSaveDebounced();
   } catch (e) {}
 }
 
 function toolRestoreInputs() {
   document.querySelectorAll(".tool-pane input[id], .tool-pane textarea[id], .tool-pane select[id]").forEach((el) => {
-    if (el.readOnly) return;
+    if (el.readOnly || el.type === "password") return;
     try {
       const key = toolStorageKey(el.id);
-      if (!localStorage.getItem(key)) return;
-      if (el.type === "checkbox") el.checked = localStorage.getItem(key) === "1";
-      else el.value = localStorage.getItem(key);
+      if (!Store.get(key)) return;
+      if (el.type === "checkbox") el.checked = Store.get(key) === "1";
+      else el.value = Store.get(key);
     } catch (e) {}
   });
 }
@@ -498,14 +862,14 @@ function toolRestoreInputs() {
 function toolPersistReadonly(id) {
   const el = document.getElementById(id);
   if (!el) return;
-  try { localStorage.setItem(toolStorageKey(id), el.value); } catch (e) {}
+  try { Store.set(toolStorageKey(id), el.value); } catch (e) {}
 }
 
 function toolRestoreReadonly(id) {
   const el = document.getElementById(id);
   if (!el) return;
   try {
-    const v = localStorage.getItem(toolStorageKey(id));
+    const v = Store.get(toolStorageKey(id));
     if (v !== null) el.value = v;
   } catch (e) {}
 }
@@ -1352,7 +1716,7 @@ function toolXrayConvert() {
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   if (document.body) document.body.dataset.theme = theme;
-  localStorage.setItem("mihomo-theme", theme);
+  Store.set("mihomo-theme", theme);
   const label = document.getElementById("themeLabel");
   if (label) label.textContent = theme === "dark" ? "Светлая" : "Темная";
 }
@@ -1363,7 +1727,7 @@ function toggleTheme() {
 }
 
 function resetUiDraft() {
-  [...Array(localStorage.length)].map((_, i) => localStorage.key(i)).forEach((key) => {
+  Store.keys().forEach((key) => {
     if (!key) return;
     if (key.startsWith("mihomo-env:") ||
         key.startsWith("mihomo-original:") ||
@@ -1371,7 +1735,7 @@ function resetUiDraft() {
         key.startsWith("mihomo-page:") ||
         key.startsWith("mihomo-tab:") ||
         key.startsWith("mihomo-tool:")) {
-      localStorage.removeItem(key);
+      Store.remove(key);
     }
   });
   draftDeleteOnServer();
@@ -1381,19 +1745,19 @@ function resetUiDraft() {
 function resetCurrentPageDraft() {
   const names = new Set([...document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]")].map((el) => el.name));
   const path = location.pathname;
-  [...Array(localStorage.length)].map((_, i) => localStorage.key(i)).forEach((key) => {
+  Store.keys().forEach((key) => {
     if (!key) return;
     if (document.querySelector(".tools-browser") && key.startsWith("mihomo-tool:")) {
-      localStorage.removeItem(key);
+      Store.remove(key);
       return;
     }
-    if (key.startsWith("mihomo-page:") && localStorage.getItem(key) === path) names.add(key.slice("mihomo-page:".length));
+    if (key.startsWith("mihomo-page:") && Store.get(key) === path) names.add(key.slice("mihomo-page:".length));
   });
   names.forEach((name) => {
-    localStorage.removeItem(envKey(name));
-    localStorage.removeItem(originalKey(name));
-    localStorage.removeItem(originalPresentKey(name));
-    localStorage.removeItem(pageKey(name));
+    Store.remove(envKey(name));
+    Store.remove(originalKey(name));
+    Store.remove(originalPresentKey(name));
+    Store.remove(pageKey(name));
   });
   draftSaveDebounced();
   location.reload(true);
@@ -1751,23 +2115,23 @@ function applyIndexedBatch(wrap, moves) {
       // newName. Keep originalKey(oldName) as the server value so commandFor
       // emits `remove`, and force originalKey(newName)="" so commandFor
       // emits `add` (rather than no-op when the value is unchanged).
-      localStorage.setItem(envKey(oldName), "");
+      Store.set(envKey(oldName), "");
       trackRemovedEnv(oldName);
     } else {
       // Pure draft: purge old completely, no command needed.
-      localStorage.removeItem(envKey(oldName));
-      localStorage.removeItem(originalKey(oldName));
-      localStorage.removeItem(originalPresentKey(oldName));
-      localStorage.removeItem(pageKey(oldName));
+      Store.remove(envKey(oldName));
+      Store.remove(originalKey(oldName));
+      Store.remove(originalPresentKey(oldName));
+      Store.remove(pageKey(oldName));
     }
     // Always set originalKey(newName)="" on rename so the new row is treated
     // as an `add` against current value — keeps the "modified" badge and
     // ensures we actually emit a /container/envs/add command. Skip only if
     // the server already exposes newName (collision — leave that record
     // untouched so the rename appears as a `set`).
-    if (localStorage.getItem(originalKey(newName)) === null) {
-      localStorage.setItem(originalKey(newName), "");
-      localStorage.setItem(originalPresentKey(newName), "0");
+    if (Store.get(originalKey(newName)) === null) {
+      Store.set(originalKey(newName), "");
+      Store.set(originalPresentKey(newName), "0");
     }
     // Stale tracker cleanup: if newName previously had a trackRemovedEnv
     // hidden input (because it was removed by a prior op), drop it now
@@ -1781,13 +2145,13 @@ function applyIndexedBatch(wrap, moves) {
     else el.value = value;
     const caption = el.closest("label")?.querySelector("span");
     if (caption) caption.textContent = newName;
-    localStorage.setItem(envKey(newName), value);
+    Store.set(envKey(newName), value);
     // pageKey is what updateNavBadges uses to attribute the change to a
     // specific side-nav link. Without it, renamed envs disappear from the
     // sidebar/tab/group count until the user reloads the page (because
     // wireFieldEvents re-sets pageKey on every server-rendered or restored
     // input). Setting it inline here keeps the badge consistent immediately.
-    localStorage.setItem(pageKey(newName), location.pathname);
+    Store.set(pageKey(newName), location.pathname);
     row.dataset.index = to;
     const indexInput = row.querySelector(".env-index input");
     if (indexInput) indexInput.value = to;
@@ -1830,8 +2194,10 @@ function cleanupRemovedIndexedRows() {
   document.querySelectorAll(".rows").forEach((wrap) => {
     [...wrap.querySelectorAll(".env-row[data-index]")].forEach((row) => {
       const inputs = [...row.querySelectorAll("input[name], textarea[name], select[name]")];
-      const allEmpty = inputs.every((el) => (localStorage.getItem(envKey(el.name)) || "") === "");
-      const hasOriginal = inputs.some((el) => localStorage.getItem(originalKey(el.name)) !== null);
+      // Замаскированный секрет пуст только в DOM — на сервере значение есть,
+      // иначе строку LINK*/SUB_LINK* снесло бы как «удалённую пользователем».
+      const allEmpty = inputs.every((el) => !isSecretHidden(el) && (Store.get(envKey(el.name)) || "") === "");
+      const hasOriginal = inputs.some((el) => Store.get(originalKey(el.name)) !== null);
       if (allEmpty && hasOriginal) row.remove();
     });
   });
@@ -1894,10 +2260,9 @@ function restoreMissingIndexedRows() {
   // (LINK1_DIALER_PROXY without a LINK1) so the row is rebuilt and the user
   // doesn't lose the value silently.
   const needed = new Map();  // key = prefix + "#" + idx → {prefix, idx, spec}
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
+  for (const key of Store.keys()) {
     if (!key || !key.startsWith("mihomo-env:")) continue;
-    const value = localStorage.getItem(key) || "";
+    const value = Store.get(key) || "";
     if (value === "") continue;
     const info = indexFromEnvName(key.slice("mihomo-env:".length));
     if (!info) continue;
@@ -1926,7 +2291,7 @@ function restoreMissingIndexedRows() {
       const newName = "SOCKS" + idx;
       if (hidden) {
         hidden.name = newName;
-        hidden.value = localStorage.getItem(envKey(newName)) || "";
+        hidden.value = Store.get(envKey(newName)) || "";
       }
       const title = row.querySelector(".socks-title");
       if (title) title.textContent = newName;
@@ -1960,7 +2325,7 @@ function restoreMissingIndexedRows() {
     if (!wrap) return;
     const envName = envNameFor(prefix, idx);       // canonical env (LINK / SUB_LINK0)
     const displayName = displayNameFor(prefix, idx); // visual label (LINK0 / SUB_LINK0)
-    const value = localStorage.getItem(envKey(envName)) || "";
+    const value = Store.get(envKey(envName)) || "";
 
     const div = document.createElement("div");
     div.className = "env-row";
@@ -1984,25 +2349,25 @@ function restoreMissingIndexedRows() {
     } else if (prefix === "LINK") {
       div.innerHTML =
         `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="vless://..."></label>` +
-        `<label class="field-validated" data-validate="proxy_name"><span>${displayName}_DIALER_PROXY</span><input name="${envName}_DIALER_PROXY" value="${escapeAttr(localStorage.getItem(envKey(envName + "_DIALER_PROXY")) || "")}" placeholder="GLOBAL"></label>` +
-        `<label><span>${displayName}_AMNEZIA_COUNTRY</span><input name="${envName}_AMNEZIA_COUNTRY" value="${escapeAttr(localStorage.getItem(envKey(envName + "_AMNEZIA_COUNTRY")) || "")}" placeholder="nl"></label>` +
+        `<label class="field-validated" data-validate="proxy_name"><span>${displayName}_DIALER_PROXY</span><input name="${envName}_DIALER_PROXY" value="${escapeAttr(Store.get(envKey(envName + "_DIALER_PROXY")) || "")}" placeholder="GLOBAL"></label>` +
+        `<label><span>${displayName}_AMNEZIA_COUNTRY</span><input name="${envName}_AMNEZIA_COUNTRY" value="${escapeAttr(Store.get(envKey(envName + "_AMNEZIA_COUNTRY")) || "")}" placeholder="nl"></label>` +
         `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
     } else if (prefix === "SUB_LINK") {
       div.innerHTML =
         `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="https://subscription"></label>` +
-        `<label><span>${displayName}_INTERVAL</span><input type="number" name="${envName}_INTERVAL" value="${escapeAttr(localStorage.getItem(envKey(envName + "_INTERVAL")) || "")}" placeholder="3600"></label>` +
-        `<label><span>${displayName}_PROXY</span><input name="${envName}_PROXY" value="${escapeAttr(localStorage.getItem(envKey(envName + "_PROXY")) || "")}" placeholder="DIRECT"></label>` +
-        `<label class="field-validated" data-validate="proxy_name"><span>${displayName}_DIALER_PROXY</span><input name="${envName}_DIALER_PROXY" value="${escapeAttr(localStorage.getItem(envKey(envName + "_DIALER_PROXY")) || "")}" placeholder="GLOBAL"></label>` +
+        `<label><span>${displayName}_INTERVAL</span><input type="number" name="${envName}_INTERVAL" value="${escapeAttr(Store.get(envKey(envName + "_INTERVAL")) || "")}" placeholder="3600"></label>` +
+        `<label><span>${displayName}_PROXY</span><input name="${envName}_PROXY" value="${escapeAttr(Store.get(envKey(envName + "_PROXY")) || "")}" placeholder="DIRECT"></label>` +
+        `<label class="field-validated" data-validate="proxy_name"><span>${displayName}_DIALER_PROXY</span><input name="${envName}_DIALER_PROXY" value="${escapeAttr(Store.get(envKey(envName + "_DIALER_PROXY")) || "")}" placeholder="GLOBAL"></label>` +
         `<div class="sub-link-extras">` +
-          `<label><span>${displayName}_FILTER</span><input name="${envName}_FILTER" value="${escapeAttr(localStorage.getItem(envKey(envName + "_FILTER")) || "")}" placeholder="(?i)hk|hongkong"></label>` +
-          `<label><span>${displayName}_EXCLUDE_FILTER</span><input name="${envName}_EXCLUDE_FILTER" value="${escapeAttr(localStorage.getItem(envKey(envName + "_EXCLUDE_FILTER")) || "")}" placeholder="(?i)test"></label>` +
-          `<label class="field-validated" data-validate="exclude_type"><span>${displayName}_EXCLUDE_TYPE</span><input name="${envName}_EXCLUDE_TYPE" value="${escapeAttr(localStorage.getItem(envKey(envName + "_EXCLUDE_TYPE")) || "")}" placeholder="vmess|direct"></label>` +
-          `<label><span>${displayName}_ADDITIONAL_PREFIX</span><input name="${envName}_ADDITIONAL_PREFIX" value="${escapeAttr(localStorage.getItem(envKey(envName + "_ADDITIONAL_PREFIX")) || "")}" placeholder="${displayName} | "></label>` +
-          `<label><span>${displayName}_ADDITIONAL_SUFFIX</span><input name="${envName}_ADDITIONAL_SUFFIX" value="${escapeAttr(localStorage.getItem(envKey(envName + "_ADDITIONAL_SUFFIX")) || "")}" placeholder=" | ${displayName}"></label>` +
+          `<label><span>${displayName}_FILTER</span><input name="${envName}_FILTER" value="${escapeAttr(Store.get(envKey(envName + "_FILTER")) || "")}" placeholder="(?i)hk|hongkong"></label>` +
+          `<label><span>${displayName}_EXCLUDE_FILTER</span><input name="${envName}_EXCLUDE_FILTER" value="${escapeAttr(Store.get(envKey(envName + "_EXCLUDE_FILTER")) || "")}" placeholder="(?i)test"></label>` +
+          `<label class="field-validated" data-validate="exclude_type"><span>${displayName}_EXCLUDE_TYPE</span><input name="${envName}_EXCLUDE_TYPE" value="${escapeAttr(Store.get(envKey(envName + "_EXCLUDE_TYPE")) || "")}" placeholder="vmess|direct"></label>` +
+          `<label><span>${displayName}_ADDITIONAL_PREFIX</span><input name="${envName}_ADDITIONAL_PREFIX" value="${escapeAttr(Store.get(envKey(envName + "_ADDITIONAL_PREFIX")) || "")}" placeholder="${displayName} | "></label>` +
+          `<label><span>${displayName}_ADDITIONAL_SUFFIX</span><input name="${envName}_ADDITIONAL_SUFFIX" value="${escapeAttr(Store.get(envKey(envName + "_ADDITIONAL_SUFFIX")) || "")}" placeholder=" | ${displayName}"></label>` +
         `</div>` +
         `<div class="headers-editor">` +
           `<span>${displayName}_HEADERS</span>` +
-          `<input type="hidden" class="sub-link-headers-value" name="${envName}_HEADERS" value="${escapeAttr(localStorage.getItem(envKey(envName + "_HEADERS")) || "")}">` +
+          `<input type="hidden" class="sub-link-headers-value" name="${envName}_HEADERS" value="${escapeAttr(Store.get(envKey(envName + "_HEADERS")) || "")}">` +
           `<div class="headers-rows"></div>` +
           `<button type="button" class="headers-add">Добавить header</button>` +
         `</div>` +
@@ -2010,7 +2375,7 @@ function restoreMissingIndexedRows() {
     } else if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") {
       const packets = spec.packets;
       const packetsName = packets + idx; // ZAPRET_PACKETS / ZAPRET2_PACKETS have no zeroPlain
-      const packetsVal = localStorage.getItem(envKey(packetsName)) || "";
+      const packetsVal = Store.get(envKey(packetsName)) || "";
       div.innerHTML = `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="--dpi-desync=..."></label><label><span>${packetsName}</span><input name="${packetsName}" value="${escapeAttr(packetsVal)}" placeholder="12"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
     } else if (prefix === "BYEDPI_CMD") {
       div.innerHTML = `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="стратегия BYEDPI без --port и --transparent"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
@@ -2381,13 +2746,27 @@ function saveFileEditModal() {
     .catch((e) => alert('Ошибка сети: ' + e));
 }
 
+// delete-file принимает только POST (GET удалялся бы обычной <img src>
+// со стороннего сайта). Возвращает Response, чтобы вызывающие цепочки
+// .then(r => r.text()) остались как были.
+function deleteFileRequest(name, type) {
+  const body = new URLSearchParams();
+  body.set("file", name);
+  body.set("type", type);
+  return fetch("/cgi-bin/delete-file", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString()
+  });
+}
+
 function deleteRuleSetFile(btn) {
   const row = btn.closest(".rule-set-file");
   if (!row) return;
   const name = row.dataset.file;
   if (!window.confirm("Удалить файл " + name.replace(/\.txt$/, '') + "?")) return;
   row.remove();
-  fetch('/cgi-bin/delete-file?file=' + encodeURIComponent(name) + '&type=ruleset')
+  deleteFileRequest(name, 'ruleset')
     .then((r) => r.text())
     .then((text) => {
       if (text.trim() !== "OK") {
@@ -2626,7 +3005,7 @@ function deleteProxyFile(btn) {
   const name = row.dataset.file;
   if (!window.confirm("Удалить файл " + name.replace(/\.(yaml|yml|conf)$/, '') + "?")) return;
   row.remove();
-  fetch('/cgi-bin/delete-file?file=' + encodeURIComponent(name) + '&type=proxy')
+  deleteFileRequest(name, 'proxy')
     .then((r) => r.text())
     .then((text) => {
       if (text.trim() !== "OK") {
@@ -2836,7 +3215,7 @@ function deleteAwgFile(btn) {
   const name = row.dataset.file;
   if (!window.confirm("Удалить файл " + name.replace(/\.conf$/, '') + "?")) return;
   row.remove();
-  fetch('/cgi-bin/delete-file?file=' + encodeURIComponent(name) + '&type=awg')
+  deleteFileRequest(name, 'awg')
     .then((r) => r.text())
     .then((text) => {
       if (text.trim() !== "OK") {
@@ -3043,7 +3422,7 @@ function deleteMountedConfigFile(type, btn) {
   const name = row.dataset.file;
   if (!window.confirm("Удалить файл " + name.replace(meta.stripRe, "") + "?")) return;
   row.remove();
-  fetch('/cgi-bin/delete-file?file=' + encodeURIComponent(name) + '&type=' + encodeURIComponent(type))
+  deleteFileRequest(name, type)
     .then((r) => r.text())
     .then((text) => {
       if (text.trim() !== "OK") {
@@ -3141,7 +3520,7 @@ function deleteFakebin(btn) {
   const name = row.dataset.file;
   if (!window.confirm("Удалить " + name + "?")) return;
   row.remove();
-  fetch('/cgi-bin/delete-file?file=' + encodeURIComponent(name) + '&type=fakebin')
+  deleteFileRequest(name, 'fakebin')
     .then((r) => r.text())
     .then((text) => {
       if (text.trim() !== "OK") alert('Ошибка удаления: ' + text);
@@ -3247,7 +3626,7 @@ function deleteZlistFile(btn) {
   const name = row.dataset.file;
   if (!window.confirm("Удалить " + name + "?")) return;
   row.remove();
-  fetch('/cgi-bin/delete-file?file=' + encodeURIComponent(name) + '&type=zlist')
+  deleteFileRequest(name, 'zlist')
     .then((r) => r.text())
     .then((text) => {
       if (text.trim() !== "OK") alert('Ошибка удаления: ' + text);
@@ -3318,7 +3697,7 @@ function groupHasCustomParams(pane) {
     if (!el.name || el.name === "GROUP" || el.classList.contains("group-name-input")) return false;
     if (el.name.indexOf(prefix + "_") !== 0) return false;
     const state = el.closest(".field")?.querySelector(":scope > i, .field-meta i")?.textContent.trim();
-    const saved = localStorage.getItem(envKey(el.name));
+    const saved = Store.get(envKey(el.name));
     const value = saved !== null ? saved : fieldValue(el);
     if (state === "set") return true;
     return value !== "" && value !== (el.dataset.default || "");
@@ -3328,7 +3707,7 @@ function groupHasCustomParams(pane) {
 function ruleSetSourceDeleted(pane) {
   const sourceEnv = pane?.dataset?.sourceEnv;
   if (!sourceEnv) return false;
-  return originalWasPresent(sourceEnv) && (localStorage.getItem(envKey(sourceEnv)) || "") === "";
+  return originalWasPresent(sourceEnv) && (Store.get(envKey(sourceEnv)) || "") === "";
 }
 
 function demoteOrPromoteRuleSetGroups() {
@@ -3486,11 +3865,11 @@ function removeGroupPane(name) {
   const btn = findGroupButton(name);
   if (!pane || !btn) return;
   pane.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
-    if (localStorage.getItem(originalKey(el.name)) === null) {
-      localStorage.setItem(originalKey(el.name), fieldValue(el));
-      localStorage.setItem(originalPresentKey(el.name), serverHasEnv(el, false, fieldValue(el)) ? "1" : "0");
+    if (Store.get(originalKey(el.name)) === null) {
+      Store.set(originalKey(el.name), fieldValue(el));
+      Store.set(originalPresentKey(el.name), serverHasEnv(el, false, fieldValue(el)) ? "1" : "0");
     }
-    localStorage.setItem(envKey(el.name), "");
+    Store.set(envKey(el.name), "");
     trackRemovedEnv(el.name);
   });
   setGroupListValue(groupListValue().filter((item) => item !== name));
@@ -3518,11 +3897,11 @@ function wireGroupRename(pane) {
       if (!el.name || el.name === "GROUP" || el.name.indexOf(oldPrefix + "_") !== 0) return;
       const oldEnv = el.name;
       const newEnv = newPrefix + el.name.slice(oldPrefix.length);
-      localStorage.setItem(envKey(oldEnv), "");
+      Store.set(envKey(oldEnv), "");
       trackRemovedEnv(oldEnv);
-      if (localStorage.getItem(originalKey(newEnv)) === null) {
-        localStorage.setItem(originalKey(newEnv), "");
-        localStorage.setItem(originalPresentKey(newEnv), "0");
+      if (Store.get(originalKey(newEnv)) === null) {
+        Store.set(originalKey(newEnv), "");
+        Store.set(originalPresentKey(newEnv), "0");
       }
       el.name = newEnv;
       const caption = el.closest("label")?.querySelector("em");
@@ -3695,9 +4074,8 @@ function previewEnvMap() {
     const pos = line.indexOf("=");
     if (pos > 0) map.set(line.slice(0, pos), line.slice(pos + 1));
   });
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith("mihomo-env:")) map.set(key.slice("mihomo-env:".length), localStorage.getItem(key) || "");
+  for (const key of Store.keys()) {
+    if (key && key.startsWith("mihomo-env:")) map.set(key.slice("mihomo-env:".length), Store.get(key) || "");
   }
   document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]").forEach((el) => map.set(el.name, fieldValue(el)));
   return map;
@@ -3836,16 +4214,16 @@ function removeEnvRow(btn) {
   row.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
     const wasOnServer = originalWasPresent(el.name);
     if (wasOnServer) {
-      localStorage.setItem(envKey(el.name), "");
+      Store.set(envKey(el.name), "");
       trackRemovedEnv(el.name);
     } else {
       // Pure draft — purge from localStorage instead of leaving an empty
       // record that would later look "modified to empty" or trigger a
       // spurious /container/envs/remove.
-      localStorage.removeItem(envKey(el.name));
-      localStorage.removeItem(originalKey(el.name));
-      localStorage.removeItem(originalPresentKey(el.name));
-      localStorage.removeItem(pageKey(el.name));
+      Store.remove(envKey(el.name));
+      Store.remove(originalKey(el.name));
+      Store.remove(originalPresentKey(el.name));
+      Store.remove(pageKey(el.name));
     }
   });
   row.remove();
@@ -4052,7 +4430,7 @@ function removeSocksRow(btn) {
   if (!row) return;
   const hidden = row.querySelector('input[type="hidden"]');
   if (hidden && hidden.name) {
-    try { localStorage.setItem(envKey(hidden.name), ""); } catch (e) {}
+    try { Store.set(envKey(hidden.name), ""); } catch (e) {}
   }
   row.remove();
   refreshAllBadges();
@@ -4094,11 +4472,10 @@ function knownProviders() {
   (seed.envs || []).forEach((n) => set.add(n));
   // Dynamic providers derived from currently-set ENVs (LINK/SUB_LINK/SOCKS
   // and DPI variants). Read from localStorage so this works cross-page.
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
+  for (const key of Store.keys()) {
     if (!key || !key.startsWith("mihomo-env:")) continue;
     const name = key.slice("mihomo-env:".length);
-    const val = (localStorage.getItem(key) || "").trim();
+    const val = (Store.get(key) || "").trim();
     if (!val) continue;
     let m;
     if (/^LINK\d*$/.test(name) || /^SUB_LINK\d+$/.test(name) || /^SOCKS\d+$/.test(name)) {
@@ -4119,7 +4496,7 @@ function knownGroups() {
   // in GROUP env. Hard-coded system groups are uppercase by entrypoint
   // contract — they're always referenced as DEFAULT/GLOBAL/DNS.
   const set = new Set(["DEFAULT", "GLOBAL", "DNS"]);
-  const env = localStorage.getItem("mihomo-env:GROUP") || "";
+  const env = Store.get("mihomo-env:GROUP") || "";
   env.split(",").forEach((g) => {
     const t = g.trim();
     if (t) set.add(t);
@@ -4153,7 +4530,7 @@ function setFieldValidity(box, kind, message) {
     box.removeAttribute("data-tooltip");
     if (input) input.removeAttribute("aria-invalid");
     if (name) {
-      try { localStorage.removeItem(invalidKey(name)); } catch (e) {}
+      try { Store.remove(invalidKey(name)); } catch (e) {}
     }
     return;
   }
@@ -4165,14 +4542,14 @@ function setFieldValidity(box, kind, message) {
   if (name) {
     try {
       if (kind === "invalid") {
-        localStorage.setItem(invalidKey(name), "1");
+        Store.set(invalidKey(name), "1");
         // Ensure we know what page this field belongs to (validators may
         // run before the field has ever been modified, so pageKey may be unset).
-        if (!localStorage.getItem(pageKey(name))) {
-          localStorage.setItem(pageKey(name), location.pathname);
+        if (!Store.get(pageKey(name))) {
+          Store.set(pageKey(name), location.pathname);
         }
       } else {
-        localStorage.removeItem(invalidKey(name));
+        Store.remove(invalidKey(name));
       }
     } catch (e) {}
   }
@@ -4352,7 +4729,7 @@ function activatePageTab(tabId) {
     btn.classList.toggle("active", on);
     btn.setAttribute("aria-selected", on ? "true" : "false");
   });
-  try { localStorage.setItem(activeTabKey(), tabId); } catch (e) {}
+  try { Store.set(activeTabKey(), tabId); } catch (e) {}
   updateCommandVisibility();
 }
 
@@ -4379,7 +4756,7 @@ function initPageTabs() {
   });
   // Pick initial tab: URL hash > localStorage > first
   const fromHash = decodeURIComponent(location.hash.slice(1));
-  const fromLs = (() => { try { return localStorage.getItem(activeTabKey()) || ""; } catch (e) { return ""; } })();
+  const fromLs = (() => { try { return Store.get(activeTabKey()) || ""; } catch (e) { return ""; } })();
   const firstId = nav.querySelector(".page-tab") && nav.querySelector(".page-tab").dataset.tab;
   const candidates = [fromHash, fromLs, firstId].filter(Boolean);
   let initial = firstId;
@@ -4403,7 +4780,10 @@ function refreshFieldMarkers() {
   document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]").forEach((input) => {
     if (input.type === "submit" || input.type === "button") return;
     if (!input.name) return;
-    const original = localStorage.getItem(originalKey(input.name));
+    // Скрытый секрет не «изменён»: поле пустое не потому что его очистили,
+    // а потому что сервер не печатает значение в HTML.
+    if (isSecretHidden(input)) return;
+    const original = Store.get(originalKey(input.name));
     if (original === null) return;
     const current = fieldValue(input);
     const originalPresent = originalWasPresent(input.name);
@@ -4432,7 +4812,10 @@ function countModifiedInScope(scope) {
   scope.querySelectorAll("input[name], textarea[name], select[name]").forEach((input) => {
     if (input.type === "submit" || input.type === "button") return;
     if (!input.name) return;
-    const original = localStorage.getItem(originalKey(input.name));
+    // Скрытый секрет не «изменён»: поле пустое не потому что его очистили,
+    // а потому что сервер не печатает значение в HTML.
+    if (isSecretHidden(input)) return;
+    const original = Store.get(originalKey(input.name));
     if (original === null) return;
     const originalPresent = originalWasPresent(input.name);
     const current = fieldValue(input);
@@ -4471,22 +4854,21 @@ function updateTabBadges() {
 function updateNavBadges() {
   const byPathChanged = {};
   const byPathErrors = {};
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
+  for (const key of Store.keys()) {
     if (!key) continue;
     if (key.startsWith("mihomo-env:")) {
       const name = key.slice("mihomo-env:".length);
-      const cur = localStorage.getItem(key) || "";
-      const orig = localStorage.getItem(originalKey(name));
+      const cur = Store.get(key) || "";
+      const orig = Store.get(originalKey(name));
       if (orig === null) continue;
       const present = originalWasPresent(name);
       if (present ? cur === orig : (cur === orig || cur === "")) continue;
-      const path = localStorage.getItem(pageKey(name));
+      const path = Store.get(pageKey(name));
       if (!path) continue;
       byPathChanged[path] = (byPathChanged[path] || 0) + 1;
     } else if (key.startsWith("mihomo-invalid:")) {
       const name = key.slice("mihomo-invalid:".length);
-      const path = localStorage.getItem(pageKey(name));
+      const path = Store.get(pageKey(name));
       if (!path) continue;
       byPathErrors[path] = (byPathErrors[path] || 0) + 1;
     }
@@ -4573,32 +4955,33 @@ function updateGroupBadges() {
 function collectPendingRemovals() {
   const list = [];
   const seen = new Set();
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
+  for (const key of Store.keys()) {
     if (!key || !key.startsWith("mihomo-env:")) continue;
     const name = key.slice("mihomo-env:".length);
     if (seen.has(name)) continue;
     seen.add(name);
-    const cur = localStorage.getItem(key) || "";
+    const cur = Store.get(key) || "";
     if (cur !== "") continue;                            // still has a value
-    const orig = localStorage.getItem(originalKey(name));
+    const orig = Store.get(originalKey(name));
     if (!originalWasPresent(name)) continue;              // wasn't on server
-    const path = localStorage.getItem(pageKey(name)) || "";
+    const path = Store.get(pageKey(name)) || "";
     list.push({name, orig, path});
   }
   // Also pick up originalKey entries with no corresponding envKey at all —
   // happens when removeEnvRow ran on a server-backed row that was later
   // deleted entirely from the draft envKey (purged by some operation).
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
+  for (const key of Store.keys()) {
     if (!key || !key.startsWith("mihomo-original:")) continue;
     const name = key.slice("mihomo-original:".length);
     if (seen.has(name)) continue;
-    const orig = localStorage.getItem(key) || "";
+    const orig = Store.get(key) || "";
+    // Нераскрытый секрет: original неизвестен, черновика нет — значит его
+    // никто не трогал и удалять нечего.
+    if (orig === SECRET_UNKNOWN) continue;
     if (!originalWasPresent(name)) continue;
-    if (localStorage.getItem(envKey(name)) !== null) continue;
+    if (Store.get(envKey(name)) !== null) continue;
     seen.add(name);
-    list.push({name, orig, path: localStorage.getItem(pageKey(name)) || ""});
+    list.push({name, orig, path: Store.get(pageKey(name)) || ""});
   }
   list.sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
   return list;
@@ -4640,9 +5023,9 @@ function refreshAllBadges() {
 }
 
 function bootstrapUI() {
-  applyTheme(localStorage.getItem("mihomo-theme") || "dark");
+  applyTheme(Store.get("mihomo-theme") || "dark");
   const envListInput = document.getElementById("commandEnvList");
-  if (envListInput) envListInput.value = localStorage.getItem("mihomo-command-env-list") || defaultEnvListName;
+  if (envListInput) envListInput.value = Store.get("mihomo-command-env-list") || defaultEnvListName;
   wireFieldEvents(document.getElementById("envForm"));
   normalizeFieldMeta(document);
   enhanceIndexedRows(document);
@@ -4697,10 +5080,12 @@ function bootstrapUI() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  // Сначала пробуем подтянуть черновик с сервера (если localStorage пуст —
-  // напр. браузер чистит storage на close, или открыли с другого устройства).
-  // Только после этого инициализируем форму, иначе значения серверного
-  // черновика не лягут в поля.
+  // Черновик с сервера тянем ДО инициализации формы: секретные ключи живут
+  // только в памяти вкладки, поэтому на каждой загрузке страницы состояние
+  // приходит с сервера, а не из localStorage. Чистый браузер без кеша и кук
+  // получает ровно то же самое.
+  initDraftNavigationGuard();
+  initSecretAutoReveal();
   draftLoadFromServer().then(() => bootstrapUI());
 });
 
@@ -4750,11 +5135,11 @@ function initBlockcheck() {
   BC.inited = true;
 
   try {
-    const saved = localStorage.getItem("mihomo-bc-domains");
+    const saved = Store.get("mihomo-bc-domains");
     if (saved) document.getElementById("bcDomains").value = saved;
   } catch (e) {}
   document.getElementById("bcDomains").addEventListener("input", (e) => {
-    try { localStorage.setItem("mihomo-bc-domains", e.target.value); } catch (e2) {}
+    try { Store.set("mihomo-bc-domains", e.target.value); } catch (e2) {}
     // Дублируем в server-side draft (/dev/shm/mihomo-ui/draft.json) чтобы значения
     // переживали закрытие браузера даже если localStorage чистится приватными
     // настройками. По /dev/shm — сбрасываются только рестартом контейнера.
@@ -4776,7 +5161,7 @@ function initBlockcheck() {
     if (!el) return;
     const key = "mihomo-bc-form:" + id;
     try {
-      const v = localStorage.getItem(key);
+      const v = Store.get(key);
       if (v !== null) {
         if (el.type === "checkbox") el.checked = v === "1";
         else el.value = v;
@@ -4786,7 +5171,7 @@ function initBlockcheck() {
     el.addEventListener(ev, () => {
       try {
         const val = el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value;
-        localStorage.setItem(key, val);
+        Store.set(key, val);
       } catch (e2) {}
       draftSaveDebounced();
     });
@@ -4797,7 +5182,7 @@ function initBlockcheck() {
 
   // Recover an in-flight or recently-finished job after page reload.
   let savedJob = null;
-  try { savedJob = localStorage.getItem(BC_JOB_KEY); } catch (e) {}
+  try { savedJob = Store.get(BC_JOB_KEY); } catch (e) {}
   if (savedJob) {
     bcResumeJob(savedJob);
     return;
@@ -4809,7 +5194,7 @@ function initBlockcheck() {
   fetch("/cgi-bin/blockcheck2-status?discover=1")
     .then(r => r.json()).then(data => {
       if (data && data.ok && data.job_id) {
-        try { localStorage.setItem(BC_JOB_KEY, data.job_id); } catch (e) {}
+        try { Store.set(BC_JOB_KEY, data.job_id); } catch (e) {}
         bcResumeJob(data.job_id);
       }
     }).catch(() => {});
@@ -5063,8 +5448,8 @@ function bcCombinedRefresh() {
     row.className = "bc-combined-row";
     const argsAttr = v.combined.replace(/"/g, "&quot;");
     row.innerHTML =
-      `<div class="bc-combined-tag">${v.tag}</div>` +
-      `<textarea class="bc-combined-args" readonly rows="2">${v.combined}</textarea>` +
+      `<div class="bc-combined-tag">${escapeAttr(v.tag)}</div>` +
+      `<textarea class="bc-combined-args" readonly rows="2">${escapeAttr(v.combined)}</textarea>` +
       `<div class="bc-combined-row-actions">` +
         `<button type="button" class="primary" title="Применить: добавить новую строку ZAPRET2_CMD на вкладке ZAPRET2 с этими аргументами (затем сохранить и применить команды MikroTik)" data-args="${argsAttr}" onclick="bcCombinedApplyOne(this)">→ ZAPRET2_CMD</button>` +
         `<button type="button" data-args="${argsAttr}" onclick="bcCombinedCopyOne(this)">⧉</button>` +
@@ -5180,7 +5565,7 @@ function bcApplyStrategy(btn) {
   // Cross-page: stash and navigate. Pickup happens on the dpi page load
   // (see bcConsumePendingZapret2 below).
   try {
-    localStorage.setItem(BC_PENDING_KEY, JSON.stringify({ args, name, ts: Date.now() }));
+    Store.set(BC_PENDING_KEY, JSON.stringify({ args, name, ts: Date.now() }));
   } catch (e) {}
   location.href = "/cgi-bin/index?p=dpi#zapret2";
 }
@@ -5213,9 +5598,9 @@ function bcInsertZapret2Row(args, name) {
 // Run on /dpi page load to consume a pending blockcheck handoff.
 function bcConsumePendingZapret2() {
   let raw = null;
-  try { raw = localStorage.getItem(BC_PENDING_KEY); } catch (e) {}
+  try { raw = Store.get(BC_PENDING_KEY); } catch (e) {}
   if (!raw) return;
-  try { localStorage.removeItem(BC_PENDING_KEY); } catch (e) {}
+  try { Store.remove(BC_PENDING_KEY); } catch (e) {}
   let payload;
   try { payload = JSON.parse(raw); } catch (e) { return; }
   if (!payload || !payload.args) return;
@@ -5330,7 +5715,7 @@ function blockcheck2Custom() {
       return;
     }
     BC.jobId = data.job_id;
-    try { localStorage.setItem(BC_JOB_KEY, BC.jobId); } catch (e) {}
+    try { Store.set(BC_JOB_KEY, BC.jobId); } catch (e) {}
     bcSetStatus("custom-test запущен, job " + BC.jobId, true);
     BC.pollTimer = setInterval(blockcheck2Poll, 500);
     blockcheck2Poll();
@@ -5386,19 +5771,19 @@ function blockcheck2Start() {
   }).then(r => r.json()).then(data => {
     if (!data.ok) {
       bcSetStatus("ошибка: " + bcDecode(data.error_b64), false);
-      try { localStorage.removeItem(BC_JOB_KEY); } catch (e) {}
+      try { Store.remove(BC_JOB_KEY); } catch (e) {}
       BC.jobId = null;
       return;
     }
     BC.jobId = data.job_id;
-    try { localStorage.setItem(BC_JOB_KEY, BC.jobId); } catch (e) {}
+    try { Store.set(BC_JOB_KEY, BC.jobId); } catch (e) {}
     bcSetStatus("запущен job " + BC.jobId, true);
     BC.pollTimer = setInterval(blockcheck2Poll, 700);
     blockcheck2Poll();
   }).catch(err => {
     bcSetStatus("ошибка запуска: " + err, false);
     BC.jobId = null;
-    try { localStorage.removeItem(BC_JOB_KEY); } catch (e) {}
+    try { Store.remove(BC_JOB_KEY); } catch (e) {}
   });
 }
 
@@ -5415,7 +5800,7 @@ function blockcheck2Poll() {
         if (BC.pollTimer) { clearInterval(BC.pollTimer); BC.pollTimer = null; }
         bcSetStatus("job недоступен: " + (data.error || ""), false);
         BC.jobId = null;
-        try { localStorage.removeItem(BC_JOB_KEY); } catch (e) {}
+        try { Store.remove(BC_JOB_KEY); } catch (e) {}
         return;
       }
       BC.offset = data.offset;
@@ -5556,11 +5941,11 @@ function initBlockcheck1() {
   BC1.inited = true;
 
   try {
-    const saved = localStorage.getItem("mihomo-bc1-domains");
+    const saved = Store.get("mihomo-bc1-domains");
     if (saved) document.getElementById("bc1Domains").value = saved;
   } catch (e) {}
   document.getElementById("bc1Domains").addEventListener("input", (e) => {
-    try { localStorage.setItem("mihomo-bc1-domains", e.target.value); } catch (e2) {}
+    try { Store.set("mihomo-bc1-domains", e.target.value); } catch (e2) {}
     draftSaveDebounced();
   });
 
@@ -5579,7 +5964,7 @@ function initBlockcheck1() {
     if (!el) return;
     const key = "mihomo-bc1-form:" + id;
     try {
-      const v = localStorage.getItem(key);
+      const v = Store.get(key);
       if (v !== null) {
         if (el.type === "checkbox") el.checked = v === "1";
         else el.value = v;
@@ -5589,7 +5974,7 @@ function initBlockcheck1() {
     el.addEventListener(ev, () => {
       try {
         const val = el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value;
-        localStorage.setItem(key, val);
+        Store.set(key, val);
       } catch (e2) {}
       draftSaveDebounced();
     });
@@ -5600,7 +5985,7 @@ function initBlockcheck1() {
 
   // Recover an in-flight or recently-finished job after page reload.
   let savedJob = null;
-  try { savedJob = localStorage.getItem(BC1_JOB_KEY); } catch (e) {}
+  try { savedJob = Store.get(BC1_JOB_KEY); } catch (e) {}
   if (savedJob) {
     bc1ResumeJob(savedJob);
     return;
@@ -5612,7 +5997,7 @@ function initBlockcheck1() {
   fetch("/cgi-bin/blockcheck1-status?discover=1")
     .then(r => r.json()).then(data => {
       if (data && data.ok && data.job_id) {
-        try { localStorage.setItem(BC1_JOB_KEY, data.job_id); } catch (e) {}
+        try { Store.set(BC1_JOB_KEY, data.job_id); } catch (e) {}
         bc1ResumeJob(data.job_id);
       }
     }).catch(() => {});
@@ -5845,8 +6230,8 @@ function bc1CombinedRefresh() {
     row.className = "bc-combined-row";
     const argsAttr = v.combined.replace(/"/g, "&quot;");
     row.innerHTML =
-      `<div class="bc-combined-tag">${v.tag}</div>` +
-      `<textarea class="bc-combined-args" readonly rows="2">${v.combined}</textarea>` +
+      `<div class="bc-combined-tag">${escapeAttr(v.tag)}</div>` +
+      `<textarea class="bc-combined-args" readonly rows="2">${escapeAttr(v.combined)}</textarea>` +
       `<div class="bc-combined-row-actions">` +
         `<button type="button" class="primary" title="Применить: добавить новую строку ZAPRET_CMD на вкладке ZAPRET с этими аргументами (затем сохранить и применить команды MikroTik)" data-args="${argsAttr}" onclick="bc1CombinedApplyOne(this)">→ ZAPRET_CMD</button>` +
         `<button type="button" data-args="${argsAttr}" onclick="bc1CombinedCopyOne(this)">⧉</button>` +
@@ -5962,7 +6347,7 @@ function bc1ApplyStrategy(btn) {
   // Cross-page: stash and navigate. Pickup happens on the dpi page load
   // (see bc1ConsumePendingZapret below).
   try {
-    localStorage.setItem(BC1_PENDING_KEY, JSON.stringify({ args, name, ts: Date.now() }));
+    Store.set(BC1_PENDING_KEY, JSON.stringify({ args, name, ts: Date.now() }));
   } catch (e) {}
   location.href = "/cgi-bin/index?p=dpi#zapret";
 }
@@ -5995,9 +6380,9 @@ function bc1InsertZapretRow(args, name) {
 // Run on /dpi page load to consume a pending blockcheck handoff.
 function bc1ConsumePendingZapret() {
   let raw = null;
-  try { raw = localStorage.getItem(BC1_PENDING_KEY); } catch (e) {}
+  try { raw = Store.get(BC1_PENDING_KEY); } catch (e) {}
   if (!raw) return;
-  try { localStorage.removeItem(BC1_PENDING_KEY); } catch (e) {}
+  try { Store.remove(BC1_PENDING_KEY); } catch (e) {}
   let payload;
   try { payload = JSON.parse(raw); } catch (e) { return; }
   if (!payload || !payload.args) return;
@@ -6109,7 +6494,7 @@ function blockcheck1Custom() {
       return;
     }
     BC1.jobId = data.job_id;
-    try { localStorage.setItem(BC1_JOB_KEY, BC1.jobId); } catch (e) {}
+    try { Store.set(BC1_JOB_KEY, BC1.jobId); } catch (e) {}
     bc1SetStatus("custom-test запущен, job " + BC1.jobId, true);
     BC1.pollTimer = setInterval(blockcheck1Poll, 500);
     blockcheck1Poll();
@@ -6165,19 +6550,19 @@ function blockcheck1Start() {
   }).then(r => r.json()).then(data => {
     if (!data.ok) {
       bc1SetStatus("ошибка: " + bc1Decode(data.error_b64), false);
-      try { localStorage.removeItem(BC1_JOB_KEY); } catch (e) {}
+      try { Store.remove(BC1_JOB_KEY); } catch (e) {}
       BC1.jobId = null;
       return;
     }
     BC1.jobId = data.job_id;
-    try { localStorage.setItem(BC1_JOB_KEY, BC1.jobId); } catch (e) {}
+    try { Store.set(BC1_JOB_KEY, BC1.jobId); } catch (e) {}
     bc1SetStatus("запущен job " + BC1.jobId, true);
     BC1.pollTimer = setInterval(blockcheck1Poll, 700);
     blockcheck1Poll();
   }).catch(err => {
     bc1SetStatus("ошибка запуска: " + err, false);
     BC1.jobId = null;
-    try { localStorage.removeItem(BC1_JOB_KEY); } catch (e) {}
+    try { Store.remove(BC1_JOB_KEY); } catch (e) {}
   });
 }
 
@@ -6194,7 +6579,7 @@ function blockcheck1Poll() {
         if (BC1.pollTimer) { clearInterval(BC1.pollTimer); BC1.pollTimer = null; }
         bc1SetStatus("job недоступен: " + (data.error || ""), false);
         BC1.jobId = null;
-        try { localStorage.removeItem(BC1_JOB_KEY); } catch (e) {}
+        try { Store.remove(BC1_JOB_KEY); } catch (e) {}
         return;
       }
       BC1.offset = data.offset;
@@ -6314,23 +6699,23 @@ const BDC = { jobId: null, offset: 0, pollTimer: null, pollInFlight: false, resu
 
 function initByedpiCheck() {
   if (!document.getElementById("bdcDomains")) return;
-  const saved = localStorage.getItem("mihomo-bdc-domains");
+  const saved = Store.get("mihomo-bdc-domains");
   if (saved) document.getElementById("bdcDomains").value = saved;
   document.getElementById("bdcDomains").addEventListener("input", (e) => {
-    try { localStorage.setItem("mihomo-bdc-domains", e.target.value); draftSaveDebounced(); } catch (e2) {}
+    try { Store.set("mihomo-bdc-domains", e.target.value); draftSaveDebounced(); } catch (e2) {}
   });
   ["bdcWorkers","bdcLevel","bdcHardMinKb","bdcRndRepeats","bdcTestHttp","bdcTestTls12","bdcTestTls13","bdcTestQuic","bdcUseFakebin","bdcCustomArgs","bdcCustomHttp","bdcCustomTls12","bdcCustomTls13","bdcCustomQuic"].forEach((id) => {
     const el = document.getElementById(id); if (!el) return;
     const key = "mihomo-bdc-form:" + id;
-    const val = localStorage.getItem(key);
+    const val = Store.get(key);
     if (val !== null) { if (el.type === "checkbox") el.checked = val === "1"; else el.value = val; }
-    const save = () => { try { localStorage.setItem(key, el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value); draftSaveDebounced(); } catch (e) {} };
+    const save = () => { try { Store.set(key, el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value); draftSaveDebounced(); } catch (e) {} };
     el.addEventListener("change", save);
     el.addEventListener("input", () => { if (el.type !== "checkbox") save(); });
   });
   const filter = document.getElementById("bdcFilterOk");
   if (filter) filter.addEventListener("change", bdcApplyFilter);
-  const savedJob = localStorage.getItem(BDC_JOB_KEY);
+  const savedJob = Store.get(BDC_JOB_KEY);
   if (savedJob) bdcResumeJob(savedJob);
   fetch("/cgi-bin/byedpi-check-status?discover=1").then(r => r.json()).then(data => {
     if (data && data.ok && data.job_id && data.job_id !== savedJob) bdcResumeJob(data.job_id);
@@ -6595,7 +6980,7 @@ function bdcPostStart(body, okText) {
   fetch("/cgi-bin/byedpi-check", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: body.toString() })
     .then(r => r.json()).then(data => {
       if (!data.ok) { bdcSetStatus("ошибка: " + bdcDecode(data.error_b64), false); BDC.jobId = null; return; }
-      BDC.jobId = data.job_id; try { localStorage.setItem(BDC_JOB_KEY, BDC.jobId); } catch (e) {}
+      BDC.jobId = data.job_id; try { Store.set(BDC_JOB_KEY, BDC.jobId); } catch (e) {}
       bdcSetStatus(okText + " job " + BDC.jobId, true);
       if (BDC.pollTimer) clearInterval(BDC.pollTimer);
       BDC.pollTimer = setInterval(byedpiCheckPoll, 700); byedpiCheckPoll();
@@ -6792,7 +7177,7 @@ function toolHttpInit() {
   const resultEl = document.getElementById("toolHttpResult");
   if (resultEl) {
     try {
-      const saved = localStorage.getItem(toolStorageKey("toolHttpResult"));
+      const saved = Store.get(toolStorageKey("toolHttpResult"));
       if (saved) resultEl.value = saved;
     } catch (e) {}
   }
@@ -6830,7 +7215,7 @@ function toolHttpFetch() {
     let out = text, note = "";
     try { out = JSON.stringify(JSON.parse(text), null, 2); note = ", JSON"; } catch (e) {}
     if (resultEl) resultEl.value = out;
-    try { localStorage.setItem(toolStorageKey("toolHttpResult"), out); } catch (e) {}
+    try { Store.set(toolStorageKey("toolHttpResult"), out); } catch (e) {}
     const okStatus = Number(json.status) >= 200 && Number(json.status) < 300;
     const st = Number(json.status) > 0 ? `HTTP ${json.status}` : (json.ok ? "ответ получен" : "ошибка запроса");
     toolSetStatus("toolHttpStatus", st + note, !!json.ok || okStatus);
@@ -6888,7 +7273,7 @@ function toolX2mInit() {
   }
   const resultEl = document.getElementById("toolX2mResult");
   if (resultEl) {
-    try { const saved = localStorage.getItem(toolStorageKey("toolX2mResult")); if (saved) resultEl.value = saved; } catch (e) {}
+    try { const saved = Store.get(toolStorageKey("toolX2mResult")); if (saved) resultEl.value = saved; } catch (e) {}
   }
   toolX2mBuild(true);
 }
@@ -6903,7 +7288,7 @@ function toolX2mBuild(quiet) {
   }
   let out;
   try {
-    let base = (document.getElementById("toolX2mEndpoint")?.value || "http://127.0.0.1/cgi-bin/xray2mihomo-sub").trim();
+    let base = (document.getElementById("toolX2mEndpoint")?.value || "http://127.0.0.1:81/cgi-bin/xray2mihomo-sub").trim();
     if (!/^https?:\/\//i.test(base)) base = "http://" + base;
     out = new URL(base);
     out.searchParams.set("sub", sub);
@@ -6925,10 +7310,24 @@ function toolX2mBuild(quiet) {
   const link = out.toString();
   if (linkEl) {
     linkEl.value = link;
-    try { localStorage.setItem(toolStorageKey("toolX2mLink"), link); } catch (e) {}
+    try { Store.set(toolStorageKey("toolX2mLink"), link); } catch (e) {}
   }
   if (!quiet) toolSetStatus("toolX2mStatus", "Ссылка собрана", true);
   return link;
+}
+
+// Предпросмотр локального endpoint'а. В SUB_LINK ссылка ведёт на служебный
+// loopback-порт 81 (его качает сам mihomo изнутри контейнера), но браузеру
+// этот адрес недоступен — 127.0.0.1 для него означает машину пользователя.
+// Поэтому для предпросмотра берём только path+query и дёргаем тот же CGI
+// через панель на порту 80: браузер приложит basic-auth креды сам.
+// Внешние endpoint'ы (worker) по-прежнему идут через http-fetch — их режет CORS.
+function toolX2mLocalPath(link) {
+  try {
+    const u = new URL(link);
+    const local = u.hostname === "127.0.0.1" || u.hostname === "localhost" || u.host === location.host;
+    return local ? u.pathname + u.search : "";
+  } catch (e) { return ""; }
 }
 
 function toolX2mFetch() {
@@ -6937,6 +7336,21 @@ function toolX2mFetch() {
   if (!link) return;
   if (resultEl) resultEl.value = "";
   toolSetStatus("toolX2mStatus", "Запрашиваю...", true);
+  const localPath = toolX2mLocalPath(link);
+  if (localPath) {
+    fetch(localPath)
+      .then((r) => r.text().then((text) => ({ text, status: r.status, ok: r.ok })))
+      .then((res) => {
+        if (resultEl) resultEl.value = res.text;
+        try { Store.set(toolStorageKey("toolX2mResult"), res.text); } catch (e) {}
+        toolSetStatus("toolX2mStatus", "HTTP " + res.status, res.ok);
+      })
+      .catch((e) => {
+        if (resultEl) resultEl.value = e.message;
+        toolSetStatus("toolX2mStatus", "Ошибка запроса: " + e.message, false);
+      });
+    return;
+  }
   const body = new URLSearchParams();
   body.set("url", link);
   body.set("method", "GET");
@@ -6949,7 +7363,7 @@ function toolX2mFetch() {
   }).then((r) => r.json()).then((json) => {
     const text = toolDecodeB64Loose(json.output_b64 || json.error_b64 || "");
     if (resultEl) resultEl.value = text;
-    try { localStorage.setItem(toolStorageKey("toolX2mResult"), text); } catch (e) {}
+    try { Store.set(toolStorageKey("toolX2mResult"), text); } catch (e) {}
     const okStatus = Number(json.status) >= 200 && Number(json.status) < 300;
     const st = Number(json.status) > 0 ? `HTTP ${json.status}` : (json.ok ? "ответ получен" : "ошибка запроса");
     toolSetStatus("toolX2mStatus", st, !!json.ok || okStatus);

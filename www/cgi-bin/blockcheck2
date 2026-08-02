@@ -6,6 +6,10 @@
 echo "Content-Type: application/json; charset=utf-8"
 echo ""
 
+. /www/cgi-bin/_guard.sh
+csrf_guard_json
+
+
 err() {
   msg="$1"
   printf '{"ok":false,"error_b64":"%s"}\n' \

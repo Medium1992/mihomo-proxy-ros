@@ -1,0 +1,42 @@
+#!/bin/sh
+# POST <пароль в теле> → md5-хеш ($1$...) для BASIC_AUTH_HASH.
+# Ответ: {"ok":true,"hash":"$1$..."} | {"ok":false,"error":"..."}
+echo "Content-Type: application/json; charset=utf-8"
+echo "Cache-Control: no-store"
+echo ""
+
+. /www/cgi-bin/_guard.sh
+csrf_guard_json
+
+
+json_escape() {
+  sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\r\n'
+}
+
+fail() {
+  printf '{"ok":false,"error":"%s"}\n' "$(printf '%s' "$1" | json_escape)"
+  exit 0
+}
+
+[ "$REQUEST_METHOD" = "POST" ] || fail "POST required"
+
+case "$CONTENT_LENGTH" in
+  ''|*[!0-9]*) CONTENT_LENGTH=0 ;;
+esac
+[ "$CONTENT_LENGTH" -gt 4096 ] && fail "password too long"
+[ "$CONTENT_LENGTH" -gt 0 ] || fail "empty password"
+
+# Тело — сырой пароль, без urlencode: так его не портят + и %.
+# Обрезаем только завершающий перевод строки, который может добавить textarea.
+pass=$(head -c "$CONTENT_LENGTH" | tr -d '\r\n')
+[ -n "$pass" ] || fail "empty password"
+
+command -v openssl >/dev/null 2>&1 || fail "openssl not found in container"
+
+hash=$(printf '%s' "$pass" | openssl passwd -1 -stdin 2>/dev/null)
+case "$hash" in
+  '$1$'*) ;;
+  *) fail "openssl passwd failed" ;;
+esac
+
+printf '{"ok":true,"hash":"%s"}\n' "$(printf '%s' "$hash" | json_escape)"
