@@ -326,6 +326,12 @@ async function revealSecret(node) {
     const value = values[input.name];
     if (value === undefined) throw new Error("значение не найдено");
     input.value = value;
+    // password-поле после раскрытия всё равно показывало точки
+    if (input.type === "password") {
+      input.type = "text";
+      const tgl = input.parentNode && input.parentNode.querySelector(".password-toggle");
+      if (tgl) { tgl.textContent = "◎"; tgl.title = "Скрыть пароль"; }
+    }
     secretMarkRevealed(input);
     Store.set(originalKey(input.name), value);
     Store.set(originalPresentKey(input.name), "1");
@@ -687,6 +693,17 @@ function restoreLastCommands() {
   pageEl.value = pageText;
   allEl.value = allText;
   panel.hidden = false;
+}
+
+function forgetLastCommands() {
+  ["mihomo-last-commands-page", "mihomo-last-commands-all", "mihomo-last-commands-at"]
+    .forEach((k) => Store.remove(k));
+}
+
+function hideCommands() {
+  const panel = document.getElementById("commands");
+  if (panel) panel.hidden = true;
+  forgetLastCommands();
 }
 
 function copyText(text, fallbackEl) {
@@ -1738,6 +1755,7 @@ function resetUiDraft() {
       Store.remove(key);
     }
   });
+  forgetLastCommands();
   draftDeleteOnServer();
   location.reload(true);
 }
@@ -1759,6 +1777,7 @@ function resetCurrentPageDraft() {
     Store.remove(originalPresentKey(name));
     Store.remove(pageKey(name));
   });
+  forgetLastCommands();
   draftSaveDebounced();
   location.reload(true);
 }

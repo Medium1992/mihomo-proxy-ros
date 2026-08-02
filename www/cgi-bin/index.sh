@@ -68,6 +68,14 @@ env_attr() {
   env_default "$1" "$2" | h
 }
 
+# busybox httpd отдаёт CGI урезанный PATH, а iproute2 лежит в /sbin или /usr/bin
+ip_bin() {
+  for _c in ip /sbin/ip /usr/sbin/ip /bin/ip /usr/bin/ip; do
+    command -v "$_c" >/dev/null 2>&1 && { printf '%s' "$_c"; return 0; }
+  done
+  return 1
+}
+
 # --- Маскировка секретов ---
 # Значения этих env — UUID прокси, пароли подписок, токены в headers, secret
 # external-controller. В HTML они не печатаются: страницы пре-рендерятся в
@@ -95,8 +103,10 @@ is_secret_env() {
   return 1
 }
 
-# Значение env скрыто? (секретное И реально задано на сервере)
+# Маскировка выключена по умолчанию: панель нужна для правки этих значений,
+# а прятать их за кнопку «Показать» мешает работе. WEB_MASK_SECRETS=true включает.
 env_masked() {
+  [ "${WEB_MASK_SECRETS:-false}" = "true" ] || return 1
   is_secret_env "$1" && env_exists "$1"
 }
 
@@ -512,6 +522,7 @@ footer() {
     </div>
     </form>
     <section id="commands" class="command-panel" hidden>
+      <button type="button" class="command-close" onclick="hideCommands()" title="Закрыть">&#10005;</button>
       <div>
         <h2>Команды для MikroTik</h2>
         <p>Генератор сравнивает исходное значение env с тем, что сейчас в форме: новое добавляет, измененное правит, очищенное или удаленное удаляет.</p>
@@ -812,10 +823,11 @@ EOF
   <div><b>Регистр имени</b><span>Ищется и точное имя интерфейса, и версия в верхнем регистре со заменой спецсимволов: для <code>eth1</code> подойдут <code>eth1_GATEWAY</code> и <code>ETH1_GATEWAY</code>, для <code>veth-lan</code> — <code>VETH_LAN_GATEWAY</code>.</span></div>
 </div>
 EOF
+  veth_ip=$(ip_bin) || veth_ip=""
   echo '<div class="grid">'
   veth_i=0
-  for veth_if in $(ip -o link show up 2>/dev/null | awk -F': ' '/link[/]ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
-    veth_net="$(ip route list dev "$veth_if" proto kernel scope link 2>/dev/null | awk '{print $1; exit}')"
+  for veth_if in $([ -n "$veth_ip" ] && "$veth_ip" -o link show up 2>/dev/null | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
+    veth_net="$("$veth_ip" route list dev "$veth_if" proto kernel scope link 2>/dev/null | awk '{print $1; exit}')"
     veth_auto=""
     if [ -n "$veth_net" ]; then
       veth_mask="${veth_net#*/}"
@@ -838,7 +850,13 @@ EOF
     done
     veth_i=$((veth_i + 1))
   done
-  [ "$veth_i" -eq 0 ] && echo '<div class="empty">Интерфейсы не обнаружены.</div>'
+  if [ "$veth_i" -eq 0 ]; then
+    if [ -z "$veth_ip" ]; then
+      echo '<div class="empty">Утилита <code>ip</code> недоступна из CGI — список интерфейсов не построить. Значения env ниже всё равно применяются.</div>'
+    else
+      echo '<div class="empty">Интерфейсы с MAC-адресом не найдены.</div>'
+    fi
+  fi
   echo '</div>'
   section_end
 
@@ -1906,7 +1924,8 @@ tools_page() {
   cat <<'EOF'
 <div class="tools-browser">
   <aside class="group-list tools-list" aria-label="Инструменты">
-    <button type="button" class="active" data-tool-tab="b64enc"><b>Base64 encode</b><small>текст → base64</small></button>
+    <button type="button" class="active" data-tool-tab="authhash"><b>Пароль вебки</b><small>пароль → md5-хеш</small></button>
+    <button type="button" data-tool-tab="b64enc"><b>Base64 encode</b><small>текст → base64</small></button>
     <button type="button" data-tool-tab="b64dec"><b>Base64 decode</b><small>base64 → текст</small></button>
     <button type="button" data-tool-tab="regex"><b>Regex test</b><small>проверка строк</small></button>
     <button type="button" data-tool-tab="xray"><b>Xray outbounds</b><small>JSON → proxy URI</small></button>
@@ -1914,10 +1933,32 @@ tools_page() {
     <button type="button" data-tool-tab="vanya"><b>Дядя Ваня ВПН</b><small>ssconf → config</small></button>
     <button type="button" data-tool-tab="http"><b>HTTP запрос</b><small>url + headers → ответ</small></button>
     <button type="button" data-tool-tab="x2m"><b>xray2mihomo</b><small>Xray sub → mihomo</small></button>
-    <button type="button" data-tool-tab="authhash"><b>Пароль вебки</b><small>пароль → md5-хеш</small></button>
   </aside>
   <div class="tool-panes">
-    <article class="tool-pane active" data-tool-pane="b64enc">
+    <article class="tool-pane active" data-tool-pane="authhash">
+      <div class="notice"><b>Пароль на веб-панель</b><span>Панель закрыта HTTP basic auth. Логин задаётся в <code>BASIC_AUTH_USER</code> (по умолчанию <code>admin</code>), пароль — <b>только хешем</b> в <code>BASIC_AUTH_HASH</code>. По умолчанию пароль <code>admin</code> — смените его.</span></div>
+      <div class="tool-compact-grid cols2">
+        <label class="field"><span><b>Логин</b><em>BASIC_AUTH_USER</em></span><input id="toolAuthUser" spellcheck="false" autocomplete="off" value="admin" placeholder="admin"></label>
+        <label class="field"><span><b>Новый пароль</b><em>в env не попадёт, только хеш</em></span><input id="toolAuthPass" type="password" spellcheck="false" autocomplete="new-password" placeholder="придумайте пароль"></label>
+      </div>
+      <div class="bc-actions">
+        <button type="button" class="primary" onclick="toolAuthHash()">Сгенерировать хеш</button>
+        <button type="button" onclick="toolCopy('toolAuthHashOut', this)">Скопировать хеш</button>
+        <button type="button" onclick="toolCopy('toolAuthCommands', this)">Скопировать команды</button>
+        <span class="tool-status" id="toolAuthStatus"></span>
+      </div>
+      <label class="field field-wide"><span><b>Хеш</b><em>значение для BASIC_AUTH_HASH</em></span><textarea id="toolAuthHashOut" rows="2" readonly spellcheck="false" placeholder="$1$..."></textarea></label>
+      <label class="field field-wide"><span><b>Команды RouterOS</b><em>добавить/обновить env и перезапустить контейнер</em></span><textarea id="toolAuthCommands" rows="8" readonly spellcheck="false"></textarea></label>
+      <details class="bc-tier-info">
+        <summary>Как это работает</summary>
+        <div class="bc-tier-info-body">
+          <p>Пароль уходит на <code>/cgi-bin/gen-hash</code> внутри контейнера, там <code>openssl passwd -1</code> считает md5-хеш формата <code>$1$соль$хеш</code>. Сам пароль нигде не сохраняется — ни в env, ни в черновике панели, ни в localStorage браузера.</p>
+          <p>Хеш кладётся в env <code>BASIC_AUTH_HASH</code>, entrypoint пишет из него <code>/etc/httpd.conf</code> строкой <code>/:логин:хеш</code>, и busybox httpd закрывает весь сайт целиком — и страницы, и <code>/cgi-bin</code>.</p>
+          <p>Забыли пароль — удалите env <code>BASIC_AUTH_HASH</code> и перезапустите контейнер: вернётся дефолтный <code>admin</code>/<code>admin</code>.</p>
+        </div>
+      </details>
+    </article>
+    <article class="tool-pane" data-tool-pane="b64enc" hidden>
       <div class="group-pane-head">
         <label class="field"><span><b>Исходный текст</b><em>UTF-8</em></span><textarea id="toolB64Plain" rows="12" spellcheck="false" placeholder="Любой текст"></textarea></label>
       </div>
@@ -2055,30 +2096,7 @@ tools_page() {
       <label class="field field-wide"><span><b>Ответ</b><em>результат конвертера как есть</em></span><textarea id="toolX2mResult" rows="14" readonly spellcheck="false"></textarea></label>
       <div class="tool-status" id="toolX2mStatus"></div>
     </article>
-    <article class="tool-pane" data-tool-pane="authhash" hidden>
-      <div class="notice"><b>Пароль на веб-панель</b><span>Панель закрыта HTTP basic auth. Логин задаётся в <code>BASIC_AUTH_USER</code> (по умолчанию <code>admin</code>), пароль — <b>только хешем</b> в <code>BASIC_AUTH_HASH</code>. По умолчанию пароль <code>admin</code> — смените его.</span></div>
-      <div class="tool-compact-grid cols2">
-        <label class="field"><span><b>Логин</b><em>BASIC_AUTH_USER</em></span><input id="toolAuthUser" spellcheck="false" autocomplete="off" value="admin" placeholder="admin"></label>
-        <label class="field"><span><b>Новый пароль</b><em>в env не попадёт, только хеш</em></span><input id="toolAuthPass" type="password" spellcheck="false" autocomplete="new-password" placeholder="придумайте пароль"></label>
       </div>
-      <div class="bc-actions">
-        <button type="button" class="primary" onclick="toolAuthHash()">Сгенерировать хеш</button>
-        <button type="button" onclick="toolCopy('toolAuthHashOut', this)">Скопировать хеш</button>
-        <button type="button" onclick="toolCopy('toolAuthCommands', this)">Скопировать команды</button>
-        <span class="tool-status" id="toolAuthStatus"></span>
-      </div>
-      <label class="field field-wide"><span><b>Хеш</b><em>значение для BASIC_AUTH_HASH</em></span><textarea id="toolAuthHashOut" rows="2" readonly spellcheck="false" placeholder="$1$..."></textarea></label>
-      <label class="field field-wide"><span><b>Команды RouterOS</b><em>добавить/обновить env и перезапустить контейнер</em></span><textarea id="toolAuthCommands" rows="8" readonly spellcheck="false"></textarea></label>
-      <details class="bc-tier-info">
-        <summary>Как это работает</summary>
-        <div class="bc-tier-info-body">
-          <p>Пароль уходит на <code>/cgi-bin/gen-hash</code> внутри контейнера, там <code>openssl passwd -1</code> считает md5-хеш формата <code>$1$соль$хеш</code>. Сам пароль нигде не сохраняется — ни в env, ни в черновике панели, ни в localStorage браузера.</p>
-          <p>Хеш кладётся в env <code>BASIC_AUTH_HASH</code>, entrypoint пишет из него <code>/etc/httpd.conf</code> строкой <code>/:логин:хеш</code>, и busybox httpd закрывает весь сайт целиком — и страницы, и <code>/cgi-bin</code>.</p>
-          <p>Забыли пароль — удалите env <code>BASIC_AUTH_HASH</code> и перезапустите контейнер: вернётся дефолтный <code>admin</code>/<code>admin</code>.</p>
-        </div>
-      </details>
-    </article>
-  </div>
 </div>
 EOF
   section_end
