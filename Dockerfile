@@ -43,8 +43,8 @@ RUN --mount=type=secret,id=gh_token set -eu; . /gh.sh; \
     [ -n "$urls" ] || { echo "byedpi: нет подходящих ассетов в релизе" >&2; exit 1; };\
     for u in $urls; do dl "$u"; done
 
-RUN for f in *.tar.gz; do tar -xzf "$f"; done
-RUN for f in *.gz; do gunzip "$f"; done
+RUN set -e; for f in *.tar.gz; do [ -e "$f" ] || continue; tar -xzf "$f"; done
+RUN set -e; for f in *.gz;     do [ -e "$f" ] || continue; gunzip "$f"; done
 
 RUN --mount=type=secret,id=gh_token set -eu; . /gh.sh; \
     u="$(gh_api https://api.github.com/repos/bol-van/zapret/releases/latest \
@@ -132,6 +132,11 @@ RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
     if [ -d zapret-discord-youtube/lists ] && ls zapret-discord-youtube/lists/*.txt >/dev/null 2>&1; then \
         cp zapret-discord-youtube/lists/*.txt /final/zapret-lists/; \
     fi; \
+    for d in /final/lua:lua /final/zapret-fakebin:bin /final/zapret-lists:txt; do \
+      dir="${d%:*}"; ext="${d#*:}"; \
+      ls "$dir"/*."$ext" >/dev/null 2>&1 \
+        || { echo "$dir пуст: ни одного *.$ext не скопировалось, upstream переехал?" >&2; exit 1; }; \
+    done; \
 fi
 
 COPY entrypoint.sh entrypoint_armv5.sh /final/
