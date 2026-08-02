@@ -1096,10 +1096,10 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
     <label class="field"><span><b>Уровень</b><em>сколько стратегий перебрать</em></span>
       <select id="bdcLevel">
         <option value="quick">quick (~18)</option>
-        <option value="basic" selected>basic (~210, рекомендуется)</option>
-        <option value="medium">medium (~230)</option>
-        <option value="extended">extended (~240)</option>
-        <option value="full">full (~250)</option>
+        <option value="basic" selected>basic (~237, рекомендуется)</option>
+        <option value="medium">medium (~270)</option>
+        <option value="extended">extended (~296)</option>
+        <option value="full">full (~302)</option>
       </select>
     </label>
   </div>
