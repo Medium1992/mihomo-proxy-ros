@@ -16,11 +16,18 @@ proxies:
       - 0.0.0.0/0
       - ::/0
     amnezia-wg-option:
+      # version: 3 включает v3-реализацию ядра; при любом другом значении
+      # (или без ключа) работает legacy — она же обслуживает 1.5 и 2.0.
+      # version: 3
       jc: 4
       jmin: 40
       jmax: 70
       s1: 50
       s2: 100
+      # s3/s4 — с 1.5; при header-protection-key все s1-s4 должны быть >= 12
+      s3: 0
+      s4: 0
+      # h1-h4: одно число или диапазон "начало-конец" (2.0+)
       h1: 1
       h2: 2
       h3: 3
@@ -30,3 +37,16 @@ proxies:
       i3: <hex>
       i4: <hex>
       i5: <hex>
+      # только 1.5, из 2.0+ убраны — не комбинировать с version: 3
+      # j1: 0
+      # j2: 0
+      # j3: 0
+      # itime: 0
+      # только AmneziaWG 3.0. Значение — диапазон "a-b" или одно число.
+      # header-protection-key: <base64 key>
+      # content-padding-addition: "0-64"
+      # rekey-after-time: "100-140"
+      # rekey-timeout: "4-6"
+      # reject-after-time: "160-200"
+      # keepalive-timeout: "8-12"
+      # max-handshake-attempts: "16-20"

@@ -500,6 +500,15 @@ read_cfg() {
   local dns=$(read_cfg "DNS")
   local mtu=$(read_cfg "MTU")
   local keepalive=$(read_cfg "PersistentKeepalive")
+  # 3.0 разрешает диапазон ("22-30"), но mihomo держит persistent-keepalive
+  # в int и на диапазоне не распарсит конфиг вовсе. Берём нижнюю границу:
+  # keepalive чаще — лишний трафик, но NAT точно останется живым.
+  case "$keepalive" in
+    *-*)
+      log "AWG $awg_name: PersistentKeepalive range '$keepalive' -> ${keepalive%%-*} (mihomo accepts a single value)" >&2
+      keepalive="${keepalive%%-*}"
+      ;;
+  esac
   local workers=$(read_cfg "Workers")
 
   local jc=$(read_cfg "Jc");         local jmin=$(read_cfg "Jmin");     local jmax=$(read_cfg "Jmax")
@@ -510,6 +519,20 @@ read_cfg() {
   local i4=$(read_cfg "I4");         local i5=$(read_cfg "I5")          
   local j1=$(read_cfg "J1");         local j2=$(read_cfg "J2");         local j3=$(read_cfg "J3")
   local itime=$(read_cfg "ITime")
+
+  # AmneziaWG 3.0. HeaderProtectionKey и ContentPaddingAddition должны
+  # совпадать с сервером, тайминги — чисто клиентские. Все значения, кроме
+  # ключа, задаются диапазоном "a-b" либо одним числом.
+  local hp_key=$(read_cfg "HeaderProtectionKey")
+  local content_padding=$(read_cfg "ContentPaddingAddition")
+  local rekey_after=$(read_cfg "RekeyAfterTime")
+  local rekey_timeout=$(read_cfg "RekeyTimeout")
+  local reject_after=$(read_cfg "RejectAfterTime")
+  local keepalive_timeout=$(read_cfg "KeepaliveTimeout")
+  local max_handshakes=$(read_cfg "MaxHandshakeAttempts")
+  # Ручное переопределение — на случай, когда 3.0 нужна без единого
+  # v3-параметра (секция [Mihomo], см. www/templates/awg.conf).
+  local awg_version=$(read_cfg "AwgVersion")
 
   local public_key=$(read_cfg "PublicKey")
   local psk=$(read_cfg "PresharedKey")
@@ -610,7 +633,42 @@ read_cfg() {
     esac
   fi
 
+  # Версия протокола. mihomo поднимает v3-реализацию только при version: 3;
+  # при любом другом значении работает legacy — она же обслуживает 1.5 и 2.0.
+  local awg3=0
+  for v in "$hp_key" "$content_padding" "$rekey_after" "$rekey_timeout" "$reject_after" "$keepalive_timeout" "$max_handshakes"; do
+    [ -n "$v" ] && awg3=1
+  done
+  case "$awg_version" in
+    3|3.*) awg3=1 ;;
+    "") ;;
+    *) awg3=0 ;;
+  esac
+
+  if [ "$awg3" -eq 1 ]; then
+    # J1-J3 и ITime были только в 1.5 и вырезаны из 3.0. UAPI ядра отвергает
+    # неизвестный ключ целиком — с ними proxy просто не поднимется.
+    if [ -n "$j1$j2$j3$itime" ]; then
+      log "AWG $awg_name: dropping v1.5-only J1-J3/ITime, AmneziaWG 3.0 removed them" >&2
+      j1=""; j2=""; j3=""; itime=""
+    fi
+    # Header protection шифрует заголовки, беря S1-S4 как nonce, поэтому
+    # ядро требует каждое из них >= 12 (HeaderCipherNonceSize) и иначе падает.
+    if [ -n "$hp_key" ]; then
+      for v in s1 s2 s3 s4; do
+        eval val=\$$v
+        case "$val" in
+          ''|*[!0-9]*) val=0 ;;
+        esac
+        if [ "$val" -lt 12 ]; then
+          log "AWG $awg_name: WARNING $v=$val, HeaderProtectionKey requires >= 12 — the peer will refuse to start" >&2
+        fi
+      done
+    fi
+  fi
+
   local awg_params="jc jmin jmax s1 s2 s3 s4 h1 h2 h3 h4 i1 i2 i3 i4 i5 j1 j2 j3 itime"
+  awg_params="$awg_params hp_key content_padding rekey_after rekey_timeout reject_after keepalive_timeout max_handshakes"
   local has_awg_param=0
   for v in i1 i2 i3 i4 i5; do
     eval val=\$$v
@@ -646,6 +704,25 @@ read_cfg() {
     [ -n "$j2" ]     && echo "      j2: $j2"
     [ -n "$j3" ]     && echo "      j3: $j3"
     [ -n "$itime" ]  && echo "      itime: $itime"
+    if [ "$awg3" -eq 1 ]; then
+      echo "      version: 3"
+      # v3-поля в mihomo объявлены строками (значением может быть диапазон),
+      # поэтому кавычим: иначе YAML отдал бы 22-30 строкой, а 30 — числом.
+      [ -n "$hp_key" ]            && printf '      header-protection-key: %s
+'    "$(printf '%s' "$hp_key" | yaml_quote)"
+      [ -n "$content_padding" ]   && printf '      content-padding-addition: %s
+' "$(printf '%s' "$content_padding" | yaml_quote)"
+      [ -n "$rekey_after" ]       && printf '      rekey-after-time: %s
+'         "$(printf '%s' "$rekey_after" | yaml_quote)"
+      [ -n "$rekey_timeout" ]     && printf '      rekey-timeout: %s
+'            "$(printf '%s' "$rekey_timeout" | yaml_quote)"
+      [ -n "$reject_after" ]      && printf '      reject-after-time: %s
+'        "$(printf '%s' "$reject_after" | yaml_quote)"
+      [ -n "$keepalive_timeout" ] && printf '      keepalive-timeout: %s
+'        "$(printf '%s' "$keepalive_timeout" | yaml_quote)"
+      [ -n "$max_handshakes" ]    && printf '      max-handshake-attempts: %s
+'   "$(printf '%s' "$max_handshakes" | yaml_quote)"
+    fi
   fi
   echo ""
 }
@@ -1087,6 +1164,7 @@ emit_vpn_wireguard_proxy() {
   local private_key client_ip server port public_key psk keepalive mtu
   local ip_v4="" ip_v6="" addr
   local jc jmin jmax s1 s2 s3 s4 h1 h2 h3 h4 i1 i2 i3 i4 i5 j1 j2 j3 itime
+  local hp_key content_padding rekey_after rekey_timeout reject_after keepalive_timeout max_handshakes awg3=0
   local has_awg_param=0
 
   private_key=$(vpn_awg_value "$last_file" "$json_file" "client_priv_key")
@@ -1144,6 +1222,27 @@ emit_vpn_wireguard_proxy() {
   j3=$(vpn_awg_value "$last_file" "$json_file" "J3")
   itime=$(vpn_awg_value "$last_file" "$json_file" "ITime")
 
+  # AmneziaWG 3.0 — те же поля, что и в .conf, только из JSON конфигурации vpn://
+  hp_key=$(vpn_awg_value "$last_file" "$json_file" "HeaderProtectionKey")
+  content_padding=$(vpn_awg_value "$last_file" "$json_file" "ContentPaddingAddition")
+  rekey_after=$(vpn_awg_value "$last_file" "$json_file" "RekeyAfterTime")
+  rekey_timeout=$(vpn_awg_value "$last_file" "$json_file" "RekeyTimeout")
+  reject_after=$(vpn_awg_value "$last_file" "$json_file" "RejectAfterTime")
+  keepalive_timeout=$(vpn_awg_value "$last_file" "$json_file" "KeepaliveTimeout")
+  max_handshakes=$(vpn_awg_value "$last_file" "$json_file" "MaxHandshakeAttempts")
+
+  for v in "$hp_key" "$content_padding" "$rekey_after" "$rekey_timeout" "$reject_after" "$keepalive_timeout" "$max_handshakes"; do
+    [ -n "$v" ] && awg3=1
+  done
+  if [ "$awg3" -eq 1 ]; then
+    # J1-J3/ITime вырезаны из 3.0, а неизвестный ключ UAPI роняет весь peer.
+    j1=""; j2=""; j3=""; itime=""
+  fi
+  # 3.0 допускает диапазон, mihomo — только одно число.
+  case "$keepalive" in
+    *-*) keepalive="${keepalive%%-*}" ;;
+  esac
+
   for v in i1 i2 i3 i4 i5; do
     eval val=\$$v
     case "$val" in
@@ -1152,7 +1251,8 @@ emit_vpn_wireguard_proxy() {
     esac
   done
 
-  for v in jc jmin jmax s1 s2 s3 s4 h1 h2 h3 h4 i1 i2 i3 i4 i5 j1 j2 j3 itime; do
+  for v in jc jmin jmax s1 s2 s3 s4 h1 h2 h3 h4 i1 i2 i3 i4 i5 j1 j2 j3 itime \
+           hp_key content_padding rekey_after rekey_timeout reject_after keepalive_timeout max_handshakes; do
     eval val=\$$v
     [ -n "$val" ] && has_awg_param=1
   done
@@ -1193,6 +1293,23 @@ emit_vpn_wireguard_proxy() {
     [ -n "$j2" ]     && echo "      j2: $j2"
     [ -n "$j3" ]     && echo "      j3: $j3"
     [ -n "$itime" ]  && echo "      itime: $itime"
+    if [ "$awg3" -eq 1 ]; then
+      echo "      version: 3"
+      [ -n "$hp_key" ]            && printf '      header-protection-key: %s
+'    "$(printf '%s' "$hp_key" | yaml_quote)"
+      [ -n "$content_padding" ]   && printf '      content-padding-addition: %s
+' "$(printf '%s' "$content_padding" | yaml_quote)"
+      [ -n "$rekey_after" ]       && printf '      rekey-after-time: %s
+'         "$(printf '%s' "$rekey_after" | yaml_quote)"
+      [ -n "$rekey_timeout" ]     && printf '      rekey-timeout: %s
+'            "$(printf '%s' "$rekey_timeout" | yaml_quote)"
+      [ -n "$reject_after" ]      && printf '      reject-after-time: %s
+'        "$(printf '%s' "$reject_after" | yaml_quote)"
+      [ -n "$keepalive_timeout" ] && printf '      keepalive-timeout: %s
+'        "$(printf '%s' "$keepalive_timeout" | yaml_quote)"
+      [ -n "$max_handshakes" ]    && printf '      max-handshake-attempts: %s
+'   "$(printf '%s' "$max_handshakes" | yaml_quote)"
+    fi
   fi
   echo ""
 }
