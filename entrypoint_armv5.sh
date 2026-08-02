@@ -3025,6 +3025,57 @@ EOF
     else
       headers_raw=""
     fi
+
+    sub_is_happ=0
+    case "$url" in
+      happ://*)
+        if ! command -v happ_decrypt >/dev/null 2>&1; then
+          log "$name: нет /www/lib/happ.sh — провайдер пропущен"
+          continue
+        fi
+        happ_plain=$(happ_decrypt "$url") || happ_plain=""
+        case "$happ_plain" in
+          http://*|https://*)
+            url="$happ_plain"
+            sub_is_happ=1
+            log "$name: happ-ссылка расшифрована"
+            ;;
+          "")
+            log "$name: happ-ссылка не расшифровалась — провайдер пропущен"
+            continue
+            ;;
+          *)
+            log "$name: happ-ссылка дала не http(s)-URL — провайдер пропущен"
+            continue
+            ;;
+        esac
+        ;;
+    esac
+
+    # auto: happ отдаёт Xray JSON -> через конвертер, обычная ссылка -> как есть
+    sub_convert=$(printenv "${name}_CONVERT" 2>/dev/null || echo "")
+    [ -z "$sub_convert" ] && sub_convert=auto
+    case "$sub_convert" in
+      auto) [ "$sub_is_happ" = 1 ] && sub_convert=xray2mihomo || sub_convert=none ;;
+      xray2mihomo|none) ;;
+      *) log "$name: неизвестный ${name}_CONVERT='$sub_convert', считаю как none"; sub_convert=none ;;
+    esac
+    if [ "$sub_convert" = "xray2mihomo" ]; then
+      if [ "${WEB_API_PORT:-81}" = "0" ]; then
+        log "$name: WEB_API_PORT=0, конвертер недоступен — ссылка уходит как есть"
+      else
+        url=$(build_converter_url "$url" "$headers_raw")
+        # заголовки уехали в query конвертера, иначе mihomo слал бы их на localhost
+        headers_raw=""
+        # proxy применяется к загрузке провайдера, а это теперь localhost;
+        # апстрим качает конвертер и о прокси mihomo не знает
+        if [ "$proxy" != "DIRECT" ]; then
+          log "$name: ${name}_PROXY='$proxy' не применяется к конвертированным подпискам, ставлю DIRECT"
+        fi
+        proxy="DIRECT"
+      fi
+    fi
+
     cat >> "$CONFIG_YAML" <<EOF
   $name:
     type: http
@@ -4099,6 +4150,47 @@ setup_basic_auth() {
   fi
 }
 
+# happ://crypt* в SUB_LINK*; ключи в /www/assets/happ.js
+if [ -r /www/lib/happ.sh ]; then
+  . /www/lib/happ.sh
+fi
+
+url_encode() {
+  awk '
+    BEGIN { for (i = 0; i < 256; i++) ord[sprintf("%c", i)] = i }
+    {
+      out = ""
+      n = length($0)
+      for (i = 1; i <= n; i++) {
+        c = substr($0, i, 1)
+        if (c ~ /[A-Za-z0-9._~-]/) out = out c
+        else out = out sprintf("%%%02X", ord[c])
+      }
+      printf "%s", out
+    }
+  '
+}
+
+# $1 = URL подписки, $2 = заголовки k=v#k=v.
+# Префикс h. снимает конвертер; он же защищает от столкновения с sub/format.
+build_converter_url() {
+  _cu="http://127.0.0.1:${WEB_API_PORT:-81}/cgi-bin/xray2mihomo-sub?sub=$(printf '%s' "$1" | url_encode)&format=uri"
+  if [ -n "${2:-}" ]; then
+    _cu_ifs=$IFS
+    IFS='#'
+    for _cu_pair in $2; do
+      [ -z "$_cu_pair" ] && continue
+      case "$_cu_pair" in *=*) ;; *) continue ;; esac
+      _cu_k=$(printf '%s' "${_cu_pair%%=*}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+      [ -z "$_cu_k" ] && continue
+      _cu_cu="$_cu&h.$(printf '%s' "$_cu_k" | url_encode)=$(printf '%s' "${_cu_pair#*=}" | url_encode)"
+      _cu="$_cu_cu"
+    done
+    IFS=$_cu_ifs
+  fi
+  printf '%s' "$_cu"
+}
+
 # Старые конфиги ссылались на конвертер подписок через порт 80
 # (http://127.0.0.1/cgi-bin/xray2mihomo-sub?...). Теперь там basic auth и
 # mihomo получил бы 401, поэтому молча переводим такие URL на служебный
@@ -4160,6 +4252,10 @@ run() {
 
   config_file_mihomo
 
+  # до старта mihomo: иначе первая загрузка конвертированного провайдера
+  # упрётся в connection refused и повторится только через interval
+  setup_api_listener
+
   echo "Starting Mihomo $(mihomo -v)"
 
   SAFE_PATHS="$RUNTIME_DIR" mihomo -d "$CONFIG_DIR" -f "$CONFIG_YAML" &
@@ -4196,7 +4292,6 @@ run() {
   wait "$RENDER_PID" 2>/dev/null || true
   setup_basic_auth
   httpd -f -p 80 -h "$WEBROOT" -c "$HTTPD_CONF" >/dev/null 2>&1 &
-  setup_api_listener
 
   wait $MIHOMO_PID
 }

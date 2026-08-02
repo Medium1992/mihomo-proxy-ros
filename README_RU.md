@@ -177,8 +177,27 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 Ссылку из *Инструменты → xray2mihomo* можно класть в `SUB_LINK*` как есть:
 
 ```
-SUB_LINK1=http://127.0.0.1:81/cgi-bin/xray2mihomo-sub?sub=https://provider.example/sub&format=yaml
+SUB_LINK1=http://127.0.0.1:81/cgi-bin/xray2mihomo-sub?sub=https://provider.example/sub&format=uri
 ```
+
+#### Зашифрованные ссылки Happ в `SUB_LINK*`
+
+`SUB_LINKxx` принимает `happ://crypt…happ://crypt5` напрямую:
+
+```
+SUB_LINK1=happ://crypt5/fzvdpvKZ85Qn2aSN…
+SUB_LINK1_HEADERS=x-hwid=ABC-123#user-agent=Happ/3.22.1
+```
+
+Контейнер расшифровывает ссылку при старте (`www/lib/happ.sh`, openssl), получает настоящий адрес
+подписки и, поскольку Happ отдаёт Xray JSON, заворачивает его в локальный конвертер
+(`format=uri` — mihomo такие списки читает надёжнее всего).
+Заголовки из `SUB_LINKxx_HEADERS` уезжают апстриму через конвертер, а не напрямую из mihomo —
+поэтому HWID и user-agent доходят до провайдера как обычно. Поведением управляет `SUB_LINKxx_CONVERT`.
+
+Ключи для расшифровки берутся из `www/assets/happ.js` — того же файла, что использует панель
+(*Инструменты → Happ crypto*). Если Happ выпустил новый ключ, в логе будет
+`неизвестный маркер crypt5: …` — значит пора обновить секреты `HAPP1..HAPP4`.
 
 Порт `81` живёт только на loopback контейнера и не закрыт паролем — иначе mihomo,
 который обновляет провайдер по `interval`, получал бы 401 от панели на `:80`.
@@ -224,6 +243,7 @@ SUB_LINK1=http://127.0.0.1:81/cgi-bin/xray2mihomo-sub?sub=https://provider.examp
 | `SUB_LINKxx_EXCLUDE_FILTER` | — | Provider-level [exclude-filter](https://wiki.metacubex.one/ru/config/proxy-providers/#exclude-filter) — regex исключения. |
 | `SUB_LINKxx_EXCLUDE_TYPE` | — | Provider-level [exclude-type](https://wiki.metacubex.one/ru/config/proxy-providers/#exclude-type) — список [Adapter Type](https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45) (регистр не важен) через `\|`. Пример: `vmess\|direct`. |
 | `SUB_LINKxx_ADDITIONAL_PREFIX` | — | Идёт в `override.`[`additional-prefix`](https://wiki.metacubex.one/ru/config/proxy-providers/#overrideadditional-prefix) — фиксированный префикс к каждому имени узла. |
+| `SUB_LINKxx_CONVERT` | `auto` | Что делать с телом подписки: `auto` — happ-ссылки идут через локальный конвертер (Happ отдаёт Xray JSON), обычные попадают в mihomo как есть; `xray2mihomo` — конвертировать всегда; `none` — никогда. Требует включённого `WEB_API_PORT`. |
 | `SUB_LINKxx_ADDITIONAL_SUFFIX` | — | Идёт в `override.`[`additional-suffix`](https://wiki.metacubex.one/ru/config/proxy-providers/#overrideadditional-suffix) — фиксированный суффикс к каждому имени узла. |
 | `SOCKS0`, `SOCKS1`, … | — | SOCKS5 прокси. Формат: `server=ip#port=1080#username=#password=#tls=#fingerprint=#skip-cert-verify=#udp=#ip-version=`. [Docs](https://wiki.metacubex.one/ru/config/proxies/socks/). |
 | `XXX_DIALER_PROXY` | — | [Override dialer-proxy](https://wiki.metacubex.one/ru/config/proxy-providers/#override) — пускать соединения этого провайдера через другую группу. Пример: `LINK1_DIALER_PROXY=YouTube`. |

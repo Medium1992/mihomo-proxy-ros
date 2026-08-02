@@ -1863,7 +1863,7 @@ function addRow(containerId, prefix, startAtOne) {
       `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   } else if (prefix === "SUB_LINK") {
     div.innerHTML =
-      `<label><span>${displayKey}</span><input name="${key}" placeholder="https://subscription"></label>` +
+      `<label><span>${displayKey}</span><input name="${key}" placeholder="https://subscription или happ://crypt5/..."></label>` +
       `<label><span>${displayKey}_INTERVAL</span><input type="number" name="${key}_INTERVAL" placeholder="3600"></label>` +
       `<label><span>${displayKey}_PROXY</span><input name="${key}_PROXY" placeholder="DIRECT"></label>` +
       `<label class="field-validated" data-validate="proxy_name"><span>${displayKey}_DIALER_PROXY</span><input name="${key}_DIALER_PROXY" placeholder="GLOBAL"></label>` +
@@ -1873,6 +1873,7 @@ function addRow(containerId, prefix, startAtOne) {
         `<label class="field-validated" data-validate="exclude_type"><span>${displayKey}_EXCLUDE_TYPE</span><input name="${key}_EXCLUDE_TYPE" placeholder="vmess|direct"></label>` +
         `<label><span>${displayKey}_ADDITIONAL_PREFIX</span><input name="${key}_ADDITIONAL_PREFIX" placeholder="${displayKey} | "></label>` +
         `<label><span>${displayKey}_ADDITIONAL_SUFFIX</span><input name="${key}_ADDITIONAL_SUFFIX" placeholder=" | ${displayKey}"></label>` +
+        `<label><span>${displayKey}_CONVERT</span><select name="${key}_CONVERT"><option value="">auto</option><option value="xray2mihomo">xray2mihomo</option><option value="none">none</option></select></label>` +
       `</div>` +
       `<div class="headers-editor">` +
         `<span>${displayKey}_HEADERS</span>` +
