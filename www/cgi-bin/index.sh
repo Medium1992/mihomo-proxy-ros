@@ -655,6 +655,7 @@ providers_page() {
     link      "LINK*" \
     sub-link  "SUB_LINK*" \
     socks     "SOCKS*" \
+    veth      "Интерфейсы" \
     mounted   "Mounted"
   section_start_tab health "Health-check" "Общие настройки проверки доступности для file/http proxy-providers или proxy-groups."
   echo '<div class="grid">'
@@ -800,6 +801,44 @@ EOF
 </div>
 EOF
   done
+  echo '</div>'
+  section_end
+
+  section_start_tab veth "Интерфейсы" "VETH-интерфейсы контейнера. Первый — маршрут по умолчанию, остальные становятся прокси-выходами. Имя env совпадает с именем интерфейса."
+  cat <<'EOF'
+<div class="note-list">
+  <div><b>&lt;iface&gt;_GATEWAY</b><span>Подменяет шлюз интерфейса. По умолчанию он вычисляется как «адрес сети + 1» (для <code>192.168.5.0/24</code> это <code>192.168.5.1</code>); если реальный шлюз другой, выход через интерфейс не заработает. Адрес обязан лежать в подсети интерфейса: иначе он игнорируется, и берётся вычисленный — связность контейнера не теряется.</span></div>
+  <div><b>&lt;iface&gt;_GATEWAY1, _GATEWAY2, …</b><span>Формат <code>ip#имя</code>. Каждый добавляет в mihomo отдельный выход с этим именем: своя метка, своя таблица маршрутизации (600+), трафик уходит через указанный шлюз на том же интерфейсе — так соседний контейнер становится проксивыходом. Без <code>#имя</code> выход назовётся <code>&lt;iface&gt;_GATEWAYn</code>. Адрес вне подсети интерфейса отбрасывается.</span></div>
+  <div><b>Регистр имени</b><span>Ищется и точное имя интерфейса, и версия в верхнем регистре со заменой спецсимволов: для <code>eth1</code> подойдут <code>eth1_GATEWAY</code> и <code>ETH1_GATEWAY</code>, для <code>veth-lan</code> — <code>VETH_LAN_GATEWAY</code>.</span></div>
+</div>
+EOF
+  echo '<div class="grid">'
+  veth_i=0
+  for veth_if in $(ip -o link show up 2>/dev/null | awk -F': ' '/link[/]ether/ {gsub(/@.*$/,"",$2); if($2!="lo" && $2!~/^hs5t/ && $2!="Meta") print $2}'); do
+    veth_net="$(ip route list dev "$veth_if" proto kernel scope link 2>/dev/null | awk '{print $1; exit}')"
+    veth_auto=""
+    if [ -n "$veth_net" ]; then
+      veth_mask="${veth_net#*/}"
+      veth_addr="${veth_net%%/*}"
+      if [ "$veth_mask" = "31" ] || [ "$veth_mask" = "32" ]; then
+        veth_auto="$veth_addr"
+      else
+        veth_auto="$(printf '%s' "$veth_addr" | awk -F. '{printf "%d.%d.%d.%d", $1, $2, $3, $4+1}')"
+      fi
+    fi
+    veth_env="$(printf '%s' "$veth_if" | tr '[:lower:]' '[:upper:]' | sed 's/[^A-Z0-9_]/_/g')"
+    if [ "$veth_i" -eq 0 ]; then
+      veth_role="маршрут по умолчанию"
+    else
+      veth_role="прокси-выход"
+    fi
+    field "${veth_env}_GATEWAY" "$veth_if" "Сеть <code>${veth_net:-неизвестна}</code>, вычисленный шлюз <code>${veth_auto:-нет}</code>. Роль: $veth_role." "$veth_auto" text ""
+    for veth_gw in $(printenv | cut -d= -f1 | grep -E "^${veth_env}_GATEWAY[0-9]+$" | sort -V); do
+      field "$veth_gw" "$veth_gw" "Доп. выход через этот интерфейс, формат <code>ip#имя</code>." "10.0.0.5#сосед" text ""
+    done
+    veth_i=$((veth_i + 1))
+  done
+  [ "$veth_i" -eq 0 ] && echo '<div class="empty">Интерфейсы не обнаружены.</div>'
   echo '</div>'
   section_end
 
