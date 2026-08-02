@@ -34,7 +34,9 @@ want_udp=0
 case ",$INCLUDE," in *,http,*|*,tls,*|*,tls12,*|*,tls13,*) want_tcp=1 ;; esac
 case ",$INCLUDE," in *,quic,*|*,udp,*) want_udp=1 ;; esac
 
-safe() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/_/g; s/__*/_/g; s/^_//; s/_$//'; }
+# minus сохраняем как neg: в byedpi -1 это «от конца», иначе 1+s и -1+s
+# схлопываются в одно имя и в таблице результатов их не различить
+safe() { printf '%s' "$1" | sed 's/-/neg/g; s/[^A-Za-z0-9]/_/g; s/__*/_/g; s/^_//; s/_$//'; }
 
 SEEN_FILE="${TMPDIR:-/tmp}/byedpi-gen-seen.$$"
 : >"$SEEN_FILE" 2>/dev/null || SEEN_FILE=""
@@ -127,9 +129,31 @@ fi
 # ============================================================================
 if [ "$TIER" -ge 2 ]; then
   # --- combined / ladder variants ------------------------------------------
-  for ttl in 6 8 10 12 16 32 64 96 128; do
+  # --ttl задаёт TTL только фейкового пакета: он должен умереть между DPI и
+  # сервером, иначе сервер получит мусор в потоке. Дефолт byedpi — 8.
+  for ttl in 1 2 3 4 5 6 7 8 10 12; do
     emit_all "ttl_${ttl}_udp_ladder_fake"  "--timeout 5 $udp_ladder $auto_all --fake -1 --ttl $ttl --md5sig $auto_tls --tlsrec 3+s"
+    emit_tls "ttl_${ttl}_fake_sni"         "--timeout 5 $auto_tls --fake -1 --ttl $ttl --md5sig --fake-sni yandex.ru --tlsrec 1+s"
+  done
+  # --def-ttl это TTL всех реальных пакетов: низкое значение просто не доедет
+  # до сервера, поэтому только правдоподобные для маскировки ОС.
+  for ttl in 64 96 128; do
     emit_all "def_ttl_${ttl}_oob_tlsrec"   "--timeout 5 --def-ttl $ttl $auto_all --oob 1 --tlsrec 1+s --split 1+s --disorder 3+s --udp-fake 1"
+  done
+
+  # --- offset:repeats:skip: повтор десинка по пакету с шагом ----------------
+  # parse_offset (main.c:527) + desync.c:557: pos += skip * (repeats - r).
+  # Раньше использовали только offset:repeats без шага — все повторы били в
+  # одну точку. С шагом это отдельный класс: дробление всего ClientHello.
+  for rep in 1:8:1 1:16:1 1:32:2 1:64:4 1:256:1 2:16:2 5:10:5; do
+    rs=$(safe "$rep")
+    emit_tls "rep_split_${rs}"     "--timeout 5 $auto_tls --split $rep --fake -1 --md5sig"
+    emit_all "rep_disorder_${rs}"  "--timeout 5 $auto_all --disorder $rep --udp-fake 1"
+  done
+  for rep in 1:8:1+s 1:16:2+s 1:32:1+s 1:64:1+sm; do
+    rs=$(safe "$rep")
+    emit_tls "rep_sni_split_${rs}" "--timeout 5 $auto_tls --split $rep --fake -1 --md5sig --fake-sni yandex.ru"
+    emit_all "rep_sni_oob_${rs}"   "--timeout 5 $auto_all --oob $rep --split 1+s --udp-fake 1"
   done
 
   for pos in 1+s 2+s 3+s 5+s 7+s 9+s 12+s 20+s 30+s 50+s -1 -1+s -5+s -14+s; do
@@ -269,6 +293,15 @@ if [ "$TIER" -ge 3 ]; then
     emit_tls "apk_tls_${sn}_round_mix" "--timeout 5 --fake-sni $sni --fake-tls-mod rand --fake 209 --split 1+sm --round 1-3 --udp-fake 1"
   done
 
+  # repeats:skip в паре со вторым методом и по остальным примитивам
+  for rep in 1:16:1 1:64:2 1:256:1; do
+    rs=$(safe "$rep")
+    emit_tls  "rep_pair_tlsrec_${rs}"  "--timeout 5 $auto_tls --split $rep --tlsrec 1+s --fake -1 --md5sig"
+    emit_all  "rep_pair_disoob_${rs}"  "--timeout 5 $auto_all --disorder $rep --disoob 7 --udp-fake 1"
+    emit_all  "rep_disoob_${rs}"       "--timeout 5 $auto_all --disoob $rep --split 1+s --udp-fake 1"
+    emit_http "rep_http_${rs}"         "--timeout 5 --proto=http --mod-http h,d --split $rep --disorder 1"
+  done
+
   for chain in \
     "--split 1 --oob 1 --udp-fake 1 $auto_redir --oob 1 $auto_rst --fake -1 --tlsrec 1+s $auto_tls --split 1 --oob 1+s --split -1 --udp-fake 1" \
     "--split 1 --disoob 1 --udp-fake 1 $auto_redir --split 5 --oob 2 $auto_rst --fake -1 --tlsrec 1+s $auto_tls --split 1 --oob 1+s --split -1 --udp-fake 1" \
@@ -286,6 +319,13 @@ if [ "$TIER" -ge 4 ]; then
     emit_all "extended_${sn}_dual_ladder" "--timeout 5 --proto=udp --udp-fake 1 --auto=none $tcp_ladder $auto_all --split 1 --disoob 1 $auto_all --split 5 --oob 25000+s $auto_all --fake -1 --md5sig --fake-sni $sni --fake-tls-mod rand"
     emit_all "extended_${sn}_offset_ladder" "--timeout 5 --fake-sni $sni --fake-tls-mod rand --fake -1 --fake-offset 1+sm --md5sig --drop-sack $tcp_alt_ladder $auto_tls --tlsrec 1+s --udp-fake 1"
   done
+  # плотная развёртка шага: у B-Checker это основной рабочий класс
+  for rep in 1:128:1 1:256:1 1:512:1 1:256:2 1:256:4 3:256:1 1:1024:1; do
+    rs=$(safe "$rep")
+    emit_tls "rep_dense_split_${rs}"    "--timeout 5 $auto_tls --split $rep --fake -1 --md5sig --fake-sni yandex.ru"
+    emit_tls "rep_dense_disorder_${rs}" "--timeout 5 $auto_tls --disorder $rep --fake -1 --md5sig"
+  done
+
   for f in $tls_bins; do
     bn=$(safe "$(basename "$f")")
     emit_tls "fake_data_${bn}" "--timeout 5 --proto=tls --fake -1 --md5sig --fake-data $f --auto=none"
