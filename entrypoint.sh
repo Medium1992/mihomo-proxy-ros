@@ -2735,7 +2735,7 @@ prepare_interface_routes() {
     fi
     gw=$(iface_env "$iface" "_GATEWAY") || true
     if [ -n "$gw" ] && ! ip_in_net "$gw" "$network"; then
-      log "$iface: шлюз $gw вне подсети $network, беру вычисленный $gw_auto" >&2
+      log "$iface: gateway $gw is outside $network, using derived $gw_auto" >&2
       gw=""
     fi
     [ -n "$gw" ] || gw="$gw_auto"
@@ -3105,7 +3105,7 @@ EOF
     case "$url" in
       happ://*)
         if ! command -v happ_decrypt >/dev/null 2>&1; then
-          log "$name: нет /www/lib/happ.sh — провайдер пропущен"
+          log "$name: /www/lib/happ.sh is missing, provider skipped"
           continue
         fi
         happ_plain=$(happ_decrypt "$url") || happ_plain=""
@@ -3113,14 +3113,14 @@ EOF
           http://*|https://*)
             url="$happ_plain"
             sub_is_happ=1
-            log "$name: happ-ссылка расшифрована"
+            log "$name: happ link decrypted"
             ;;
           "")
-            log "$name: happ-ссылка не расшифровалась — провайдер пропущен"
+            log "$name: happ link could not be decrypted, provider skipped"
             continue
             ;;
           *)
-            log "$name: happ-ссылка дала не http(s)-URL — провайдер пропущен"
+            log "$name: happ link did not decrypt to an http(s) URL, provider skipped"
             continue
             ;;
         esac
@@ -3133,11 +3133,11 @@ EOF
     case "$sub_convert" in
       auto) [ "$sub_is_happ" = 1 ] && sub_convert=xray2mihomo || sub_convert=none ;;
       xray2mihomo|none) ;;
-      *) log "$name: неизвестный ${name}_CONVERT='$sub_convert', считаю как none"; sub_convert=none ;;
+      *) log "$name: unknown ${name}_CONVERT='$sub_convert', treating as none"; sub_convert=none ;;
     esac
     if [ "$sub_convert" = "xray2mihomo" ]; then
       if [ "${WEB_API_PORT:-81}" = "0" ]; then
-        log "$name: WEB_API_PORT=0, конвертер недоступен — ссылка уходит как есть"
+        log "$name: WEB_API_PORT=0, converter unavailable, using the link as is"
       else
         url=$(build_converter_url "$url" "$headers_raw")
         # заголовки уехали в query конвертера, иначе mihomo слал бы их на localhost
@@ -3145,7 +3145,7 @@ EOF
         # proxy применяется к загрузке провайдера, а это теперь localhost;
         # апстрим качает конвертер и о прокси mihomo не знает
         if [ "$proxy" != "DIRECT" ]; then
-          log "$name: ${name}_PROXY='$proxy' не применяется к конвертированным подпискам, ставлю DIRECT"
+          log "$name: ${name}_PROXY='$proxy' does not apply to converted subscriptions, forcing DIRECT"
         fi
         proxy="DIRECT"
       fi
@@ -3307,7 +3307,7 @@ for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2
     fi
     gw=$(iface_env "$iface" "_GATEWAY") || true
     if [ -n "$gw" ] && ! ip_in_net "$gw" "$network"; then
-      log "$iface: шлюз $gw вне подсети $network, беру вычисленный $gw_auto" >&2
+      log "$iface: gateway $gw is outside $network, using derived $gw_auto" >&2
       gw=""
     fi
     [ -n "$gw" ] || gw="$gw_auto"
@@ -3358,22 +3358,22 @@ EOF
     # имя идёт в YAML-ключ, имя файла и GROUP_USE через запятую
     gw_clean=$(printf '%s' "$gw_name" | tr ' 	,:#"'"'"'/\\' '_______')
     if [ "$gw_clean" != "$gw_name" ]; then
-      log "$iface $gw_suffix: имя '$gw_name' -> '$gw_clean' (убраны спецсимволы)" >&2
+      log "$iface $gw_suffix: name '$gw_name' -> '$gw_clean' (special characters replaced)" >&2
       gw_name="$gw_clean"
     fi
     case "$gw_ip" in
-      ''|*[!0-9.]*) log "$iface $gw_suffix: '$gw_ip' не похоже на IPv4 — пропускаю" >&2; continue ;;
+      ''|*[!0-9.]*) log "$iface $gw_suffix: '$gw_ip' is not an IPv4 address, skipping" >&2; continue ;;
     esac
     if ! ip_in_net "$gw_ip" "$network"; then
-      log "$iface $gw_suffix: $gw_ip вне подсети $network — пропускаю" >&2
+      log "$iface $gw_suffix: $gw_ip is outside $network, skipping" >&2
       continue
     fi
     if [ -z "$gw_name" ]; then
-      log "$iface $gw_suffix: пустое имя выхода — пропускаю" >&2
+      log "$iface $gw_suffix: empty outbound name, skipping" >&2
       continue
     fi
     case " $providers $reverse_providers $gw_names " in
-      *" $gw_name "*) log "$iface $gw_suffix: имя '$gw_name' уже занято — пропускаю" >&2; continue ;;
+      *" $gw_name "*) log "$iface $gw_suffix: name '$gw_name' is already taken, skipping" >&2; continue ;;
     esac
 
     ip route replace default via "$gw_ip" dev "$iface" table $gw_mark
@@ -3399,7 +3399,7 @@ EOF
 $(health_check_block)
 EOF
     fi
-    log "$iface $gw_suffix: выход '$gw_name' через $gw_ip (таблица $gw_mark)"
+    log "$iface $gw_suffix: outbound '$gw_name' via $gw_ip (table $gw_mark)"
     gw_names="$gw_names $gw_name"
     gw_mark=$((gw_mark + 1))
   done
@@ -4293,7 +4293,7 @@ setup_basic_auth() {
     log "Web UI basic auth enabled for user '$BASIC_AUTH_USER'"
     case "$BASIC_AUTH_HASH" in
       "$BASIC_AUTH_HASH_DEFAULT")
-        log "WARNING: default web UI password is in use — set BASIC_AUTH_HASH (Инструменты → Хеш пароля)"
+        log "WARNING: default web UI password is in use, set BASIC_AUTH_HASH (panel: Tools -> web UI password)"
         ;;
     esac
   else
