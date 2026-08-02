@@ -698,7 +698,7 @@ EOF
   echo '<div class="subhead"><b>SUB_LINK</b><button type="button" onclick="addRow('\''subs'\'', '\''SUB_LINK'\'', false)">Добавить SUB_LINK</button></div><div id="subs" class="rows">'
   for name in $(env_names '^SUB_LINK[0-9]+='); do
     val="$(env_attr_masked "$name" "")"; idx="$(printf '%s' "$name" | sed 's/SUB_LINK//')"
-    if env_masked "$name"; then sub_ph="$(secret_attrs "$name")"; else sub_ph=' placeholder="https://subscription"'; fi
+    if env_masked "$name"; then sub_ph="$(secret_attrs "$name")"; else sub_ph=' placeholder="https://subscription или happ://crypt5/..."'; fi
     cat <<EOF
 <div class="env-row env-row-stack sub-link-row" data-index="$idx">
   <label><span>$name</span><input name="$name" value="$val"$sub_ph>$(secret_btn "$name" "inline")</label>
@@ -711,6 +711,7 @@ EOF
     <label class="field-validated" data-validate="exclude_type"><span>${name}_EXCLUDE_TYPE</span><input name="${name}_EXCLUDE_TYPE" value="$(env_attr "${name}_EXCLUDE_TYPE" "")" placeholder="vmess|direct"></label>
     <label><span>${name}_ADDITIONAL_PREFIX</span><input name="${name}_ADDITIONAL_PREFIX" value="$(env_attr "${name}_ADDITIONAL_PREFIX" "")" placeholder="${name} | "></label>
     <label><span>${name}_ADDITIONAL_SUFFIX</span><input name="${name}_ADDITIONAL_SUFFIX" value="$(env_attr "${name}_ADDITIONAL_SUFFIX" "")" placeholder=" | ${name}"></label>
+    <label><span>${name}_CONVERT</span><select name="${name}_CONVERT"><option value=""$(selected "${name}_CONVERT" "" "")>auto</option><option value="xray2mihomo"$(selected "${name}_CONVERT" "xray2mihomo" "")>xray2mihomo</option><option value="none"$(selected "${name}_CONVERT" "none" "")>none</option></select></label>
   </div>
   <div class="headers-editor">
     <span>${name}_HEADERS $(secret_btn "${name}_HEADERS" "inline")</span>
@@ -728,7 +729,10 @@ EOF
   <div><b>SUB_LINKxx_PROXY</b><span>Используется как <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#proxy" target="_blank" rel="noopener">proxy</a> для загрузки подписки.</span></div>
   <div><b>SUB_LINKxx_DIALER_PROXY</b><span>Прокидывается в <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxies/#dialer-proxy" target="_blank" rel="noopener">dialer-proxy</a> созданных proxy.</span></div>
   <div><b>SUB_LINKxx_INTERVAL</b><span>Интервал обновления подписки, соответствует provider <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#interval" target="_blank" rel="noopener">interval</a>.</span></div>
-  <div><b>SUB_LINKxx_HEADERS</b><span>HTTP <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#header" target="_blank" rel="noopener">headers</a>. Редактор собирает env в формат <code>key=value#key2=value2</code>.</span></div>
+  <div><b>SUB_LINKxx_HEADERS</b><span>HTTP <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#header" target="_blank" rel="noopener">headers</a>. Редактор собирает env в формат <code>key=value#key2=value2</code>. Для happ-ссылок и режима <code>xray2mihomo</code> заголовки уезжают апстриму через конвертер, а не напрямую из mihomo.</span></div>
+  <div><b>happ://crypt*</b><span>В <code>SUB_LINKxx</code> можно положить зашифрованную ссылку Happ (<code>crypt</code>…<code>crypt5</code>, обе раскладки). Контейнер расшифрует её при старте и подставит настоящий адрес подписки. Ключи берутся из <code>assets/happ.js</code>; если появился новый — панель напишет «неизвестный маркер», и надо обновить секреты <code>HAPP1..HAPP4</code>.</span></div>
+  <div><b>SUB_LINKxx_CONVERT</b><span><code>auto</code> (по умолчанию): happ-ссылки идут через локальный конвертер <code>xray2mihomo</code>, обычные — напрямую. <code>xray2mihomo</code> — принудительно, если обычная подписка тоже отдаёт Xray JSON. <code>none</code> — отдать mihomo как есть. Конвертер живёт на loopback-порту <code>WEB_API_PORT</code>; при <code>WEB_API_PORT=0</code> конвертация недоступна.</span></div>
+  <div><b>SUB_LINKxx_PROXY и конвертер</b><span>Не совмещаются: <code>proxy</code> управляет тем, как mihomo тянет сам провайдер, а после конвертации это localhost. Подписку с апстрима качает уже конвертер, и о прокси mihomo он не знает — для таких строк принудительно ставится <code>DIRECT</code>.</span></div>
   <div><b>SUB_LINKxx_FILTER</b><span>Provider-level <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#filter" target="_blank" rel="noopener">filter</a> — regex по именам узлов внутри подписки, несколько через <code>|</code>.</span></div>
   <div><b>SUB_LINKxx_EXCLUDE_FILTER</b><span>Provider-level <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#exclude-filter" target="_blank" rel="noopener">exclude-filter</a> — regex исключения.</span></div>
   <div><b>SUB_LINKxx_EXCLUDE_TYPE</b><span>Provider-level <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#exclude-type" target="_blank" rel="noopener">exclude-type</a> — список <a class="doc-link" href="https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45" target="_blank" rel="noopener">Adapter Type</a>'ов через <code>|</code>, регистр не важен.</span></div>

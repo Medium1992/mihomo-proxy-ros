@@ -178,8 +178,27 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 The link from *Tools → xray2mihomo* can go straight into `SUB_LINK*`:
 
 ```
-SUB_LINK1=http://127.0.0.1:81/cgi-bin/xray2mihomo-sub?sub=https://provider.example/sub&format=yaml
+SUB_LINK1=http://127.0.0.1:81/cgi-bin/xray2mihomo-sub?sub=https://provider.example/sub&format=uri
 ```
+
+#### Encrypted Happ links in `SUB_LINK*`
+
+`SUB_LINKxx` accepts `happ://crypt…happ://crypt5` directly:
+
+```
+SUB_LINK1=happ://crypt5/fzvdpvKZ85Qn2aSN…
+SUB_LINK1_HEADERS=x-hwid=ABC-123#user-agent=Happ/3.22.1
+```
+
+The container decrypts the link at startup (`www/lib/happ.sh`, openssl), recovers the real
+subscription URL and — since Happ serves Xray JSON — routes it through the local converter
+(`format=uri`, the shape mihomo parses most reliably). Headers from `SUB_LINKxx_HEADERS` are forwarded upstream by the converter rather
+than sent by mihomo, so HWID and user-agent still reach the provider. Use `SUB_LINKxx_CONVERT`
+to override the behaviour.
+
+Decryption keys come from `www/assets/happ.js` — the same file the panel uses
+(*Tools → Happ crypto*). When Happ ships a new key you will see
+`unknown crypt5 marker: …` in the log, which means the `HAPP1..HAPP4` secrets need refreshing.
 
 Port `81` exists only on the container's loopback and is not password-protected — otherwise mihomo,
 which refreshes the provider on `interval`, would get a 401 from the panel on `:80`. That webroot
@@ -225,6 +244,7 @@ left untouched — only the generated `config.yaml` is adjusted).
 | `SUB_LINKxx_EXCLUDE_FILTER` | — | Provider-level [exclude-filter](https://wiki.metacubex.one/en/config/proxy-providers/#exclude-filter) regex. |
 | `SUB_LINKxx_EXCLUDE_TYPE` | — | Provider-level [exclude-type](https://wiki.metacubex.one/en/config/proxy-providers/#exclude-type) — list of [Adapter Type](https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45) (case-insensitive) via `\|`. Example: `vmess\|direct`. |
 | `SUB_LINKxx_ADDITIONAL_PREFIX` | — | Goes into `override.`[`additional-prefix`](https://wiki.metacubex.one/en/config/proxy-providers/#overrideadditional-prefix) — fixed prefix for every node name. |
+| `SUB_LINKxx_CONVERT` | `auto` | What to do with the subscription body: `auto` — happ links go through the local converter (Happ serves Xray JSON), plain links reach mihomo untouched; `xray2mihomo` — always convert; `none` — never. Requires `WEB_API_PORT` to be enabled. |
 | `SUB_LINKxx_ADDITIONAL_SUFFIX` | — | Goes into `override.`[`additional-suffix`](https://wiki.metacubex.one/en/config/proxy-providers/#overrideadditional-suffix) — fixed suffix for every node name. |
 | `SOCKS0`, `SOCKS1`, … | — | SOCKS5 proxy. Format: `server=ip#port=1080#username=#password=#tls=#fingerprint=#skip-cert-verify=#udp=#ip-version=`. [Docs](https://wiki.metacubex.one/en/config/proxies/socks/). |
 | `XXX_DIALER_PROXY` | — | [Override dialer-proxy](https://wiki.metacubex.one/en/config/proxy-providers/#override) — route this provider's connections through another group. Example: `LINK1_DIALER_PROXY=YouTube`. |
