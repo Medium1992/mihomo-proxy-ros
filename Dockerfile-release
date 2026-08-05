@@ -71,6 +71,18 @@ RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ]; then set -eu; \
 
 # Формируем список build tags и собираем
 RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ]; then \
+        echo "Applying fork name to the version banner"; \
+        sed -i 's|"Mihomo Meta %s %s %s with %s %s|"%s Meta %s %s %s with %s %s|' main.go; \
+        sed -i 's|C.Version, runtime.GOOS|C.MihomoName, C.Version, runtime.GOOS|' main.go; \
+    fi
+
+RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ]; then set -eu; \
+      chk() { grep -Fq "$2" "$3" || { echo "patch did not apply: $1 ($3)" >&2; exit 1; }; }; \
+      chk versionBanner     '"%s Meta %s %s %s with %s %s'      main.go; \
+      chk versionBannerArgs 'C.MihomoName, C.Version, runtime.GOOS' main.go; \
+    fi
+
+RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ]; then \
         echo "Applying Xray REALITY minClientVer compatibility patch"; \
         sed -i \
             -e 's/hello\.SessionId\[0\] = 1/hello.SessionId[0] = 26/' \
@@ -84,6 +96,22 @@ RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ]; then \
       grep -Fq 'hello.SessionId[1] = 3' component/tls/reality.go && \
       grep -Fq 'hello.SessionId[2] = 27' component/tls/reality.go \
         || { echo "patch did not apply: reality minClientVer (component/tls/reality.go)" >&2; exit 1; }; \
+    fi
+
+# Временная подмена utls: ветка v1.9.0-mod-meta (нативный JLS, отпечатки
+# firefox 148 и safari 26.3). Пустой UTLS_OVERRIDE_BRANCH = собирать как в go.mod.
+ARG UTLS_OVERRIDE_BRANCH=v1.9.0-mod-meta
+RUN if [ -n "$UTLS_OVERRIDE_BRANCH" ]; then set -eu; \
+      echo "Overriding github.com/metacubex/utls with branch $UTLS_OVERRIDE_BRANCH"; \
+      git clone --depth=1 -b "$UTLS_OVERRIDE_BRANCH" https://github.com/MetaCubeX/utls.git /utls; \
+      grep -Fqx 'module github.com/metacubex/utls' /utls/go.mod \
+        || { echo "unexpected module path in /utls/go.mod" >&2; exit 1; }; \
+      go mod edit -replace github.com/metacubex/utls=/utls; \
+      go list -m github.com/metacubex/utls | grep -Fq '=> /utls' \
+        || { echo "utls override did not apply" >&2; exit 1; }; \
+      echo "utls: $UTLS_OVERRIDE_BRANCH $(git -C /utls rev-parse --short HEAD)"; \
+    else \
+      echo "Using utls from go.mod as is"; \
     fi
 
 RUN VERSION_FOR_BUILD="${TAG}" && \
