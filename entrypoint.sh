@@ -3006,6 +3006,7 @@ EOF
     cat >> "$CONFIG_YAML" <<EOF
   - name: tun-in
     type: tun
+    stack: system
     inet4-address:
       - 100.64.0.1/32
     udp-timeout: 30
