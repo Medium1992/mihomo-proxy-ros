@@ -299,12 +299,12 @@ Special characters in the name (space, comma, colon, quotes, slashes) are replac
 
 ### Routing rules (per group)
 
-Each entry creates an automatic [rule](https://wiki.metacubex.one/en/config/rules) targeting the group `XXX`. `XXX_GEOSITE/GEOIP/AS` also build a rule-set in `.mrs` format from the [meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat) repo.
+Each entry creates an automatic [rule](https://wiki.metacubex.one/en/config/rules) targeting the group `XXX`. Named `XXX_GEOSITE/GEOIP/AS` entries are built from the [meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat) repo. A remote `.mrs`, `.yaml`, or `.yml` URL in `XXX_GEOSITE` or `XXX_GEOIP` creates a separate HTTP rule-set.
 
 | ENV | Description |
 |---|---|
-| `XXX_GEOSITE` | Comma-separated [geosite](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/geo/geosite) names. Example: `GEOBLOCK_GEOSITE=intel,openai,xai`. |
-| `XXX_GEOIP` | Comma-separated [geoip](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/geo/geoip). Example: `GEOBLOCK_GEOIP=netflix`. |
+| `XXX_GEOSITE` | Comma-separated [geosite](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/geo/geosite) names or `http(s)` URLs ending in `.mrs`, `.yaml`, or `.yml`. `.mrs` URLs use `behavior: domain`; YAML URLs use `behavior: classical`. Example: `GEOBLOCK_GEOSITE=intel,https://example.com/domains.mrs`. |
+| `XXX_GEOIP` | Comma-separated [geoip](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/geo/geoip) names or `http(s)` URLs ending in `.mrs`, `.yaml`, or `.yml`. `.mrs` URLs use `behavior: ipcidr`; YAML URLs use `behavior: classical`. Example: `GEOBLOCK_GEOIP=netflix,https://example.com/mixed.yaml`. |
 | `XXX_AS` | [AS](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/asn) numbers. Example: `TELEGRAM_AS=AS62041,AS59930,AS62014,AS211157,AS44907`. |
 | `XXX_DOMAIN` | Exact [DOMAIN](https://wiki.metacubex.one/en/config/rules/#domain) matches. |
 | `XXX_SUFFIX` | [DOMAIN-SUFFIX](https://wiki.metacubex.one/en/config/rules/#domain-suffix) matches. |

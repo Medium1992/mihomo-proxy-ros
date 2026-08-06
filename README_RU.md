@@ -299,12 +299,12 @@ ETH1_GATEWAY2=192.168.5.11#сосед-tor
 
 ### Правила маршрутизации (на группу)
 
-Каждая ENV ниже создаёт автоматическое [правило](https://wiki.metacubex.one/ru/config/rules) с таргетом на группу `XXX`. `XXX_GEOSITE/GEOIP/AS` дополнительно собирают rule-set формата `.mrs` из репозитория [meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat).
+Каждая ENV ниже создаёт автоматическое [правило](https://wiki.metacubex.one/ru/config/rules) с таргетом на группу `XXX`. Именованные записи `XXX_GEOSITE/GEOIP/AS` собираются из репозитория [meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat). URL на `.mrs`, `.yaml` или `.yml` в `XXX_GEOSITE` или `XXX_GEOIP` создаёт отдельный HTTP rule-set.
 
 | ENV | Описание |
 |---|---|
-| `XXX_GEOSITE` | Список [geosite](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/geo/geosite) через запятую. Пример: `GEOBLOCK_GEOSITE=intel,openai,xai`. |
-| `XXX_GEOIP` | Список [geoip](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/geo/geoip). Пример: `GEOBLOCK_GEOIP=netflix`. |
+| `XXX_GEOSITE` | Имена [geosite](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/geo/geosite) или `http(s)` URL на `.mrs`, `.yaml` либо `.yml` через запятую. Для `.mrs` используется `behavior: domain`, для YAML — `behavior: classical`. Пример: `GEOBLOCK_GEOSITE=intel,https://example.com/domains.mrs`. |
+| `XXX_GEOIP` | Имена [geoip](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/geo/geoip) или `http(s)` URL на `.mrs`, `.yaml` либо `.yml` через запятую. Для `.mrs` используется `behavior: ipcidr`, для YAML — `behavior: classical`. Пример: `GEOBLOCK_GEOIP=netflix,https://example.com/mixed.yaml`. |
 | `XXX_AS` | Номера [AS](https://github.com/MetaCubeX/meta-rules-dat/tree/meta/asn). Пример: `TELEGRAM_AS=AS62041,AS59930,AS62014,AS211157,AS44907`. |
 | `XXX_DOMAIN` | Точные [DOMAIN](https://wiki.metacubex.one/ru/config/rules/#domain) совпадения. |
 | `XXX_SUFFIX` | [DOMAIN-SUFFIX](https://wiki.metacubex.one/ru/config/rules/#domain-suffix) совпадения. |
