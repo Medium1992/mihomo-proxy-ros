@@ -98,7 +98,7 @@ case $TIER in
      ;;
   5) # full — всё, включая редкие верхи
      FOOLINGS="badsum tcp_ts=-1000 tcp_ack=-66000:tcp_ts_up tcp_seq=-3000 tcp_seq=-1000 tcp_md5 tcp_nop_del ip_id=rnd ip_id=zero ip_id=seq badsum:tcp_md5 tcp_ts=-1000:badsum"
-     POS_SETS_TLS="1 1,midsld 1,midsld,1220 1,sniext+1 sniext+1,midsld midsld sniext+1 host+1 sld+1 1,sld+1,endsld-2 midsld-2 midsld+2 endhost-1 1,sniext+1,host+1,midsld-2,midsld,midsld+2,endhost-1"
+     POS_SETS_TLS="1 1,midsld 1,midsld,1220 1,sniext+1 sniext+1,midsld midsld host+1 sld+1 1,sld+1,endsld-2 midsld-2 midsld+2 endhost-1 1,sniext+1,host+1,midsld-2,midsld,midsld+2,endhost-1"
      POS_SETS_HTTP="host+1 method+2 method+4 host+5 endhost-1 endhost+1 endhost-2"
      SPLITTERS="multidisorder multisplit fakedsplit fakeddisorder hostfakesplit tcpseg multidisorder_legacy"
      PRE_FAKE_VARIANTS="off on"
@@ -110,7 +110,7 @@ esac
 
 # ---- Built-in fake aliases (nfqws2 встроенные имена) -------------------
 TLS_FAKE_DEFAULT="fake_default_tls"
-HTTP_FAKE_DEFAULT="fake_http"
+HTTP_FAKE_DEFAULT="fake_default_http"
 QUIC_FAKE_DEFAULT="fake_default_quic"
 
 # ---- Fakebin blobs (для fake-payload и seqovl_pattern) -----------------
@@ -129,7 +129,9 @@ if [ -n "$FAKEBIN_DIR" ] && [ -d "$FAKEBIN_DIR" ]; then
   done
 fi
 
-safe() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/_/g; s/__*/_/g; s/^_//; s/_$//'; }
+# Keep signed positions distinguishable in report names: endhost-1 and
+# endhost+1 are different strategies, not two spellings of one label.
+safe() { printf '%s' "$1" | sed 's/+/plus/g; s/-/minus/g; s/[^A-Za-z0-9]/_/g; s/__*/_/g; s/^_//; s/_$//'; }
 emit() { printf '%s|%s|%s\n' "$1" "$2" "$3"; }
 
 # ---- HTTP-only payload mutators (no splitter) --------------------------
@@ -210,6 +212,47 @@ compose_one() {
   args="$args --lua-desync=${sf}:pos=${pos}:${fl}${seqovl_part}"
   emit "$name" "$proto" "$args"
 }
+
+# ---- Curated production seeds ------------------------------------------
+# The broad matrix remains below.  These short chains come first because they
+# mirror the ordering and data flow of zapret2's own standard blockcheck:
+# modifiers for SYN must precede syndata, while send-style operations require
+# an explicit drop of the original payload.
+if [ "$want_tls" = 1 ]; then
+  emit seed_tls_fake_multidisorder tls \
+    "--filter-tcp=0-65535 --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000:repeats=6 --lua-desync=multidisorder:pos=1,midsld"
+  emit seed_tls_fake_multisplit_681 tls \
+    "--filter-tcp=0-65535 --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls:tcp_md5:tls_mod=rnd,dupsid:repeats=8 --lua-desync=multisplit:pos=1:seqovl=681"
+  emit seed_tls_tcpseg_drop tls \
+    "--filter-tcp=0-65535 --payload=tls_client_hello --lua-desync=tcpseg:pos=0,-1:seqovl=1 --lua-desync=drop"
+
+  if [ "$TIER" -ge 2 ]; then
+    emit seed_tls_wssize_syndata_multisplit tls \
+      "--filter-tcp=0-65535 --lua-desync=wssize:wsize=1:scale=6 --lua-desync=syndata:blob=fake_default_tls:tls_mod=rnd,dupsid --payload=tls_client_hello --lua-desync=multisplit:pos=1,sld+1,endsld-2:badsum"
+    emit seed_tls_fake_multidisorder_padencap tls \
+      "--filter-tcp=0-65535 --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls:badsum:tls_mod=rnd,rndsni,padencap:repeats=6 --lua-desync=multidisorder:pos=1,midsld"
+  fi
+fi
+
+if [ "$want_http" = 1 ]; then
+  emit seed_http_fake_multisplit http \
+    "--filter-tcp=80 --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5:repeats=6 --lua-desync=multisplit:pos=method+2"
+  if [ "$TIER" -ge 2 ]; then
+    emit seed_http_syndata_multisplit http \
+      "--filter-tcp=80 --lua-desync=syndata:blob=fake_default_http --payload=http_req --lua-desync=multisplit:pos=host+1:badsum"
+  fi
+fi
+
+if [ "$want_quic" = 1 ]; then
+  if [ "$TIER" -ge 2 ]; then
+    emit seed_quic_fake_ipfrag quic \
+      "--filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=11 --lua-desync=send:ipfrag:ipfrag_pos_udp=8 --lua-desync=drop"
+  fi
+  if [ "$TIER" -ge 3 ]; then
+    emit seed_quic_fake_udplen quic \
+      "--filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=2 --lua-desync=udplen:increment=8"
+  fi
+fi
 
 # ---- HTTP splitter strategies ------------------------------------------
 if [ "$want_http" = 1 ]; then

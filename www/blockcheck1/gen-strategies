@@ -125,8 +125,17 @@ if [ -n "$FAKEBIN_DIR" ] && [ -d "$FAKEBIN_DIR" ]; then
   done
 fi
 
-safe() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/_/g; s/__*/_/g; s/^_//; s/_$//'; }
+# Keep signed positions distinguishable in report names: endhost-1 and
+# endhost+1 are different strategies, not two spellings of one label.
+safe() { printf '%s' "$1" | sed 's/+/plus/g; s/-/minus/g; s/[^A-Za-z0-9]/_/g; s/__*/_/g; s/^_//; s/_$//'; }
 emit() { printf '%s|%s|%s\n' "$1" "$2" "$3"; }
+
+# Return a bundled fake payload only when the user enabled fakebin and the
+# requested file is present in the image.  Seed strategies must remain valid
+# without fakebin as well, so file-backed variants are emitted separately.
+fakebin() {
+  [ -n "$FAKEBIN_DIR" ] && [ -f "$FAKEBIN_DIR/$1" ] && printf '%s' "$FAKEBIN_DIR/$1"
+}
 
 # Возвращает 0 если в строке foolings есть `badseq`.
 has_badseq() {
@@ -148,6 +157,56 @@ filter_for() {
     quic) printf -- '--filter-udp=0-65535' ;;
   esac
 }
+
+# ---- Curated production seeds ------------------------------------------
+# These are deliberately emitted before the broad axes below.  They distill
+# recurring, protocol-neutral patterns from deployed zapret configurations;
+# list/IP/port-specific profiles are intentionally not imported here.
+if [ "$want_tls" = 1 ]; then
+  fil=$(filter_for tls)
+  emit seed_tls_fake_multidisorder_r11 tls \
+    "$fil --dpi-desync=fake,multidisorder --dpi-desync-split-pos=1,midsld --dpi-desync-fooling=ts,badsum --dpi-desync-repeats=11 --dpi-desync-fake-tls-mod=rnd,dupsid"
+  emit seed_tls_fake_multisplit_681 tls \
+    "$fil --dpi-desync=fake,multisplit --dpi-desync-split-pos=1 --dpi-desync-split-seqovl=681 --dpi-desync-fooling=ts,badsum --dpi-desync-repeats=8"
+  emit seed_tls_multisplit_681_pattern tls \
+    "$fil --dpi-desync=multisplit --dpi-desync-split-pos=1 --dpi-desync-split-seqovl=681 --dpi-desync-fooling=ts,badsum"
+
+  if [ "$TIER" -ge 2 ]; then
+    emit seed_tls_fake_fakedsplit tls \
+      "$fil --dpi-desync=fake,fakedsplit --dpi-desync-split-pos=1 --dpi-desync-fooling=ts,badsum --dpi-desync-badseq-increment=2 --dpi-desync-repeats=8 --dpi-desync-fake-tls-mod=rnd,dupsid"
+    emit seed_tls_hostfakesplit tls \
+      "$fil --dpi-desync=hostfakesplit --dpi-desync-hostfakesplit-midhost=host-2 --dpi-desync-split-seqovl=726 --dpi-desync-fooling=badsum,badseq --dpi-desync-badseq-increment=0"
+  fi
+
+  if [ "$TIER" -ge 3 ]; then
+    emit seed_tls_syndata_multisplit tls \
+      "$fil --dpi-desync=syndata,multisplit --dpi-desync-split-pos=1,sld+1,endsld-2 --dpi-desync-split-seqovl=1 --dup=2 --dup-cutoff=n3"
+  fi
+
+  tls_google=$(fakebin tls_clienthello_www_google_com.bin)
+  if [ -n "$tls_google" ] && [ "$TIER" -ge 2 ]; then
+    emit seed_tls_fake_google_multisplit_681 tls \
+      "$fil --dpi-desync=fake,multisplit --dpi-desync-fake-tls=$tls_google --dpi-desync-split-pos=1 --dpi-desync-split-seqovl=681 --dpi-desync-split-seqovl-pattern=$tls_google --dpi-desync-fooling=ts,badsum --dpi-desync-repeats=8"
+  fi
+fi
+
+if [ "$want_quic" = 1 ]; then
+  fil=$(filter_for quic)
+  if [ "$TIER" -ge 2 ]; then
+    emit seed_quic_fake_r11 quic "$fil --dpi-desync=fake --dpi-desync-repeats=11 --dpi-desync-cutoff=n3"
+  fi
+
+  quic_google=$(fakebin quic_initial_www_google_com.bin)
+  if [ -n "$quic_google" ] && [ "$TIER" -ge 2 ]; then
+    emit seed_quic_google_r8 quic \
+      "$fil --dpi-desync=fake --dpi-desync-fake-quic=$quic_google --dpi-desync-repeats=8 --dpi-desync-cutoff=n3"
+  fi
+  quic_six=$(fakebin quic_6.bin)
+  if [ -n "$quic_six" ] && [ "$TIER" -ge 3 ]; then
+    emit seed_quic_udplen_8 quic \
+      "$fil --dpi-desync=fake,udplen --dpi-desync-fake-quic=$quic_six --dpi-desync-udplen-increment=8 --dpi-desync-udplen-pattern=0x0F0F0E0F --dpi-desync-cutoff=n3 --dpi-desync-repeats=2"
+  fi
+fi
 
 # ---- HTTP: simple mutators (no splitter) -------------------------------
 if [ "$want_http" = 1 ]; then
