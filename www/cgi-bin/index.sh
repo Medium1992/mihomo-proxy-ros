@@ -1700,8 +1700,8 @@ EOF
     "$( [ "$(env_default "${prefix}_HIDDEN" "")" = "true" ] && echo selected )" \
     "$( [ "$(env_default "${prefix}_HIDDEN" "")" = "false" ] && echo selected )" \
     "$(is_set "${prefix}_HIDDEN")"
-  field "${prefix}_GEOSITE" "Geosite" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">GEOSITE</a> списком через запятую." "youtube,category-ru" text ""
-  field "${prefix}_GEOIP" "Geoip" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">GEOIP</a> списком через запятую." "telegram,discord" text ""
+  field "${prefix}_GEOSITE" "Geosite" "Имена GEOSITE через запятую. URL <code>.mrs</code> создаёт domain rule-set; <code>.yaml</code>/<code>.yml</code> — classical rule-set." "youtube,category-ru,https://example.com/domains.mrs" text ""
+  field "${prefix}_GEOIP" "Geoip" "Имена GEOIP через запятую. URL <code>.mrs</code> создаёт ipcidr rule-set; <code>.yaml</code>/<code>.yml</code> — classical rule-set." "telegram,discord,https://example.com/ips.mrs" text ""
   field "${prefix}_AS" "ASN" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">IP-ASN</a>: AS123,AS456." "AS15169" text ""
   field "${prefix}_PRIORITY" "Priority" "Чем меньше, тем выше в rules." "" number ""
   field "${prefix}_DOMAIN" "Domain" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">DOMAIN</a> через запятую." "example.com" text ""

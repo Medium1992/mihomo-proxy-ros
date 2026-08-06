@@ -3995,8 +3995,8 @@ function addGroupPane(name) {
       ${groupValidatedFieldMarkup(prefix, "EXCLUDE_TYPE", "exclude_type", "Exclude type", `<a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type" target="_blank" rel="noopener">exclude-type</a> — исключить прокси указанных типов, разделитель <code>|</code>. <a class="doc-link" href="https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45" target="_blank" rel="noopener">Adapter Type</a>, регистр не важен.`, "vmess|direct")}
       ${groupFieldMarkup(prefix, "ICON", "Icon", `URL <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#icon" target="_blank" rel="noopener">иконки</a> группы.`, "", "text", "")}
       <label class="field" data-env="${prefix}_HIDDEN"><span><b>Hidden</b><em>${prefix}_HIDDEN</em></span><select name="${prefix}_HIDDEN" data-default=""><option value="" selected>— показать (default) —</option><option value="true">true (скрыть из веб-панели)</option><option value="false">false (показать)</option></select><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#hidden" target="_blank" rel="noopener">hidden</a> — скрыть/показать группу в веб-панели mihomo.</small><i>new</i></label>
-      ${groupFieldMarkup(prefix, "GEOSITE", "Geosite", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">GEOSITE</a> списком через запятую.`, "youtube,category-ru", "text", "")}
-      ${groupFieldMarkup(prefix, "GEOIP", "Geoip", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">GEOIP</a> списком через запятую.`, "telegram,discord", "text", "")}
+      ${groupFieldMarkup(prefix, "GEOSITE", "Geosite", `Имена GEOSITE через запятую. URL <code>.mrs</code> создаёт domain rule-set; <code>.yaml</code>/<code>.yml</code> — classical rule-set.`, "youtube,category-ru,https://example.com/domains.mrs", "text", "")}
+      ${groupFieldMarkup(prefix, "GEOIP", "Geoip", `Имена GEOIP через запятую. URL <code>.mrs</code> создаёт ipcidr rule-set; <code>.yaml</code>/<code>.yml</code> — classical rule-set.`, "telegram,discord,https://example.com/ips.mrs", "text", "")}
       ${groupFieldMarkup(prefix, "AS", "ASN", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">IP-ASN</a>: AS123,AS456.`, "AS15169", "text", "")}
       ${groupFieldMarkup(prefix, "PRIORITY", "Priority", "Чем меньше, тем выше в rules.", "", "number", "")}
       ${groupFieldMarkup(prefix, "DOMAIN", "Domain", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN</a> через запятую.`, "example.com", "text", "")}
@@ -4268,6 +4268,14 @@ function splitList(value) {
   return String(value || "").split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
 }
 
+function remoteRuleSetFormat(value) {
+  if (!/^https?:\/\//i.test(value)) return "";
+  const path = value.split(/[?#]/, 1)[0].toLowerCase();
+  if (path.endsWith(".mrs")) return "mrs";
+  if (path.endsWith(".yaml") || path.endsWith(".yml")) return "yaml";
+  return "";
+}
+
 function previewRuleSetSources(env) {
   const sources = [];
   [...env.keys()].filter((name) => /^RULE_SET[0-9]+_BASE64$/.test(name)).sort((a, b) => Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0])).forEach((key) => {
@@ -4305,10 +4313,19 @@ function buildPreviewRules() {
     if (!hasResource && !hasUse) return;
     const prioRaw = (env.get(prefix + "_PRIORITY") || "").trim();
     const prio = prioRaw !== "" && Number.isFinite(Number(prioRaw)) ? Number(prioRaw) : 1000 + groupIdx;
-    splitList(env.get(prefix + "_GEOSITE")).forEach((item) => rules.push({prio, origin: prefix + "_GEOSITE", detail: group, rule: `RULE-SET,${group}_geosite_${item},${group}`}));
+    let geositeRemoteIndex = 0;
+    splitList(env.get(prefix + "_GEOSITE")).forEach((item) => {
+      const remoteFormat = remoteRuleSetFormat(item);
+      if (/^https?:\/\//i.test(item) && !remoteFormat) return;
+      const rs = remoteFormat ? `${group}_geosite_url_${++geositeRemoteIndex}` : `${group}_geosite_${item}`;
+      rules.push({prio, origin: prefix + "_GEOSITE", detail: group, rule: `RULE-SET,${rs},${group}`});
+    });
+    let geoipRemoteIndex = 0;
     splitList(env.get(prefix + "_GEOIP")).forEach((item) => {
-      const rs = `${group}_geoip_${item}`;
-      const rule = item === "discord" ? `AND,((RULE-SET,${rs}),(NETWORK,UDP),(DST-PORT,19294-19344/50000-50100)),${group}` : `RULE-SET,${rs},${group}`;
+      const remoteFormat = remoteRuleSetFormat(item);
+      if (/^https?:\/\//i.test(item) && !remoteFormat) return;
+      const rs = remoteFormat ? `${group}_geoip_url_${++geoipRemoteIndex}` : `${group}_geoip_${item}`;
+      const rule = !remoteFormat && item === "discord" ? `AND,((RULE-SET,${rs}),(NETWORK,UDP),(DST-PORT,19294-19344/50000-50100)),${group}` : `RULE-SET,${rs},${group}`;
       rules.push({prio, origin: prefix + "_GEOIP", detail: group, rule});
     });
     splitList(env.get(prefix + "_AS")).forEach((item) => {

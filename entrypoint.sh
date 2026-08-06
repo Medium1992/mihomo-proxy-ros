@@ -1027,6 +1027,25 @@ yaml_quote() {
   sed 's/\\/\\\\/g; s/"/\\"/g; s/.*/"&"/'
 }
 
+ruleset_remote_format() {
+  local url="$1"
+  local path
+
+  case "$url" in
+    http://*|https://*) ;;
+    *) return 1 ;;
+  esac
+
+  path="${url%%\?*}"
+  path="${path%%\#*}"
+  path=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')
+  case "$path" in
+    *.mrs) echo "mrs" ;;
+    *.yaml|*.yml) echo "yaml" ;;
+    *) return 1 ;;
+  esac
+}
+
 qcompress_expected_len() {
   local bin_file="$1"
   local bytes
@@ -3918,15 +3937,41 @@ custom_rules_payloads=""
 
 # GEOSITE
 geosite_list=$(printenv "${env_name}_GEOSITE" || echo "")
+geosite_remote_idx=0
 for gs in $(echo "$geosite_list" | tr ',' ' ' | xargs -n1); do
   [ -z "$gs" ] && continue
 
-  rs_name="${g}_geosite_$gs"
+  geosite_format=""
+  geosite_behavior="domain"
+  case "$gs" in
+    http://*|https://*)
+      geosite_format=$(ruleset_remote_format "$gs" || true)
+      if [ -z "$geosite_format" ]; then
+        log "Skipping ${env_name}_GEOSITE URL $gs - expected .mrs, .yaml, or .yml"
+        continue
+      fi
+      geosite_remote_idx=$((geosite_remote_idx + 1))
+      rs_name="${g}_geosite_url_${geosite_remote_idx}"
+      [ "$geosite_format" = "yaml" ] && geosite_behavior="classical"
+      ;;
+    *) rs_name="${g}_geosite_$gs" ;;
+  esac
 
   if ! ruleset_defined "$rs_name"; then
-    case "$gs" in
-      anime|art|casino|education|games|messengers|music|news|porn|socials|tools|torrent|video)
+    case "$geosite_format" in
+      mrs|yaml)
         cat <<EOF
+  $rs_name:
+    type: http
+    behavior: $geosite_behavior
+    format: $geosite_format
+    url: $(printf '%s' "$gs" | yaml_quote)
+    interval: 86400
+EOF
+        ;;
+      *) case "$gs" in
+        anime|art|casino|education|games|messengers|music|news|porn|socials|tools|torrent|video)
+          cat <<EOF
   $rs_name:
     type: http
     behavior: domain
@@ -3934,9 +3979,8 @@ for gs in $(echo "$geosite_list" | tr ',' ' ' | xargs -n1); do
     url: "https://iplist.opencck.org/?format=text&data=domains&group=$gs"
     interval: 86400
 EOF
-        ;;
-      *)
-        cat <<EOF
+          ;;
+        *) cat <<EOF
   $rs_name:
     type: http
     behavior: domain
@@ -3945,6 +3989,7 @@ EOF
     interval: 86400
 EOF
         ;;
+      esac ;;
     esac
     register_ruleset "$rs_name"
     
@@ -3957,13 +4002,37 @@ done
 
 # GEOIP
 geoip_list=$(printenv "${env_name}_GEOIP" || echo "")
+geoip_remote_idx=0
 for gi in $(echo "$geoip_list" | tr ',' ' ' | xargs -n1); do
   [ -z "$gi" ] && continue
 
-  rs_name="${g}_geoip_$gi"
+  geoip_format=""
+  geoip_behavior="ipcidr"
+  case "$gi" in
+    http://*|https://*)
+      geoip_format=$(ruleset_remote_format "$gi" || true)
+      if [ -z "$geoip_format" ]; then
+        log "Skipping ${env_name}_GEOIP URL $gi - expected .mrs, .yaml, or .yml"
+        continue
+      fi
+      geoip_remote_idx=$((geoip_remote_idx + 1))
+      rs_name="${g}_geoip_url_${geoip_remote_idx}"
+      [ "$geoip_format" = "yaml" ] && geoip_behavior="classical"
+      ;;
+    *) rs_name="${g}_geoip_$gi" ;;
+  esac
 
   if ! ruleset_defined "$rs_name"; then
-    if [ "$gi" = "discord" ]; then
+    if [ -n "$geoip_format" ]; then
+      cat <<EOF
+  $rs_name:
+    type: http
+    behavior: $geoip_behavior
+    format: $geoip_format
+    url: $(printf '%s' "$gi" | yaml_quote)
+    interval: 86400
+EOF
+    elif [ "$gi" = "discord" ]; then
       cat <<EOF
   $rs_name:
     type: http
@@ -3985,7 +4054,7 @@ EOF
     register_ruleset "$rs_name"
   fi
 
-  if [ "$gi" = "discord" ]; then
+  if [ -z "$geoip_format" ] && [ "$gi" = "discord" ]; then
     add_rule "AND,((RULE-SET,$rs_name),(NETWORK,UDP),(DST-PORT,19294-19344/50000-50100)),$g" "$group_prio"
   else
     add_rule "RULE-SET,$rs_name,$g" "$group_prio"
