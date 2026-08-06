@@ -731,6 +731,8 @@ function initToolsPage() {
   [
     ["toolB64Plain", toolBase64Encode],
     ["toolB64Input", toolBase64Decode],
+    ["toolMrsUrl", () => {}],
+    ["toolMrsBehavior", () => {}],
     ["toolRegexSource", toolRegexTest],
     ["toolRegexText", toolRegexTest],
     ["toolHappInput", toolHappInspect],
@@ -934,6 +936,38 @@ function toolBase64Decode() {
     if (out) out.value = "";
     toolSetStatus("toolB64DecodeStatus", "Ошибка Base64: " + e.message, false);
   }
+}
+
+function toolMrsDecompile() {
+  const url = (document.getElementById("toolMrsUrl")?.value || "").trim();
+  const behavior = document.getElementById("toolMrsBehavior")?.value || "domain";
+  const result = document.getElementById("toolMrsResult");
+  if (!url) {
+    toolSetStatus("toolMrsStatus", "Укажите URL MRS-файла.", false);
+    return;
+  }
+  if (result) result.value = "";
+  toolSetStatus("toolMrsStatus", "Скачиваю и декомпилирую...", true);
+  const body = new URLSearchParams();
+  body.set("url", url);
+  body.set("behavior", behavior);
+  fetch("/cgi-bin/mrs-decompile", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString()
+  }).then((response) => response.text()).then((text) => {
+    if (text.startsWith("ERROR: ")) {
+      if (result) result.value = "";
+      toolSetStatus("toolMrsStatus", text.slice(7).trim() || "Ошибка декомпиляции.", false);
+      return;
+    }
+    if (result) result.value = text;
+    const lines = text ? text.trimEnd().split("\n").length : 0;
+    toolSetStatus("toolMrsStatus", `Готово: ${lines} правил.`, true);
+  }).catch((error) => {
+    if (result) result.value = "";
+    toolSetStatus("toolMrsStatus", "Ошибка CGI: " + error.message, false);
+  });
 }
 
 function toolParseRegex(src) {
