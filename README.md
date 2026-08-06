@@ -18,7 +18,7 @@
 - 🔐 **DPI bypass** via [ByeDPI](https://github.com/hufrea/byedpi), [Zapret/nfqws](https://github.com/bol-van/zapret), [Zapret2/nfqws2](https://github.com/bol-van/zapret2) (nfqws/nfqws2 — amd64/arm64 only)
 - 🧩 **Flexible routing** by domain / IP / GeoSite / GeoIP / ASN, all controlled via ENV
 - 🛡 Multiple proxy links and **subscriptions** (including [RemnaWave](https://docs.rw/docs/features/hwid-device-limit) with HWID)
-- 🚀 **WireGuard / AmneziaWG** integration by dropping `.conf` files into a mount folder
+- 🚀 **WireGuard / AmneziaWG, OpenVPN and TrustTunnel** integration through mounted configuration folders
 - 📦 Single-step **automated install** via MikroTik terminal snippet
 - 🛠 Multiple VETH interfaces appear as outbound proxies → mangle in RouterOS to send traffic where you want
 
@@ -84,7 +84,7 @@ It **does not modify** the running container directly. Instead it:
 
 What's also in there:
 
-- **Proxy YAML editor** with 12 protocol templates (vless-tcp/reality, vless-xhttp, vmess, trojan, ss, anytls, wireguard, amneziawg, hysteria2, tuic, ssh, vless-ws) — *"Load template"* fills the textarea
+- **Proxy YAML editor** with templates for VLESS, VMess, Trojan, Shadowsocks, SSR, Snell, AnyTLS, Mieru, WireGuard / AmneziaWG, Hysteria, Hysteria2, TUIC, MASQUE, Tailscale, ZeroTier, TrustTunnel, OpenVPN and SSH — *"Load template"* fills the textarea
 - **Live `mihomo -t` validation** of proxy YAMLs before save, plus uniqueness check of `name:` field across all providers
 - **AWG editor** with full `[Interface]/[Peer]/[Mihomo]` template covering every key the parser understands
 - **DPI files manager** — upload `.bin` fakes to `/zapret-fakebin/`, edit text lists in `/zapret-lists/`, with filter
@@ -97,6 +97,8 @@ All runtime artifacts (generated config, provider YAMLs, pre-rendered HTML) live
 | Path in container | Purpose | Format |
 |---|---|---|
 | `/root/.config/mihomo/awg/` | WireGuard / AmneziaWG configs → become proxy-providers | `*.conf` |
+| `/root/.config/mihomo/openvpn/` | OpenVPN configs → become proxy-providers | `*.ovpn` / `*.conf` |
+| `/root/.config/mihomo/trusttunnel/` | TrustTunnel configs → become proxy-providers | `*.toml` |
 | `/root/.config/mihomo/proxies_mount/` | Custom proxy-providers in mihomo native YAML | `*.yaml` / `*.yml` |
 | `/root/.config/mihomo/rule_set_list/` | Custom rule-set lists in [payload](https://wiki.metacubex.one/en/config/rule-providers/#payload) format | `*.txt` (filename = group name) |
 | `/zapret-fakebin/` | Binary fake-packets used by `nfqws --dpi-desync-fake-*` | `*.bin` |
@@ -280,7 +282,7 @@ Special characters in the name (space, comma, colon, quotes, slashes) are replac
 | ENV | Default | Description |
 |---|---|---|
 | `GROUP` | — | Comma-separated list of [proxy groups](https://wiki.metacubex.one/en/config/proxy-groups). `telegram,youtube,google,ai,geoblock` → groups `TELEGRAM, YOUTUBE, GOOGLE, AI, GEOBLOCK`. A group is created only if it has at least one resource (`XXX_*`) or `XXX_USE`. |
-| `XXX_TYPE` | `select` | [Group type](https://wiki.metacubex.one/en/config/proxy-groups/#type): `select` / `url-test` / `fallback` / `load-balance` / `relay`. |
+| `XXX_TYPE` | `select` | [Group type](https://wiki.metacubex.one/en/config/proxy-groups/#type): `select` / `url-test` / `fallback` / `load-balance`. |
 | `XXX_USE` | *all providers in order: LINKs, SUB_LINKs, WG/AWG, BYEDPI, DIRECT* | Subset of [providers](https://wiki.metacubex.one/en/config/proxy-providers) to include. Example: `YOUTUBE_USE=BYEDPI,LINK1`. |
 | `XXX_PROXIES` | — | Explicit [proxies](https://wiki.metacubex.one/en/config/proxy-groups/#proxies) (specific nodes, not providers), comma-separated. Alternative/addition to `XXX_USE`. |
 | `XXX_FILTER` | — | [Provider name filter regex](https://wiki.metacubex.one/en/config/proxy-groups/#filter). Example: `RU\|BYEDPI`. |

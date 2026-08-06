@@ -18,7 +18,7 @@
 - 🔐 **Обход DPI** через [ByeDPI](https://github.com/hufrea/byedpi), [Zapret/nfqws](https://github.com/bol-van/zapret), [Zapret2/nfqws2](https://github.com/bol-van/zapret2) (nfqws/nfqws2 — только amd64/arm64)
 - 🧩 **Гибкая маршрутизация** по доменам, IP, GeoSite, GeoIP, ASN — всё через ENV
 - 🛡 Несколько прокси-ссылок и **подписок** (включая [RemnaWave](https://docs.rw/docs/features/hwid-device-limit) с HWID)
-- 🚀 Интеграция **WireGuard / AmneziaWG** копированием `.conf` в маунт-папку
+- 🚀 Интеграция **WireGuard / AmneziaWG, OpenVPN и TrustTunnel** через монтируемые папки конфигураций
 - 📦 **Автоустановка** в один сниппет в терминал MikroTik
 - 🛠 Несколько VETH-интерфейсов становятся прокси-выходами → mangle в RouterOS отправит куда нужно
 
@@ -84,7 +84,7 @@
 
 Что ещё внутри:
 
-- **Редактор proxy YAML** с 12 шаблонами протоколов (vless-tcp/reality, vless-xhttp, vmess, trojan, ss, anytls, wireguard, amneziawg, hysteria2, tuic, ssh, vless-ws) — кнопка *"Загрузить шаблон"* подставляет в textarea
+- **Редактор proxy YAML** с шаблонами VLESS, VMess, Trojan, Shadowsocks, SSR, Snell, AnyTLS, Mieru, WireGuard / AmneziaWG, Hysteria, Hysteria2, TUIC, MASQUE, Tailscale, ZeroTier, TrustTunnel, OpenVPN и SSH — кнопка *"Загрузить шаблон"* подставляет содержимое в textarea
 - **Живая валидация `mihomo -t`** перед сохранением, плюс проверка уникальности `name:` по всем провайдерам
 - **Редактор AWG** с полным шаблоном `[Interface]/[Peer]/[Mihomo]` со всеми ключами, которые понимает парсер
 - **Менеджер DPI-файлов** — загрузка `.bin` фейков в `/zapret-fakebin/`, редактирование текстовых списков в `/zapret-lists/`, фильтр по имени
@@ -97,6 +97,8 @@
 | Путь в контейнере | Назначение | Формат |
 |---|---|---|
 | `/root/.config/mihomo/awg/` | Конфиги WireGuard / AmneziaWG → становятся прокси-провайдерами | `*.conf` |
+| `/root/.config/mihomo/openvpn/` | Конфиги OpenVPN → становятся прокси-провайдерами | `*.ovpn` / `*.conf` |
+| `/root/.config/mihomo/trusttunnel/` | Конфиги TrustTunnel → становятся прокси-провайдерами | `*.toml` |
 | `/root/.config/mihomo/proxies_mount/` | Свои прокси-провайдеры в нативном YAML mihomo | `*.yaml` / `*.yml` |
 | `/root/.config/mihomo/rule_set_list/` | Свои rule-set-списки в формате [payload](https://wiki.metacubex.one/ru/config/rule-providers/#payload) | `*.txt` (имя файла = имя группы) |
 | `/zapret-fakebin/` | Бинарные fake-пакеты для `nfqws --dpi-desync-fake-*` | `*.bin` |
@@ -280,7 +282,7 @@ ETH1_GATEWAY2=192.168.5.11#сосед-tor
 | ENV | По умолчанию | Описание |
 |---|---|---|
 | `GROUP` | — | Список [прокси-групп](https://wiki.metacubex.one/ru/config/proxy-groups) через запятую. `telegram,youtube,google,ai,geoblock` → группы `TELEGRAM, YOUTUBE, GOOGLE, AI, GEOBLOCK`. Группа создаётся только если у неё есть хотя бы один ресурс (`XXX_*`) или `XXX_USE`. |
-| `XXX_TYPE` | `select` | [Тип группы](https://wiki.metacubex.one/ru/config/proxy-groups/#type): `select` / `url-test` / `fallback` / `load-balance` / `relay`. |
+| `XXX_TYPE` | `select` | [Тип группы](https://wiki.metacubex.one/ru/config/proxy-groups/#type): `select` / `url-test` / `fallback` / `load-balance`. |
 | `XXX_USE` | *все провайдеры в порядке: LINKs, SUB_LINKs, WG/AWG, BYEDPI, DIRECT* | Какие [провайдеры](https://wiki.metacubex.one/ru/config/proxy-providers) включить в группу. Пример: `YOUTUBE_USE=BYEDPI,LINK1`. |
 | `XXX_PROXIES` | — | Явный список [proxies](https://wiki.metacubex.one/ru/config/proxy-groups/#proxies) (конкретных узлов, не провайдеров) через запятую. Альтернатива/дополнение к `XXX_USE`. |
 | `XXX_FILTER` | — | [Regex-фильтр имён](https://wiki.metacubex.one/ru/config/proxy-groups/#filter). Пример: `RU\|BYEDPI`. |
