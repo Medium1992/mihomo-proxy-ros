@@ -214,7 +214,7 @@ bc_hs5t_stop_one() {
 }
 
 bc_hs5t_start_one() {
-  local k="$1" mark udp_port conf script pidf
+  local k="$1" mark udp_port conf script pidf pid
   mkdir -p "$BC_HS5T_DIR" || return 1
   mark=$(bc_mark_for_worker "$k")
   udp_port=$(bc_udp_port_for_worker "$k")
@@ -248,8 +248,13 @@ EOF
   chmod +x "$script"
 
   "$BC_HS5T_BIN" "$conf" >>"$BC_HS5T_DIR/hs5t_$k.log" 2>&1 &
-  printf '%s\n' "$!" > "$pidf"
+  pid=$!
+  printf '%s\n' "$pid" > "$pidf"
   sleep 0.2 2>/dev/null || sleep 1
+  if ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$pidf"
+    return 1
+  fi
   return 0
 }
 

@@ -339,6 +339,11 @@ run_strategy() {
   hard_kb=$((BC_HARD_MIN_BYTES / 1024))
   tp_kb=$((BC_THROUGHPUT_BYTES / 1024))
   tp_sec="${BC_THROUGHPUT_MAX_SEC:-5}"
+  youtube_bytes="${BC_YOUTUBE_THROUGHPUT_BYTES:-2097152}"
+  youtube_quality="${BC_YOUTUBE_QUALITY:-480p}"
+  case "$youtube_bytes" in ''|*[!0-9]*) youtube_bytes=2097152 ;; esac
+  case "$youtube_quality" in 240p|360p|480p|720p|1080p) ;; *) youtube_quality=480p ;; esac
+  youtube_kb=$((youtube_bytes / 1024))
   while IFS=$(printf '\t') read -r host ip path mode; do
     [ -z "$host" ] && continue
     if [ "$mode" = "youtube_support" ]; then
@@ -352,8 +357,8 @@ run_strategy() {
     fi
     if [ "$mode" = "throughput" ] || [ "$mode" = "youtube_throughput" ]; then
       if [ "$mode" = "youtube_throughput" ]; then
-        BC_THROUGHPUT_BYTES=2097152 bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
-        thr_tag="youtube-480p-2048k/${tp_sec}s"
+        BC_THROUGHPUT_BYTES="$youtube_bytes" bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
+        thr_tag="youtube-${youtube_quality}-${youtube_kb}k/${tp_sec}s"
       else
         bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
         thr_tag="throughput-${tp_kb}k/${tp_sec}s"

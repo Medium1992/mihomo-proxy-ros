@@ -1110,7 +1110,7 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
     <div class="bc-tier-info-body">
       <p>Контейнер не извлекает <code>youtube.com/watch</code> в прямые потоки. Можно попробовать получить прямую ссылку на видеопоток внешним инструментом <a class="doc-link" href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp/yt-dlp</a>.</p>
       <p>Пример строки для поля <b>Домены</b>: <code>@full https://...googlevideo.com/videoplayback?...</code></p>
-      <p><code>@full</code> для <code>googlevideo.com/videoplayback</code> включает YouTube-комплект: <code>www.youtube.com</code>, <code>redirector.googlevideo.com</code>, <code>i.ytimg.com</code> и сам видеопоток. Поток должен отдать 2 МБ за 5 секунд — ориентир для 480p. Та же googlevideo-ссылка без <code>@full</code> проверяет только видеопоток.</p>
+      <p><code>@full</code> для <code>googlevideo.com/videoplayback</code> включает YouTube-комплект: <code>www.youtube.com</code>, <code>redirector.googlevideo.com</code>, <code>i.ytimg.com</code> и сам видеопоток. Порог потока выбирается ниже; 480p по умолчанию — 2 МБ за 5 секунд. Это ориентир скорости, а не определение фактического формата видео. Та же googlevideo-ссылка без <code>@full</code> проверяет только видеопоток.</p>
       <p>⚠ <b>Ссылка живёт ~6 часов.</b> <code>videoplayback</code>-URL подписан параметром <code>expire</code>; протухшая ссылка отдаёт <b>HTTP 403</b>. Проверка это ловит: перед прогоном бьёт по ссылке напрямую, а по завершении — предупреждает, если все видео-пробы вернули 403. Увидели такое — возьмите свежую ссылку и запустите заново.</p>
     </div>
   </details>
@@ -1145,12 +1145,21 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
     <label class="socks-toggle" title="QUIC v1 handshake к UDP/443 через byedpi SOCKS + hs5t"><input type="checkbox" id="bdcTestQuic" checked><span>QUIC/443</span></label>
     <label class="socks-toggle" title="Дополнительно перебрать .bin-файлы из /zapret-fakebin как payload для byedpi --fake-data FILE. Увеличивает количество стратегий."><input type="checkbox" id="bdcUseFakebin"><span>×fakebin</span></label>
   </div>
-  <div class="grid bc-grid">
+  <div class="grid bc-grid bc-grid-three">
     <label class="field"><span><b>Мин. размер ответа для 16-20KB теста, КБ</b><em>Применяется к доменам с путём.</em></span>
       <input id="bdcHardMinKb" type="number" min="4" max="256" value="16">
     </label>
     <label class="field" title="Стратегии с fake-sni/fake-tls-mod rand могут вести себя нестабильно — probe засчитывается «ok» только если все N попыток прошли подряд. 2 — рекомендовано."><span><b>Повторов на rnd-стратегию</b><em>Probe считается «ok» только если все N попыток подряд прошли. Применяется к <code>rnd</code>-стратегиям. 2 — рекомендовано.</em></span>
       <input id="bdcRndRepeats" type="number" min="1" max="5" value="2">
+    </label>
+    <label class="field" title="Только для @full googlevideo/videoplayback. Это порог скорости для видеопотока, а не определение качества ссылки."><span><b>Качество YouTube</b><em>Поток за 5 с. Ориентир минимальной скорости; 480p — рекомендовано.</em></span>
+      <select id="bdcYoutubeQuality">
+        <option value="240p">240p — 512 КБ</option>
+        <option value="360p">360p — 1 МБ</option>
+        <option value="480p" selected>480p — 2 МБ</option>
+        <option value="720p">720p — 4 МБ</option>
+        <option value="1080p">1080p — 8 МБ</option>
+      </select>
     </label>
   </div>
   <div class="bc-actions">
@@ -1242,7 +1251,7 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
     <div class="bc-tier-info-body">
       <p>Контейнер не извлекает <code>youtube.com/watch</code> в прямые потоки. Можно попробовать получить прямую ссылку на видеопоток внешним инструментом <a class="doc-link" href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp/yt-dlp</a>.</p>
       <p>Пример строки для поля <b>Домены</b>: <code>@full https://...googlevideo.com/videoplayback?...</code></p>
-      <p><code>@full</code> для <code>googlevideo.com/videoplayback</code> включает YouTube-комплект: <code>www.youtube.com</code>, <code>redirector.googlevideo.com</code>, <code>i.ytimg.com</code> и сам видеопоток. Поток должен отдать 2 МБ за 5 секунд — ориентир для 480p. Та же googlevideo-ссылка без <code>@full</code> проверяет только видеопоток.</p>
+      <p><code>@full</code> для <code>googlevideo.com/videoplayback</code> включает YouTube-комплект: <code>www.youtube.com</code>, <code>redirector.googlevideo.com</code>, <code>i.ytimg.com</code> и сам видеопоток. Порог потока выбирается ниже; 480p по умолчанию — 2 МБ за 5 секунд. Это ориентир скорости, а не определение фактического формата видео. Та же googlevideo-ссылка без <code>@full</code> проверяет только видеопоток.</p>
       <p>⚠ <b>Ссылка живёт ~6 часов.</b> <code>videoplayback</code>-URL подписан параметром <code>expire</code>; протухшая ссылка отдаёт <b>HTTP 403</b>. Проверка это ловит: перед прогоном бьёт по ссылке напрямую, а по завершении — предупреждает, если все видео-пробы вернули 403. Увидели такое — возьмите свежую ссылку и запустите заново.</p>
     </div>
   </details>
@@ -1263,6 +1272,7 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
   <details class="bc-tier-info">
     <summary>Что добавляется в каждом уровне</summary>
     <div class="bc-tier-info-body">
+      <p><b>Во всех уровнях сначала идут seed-цепочки</b> — короткий набор практических TLS/QUIC вариантов из реальных конфигураций. Затем запускается обычная матрица выбранного уровня; профили с чужими hostlist и игровыми портами сюда не переносятся.</p>
       <p><b>quick</b> — sanity-check инфраструктуры. 1 splitter (<code>multisplit</code>), 2 fooling (<code>badsum</code>, <code>md5sig</code>), базовые позиции <code>1</code> / <code>host+1</code>. Без композитных модов, seqovl, cutoff.</p>
       <p><b>basic</b> (+к quick) — стартовый рабочий набор. Сплиттеры <code>multidisorder</code>, <code>fakedsplit</code>; <b>композитные modes</b> (<code>fake,multisplit</code>, <code>fake,multidisorder</code>); <b>цепочки</b> <code>dup → multisplit</code> с <code>md5sig/badsum/badseq</code>; QUIC <code>ipfrag2</code> и <code>fake,ipfrag2</code>; seqovl <code>1, 681</code>; <code>fake-tls-mod=rnd,dupsid</code>; ещё позиции TLS.</p>
       <p><b>medium</b> (+к basic) — расширение для типичных кейсов. Сплиттеры <code>fakeddisorder</code>, <code>hostfakesplit</code>; композит <code>fake,fakedsplit</code>; <b>TTL/autottl fake-цепочки</b>; <b>cutoff</b> <code>n3/n4</code>; <b>badseq-increment</b> <code>0/2</code>; seqovl <code>652, 726</code>; составной fooling <code>badsum,badseq</code>; длинные позиции (<code>sld+1</code>, <code>1,sld+1,endsld-2</code>).</p>
@@ -1277,12 +1287,21 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
     <label class="socks-toggle" title="QUIC v1 handshake к UDP/443"><input type="checkbox" id="bc1TestQuic" checked><span>QUIC/443</span></label>
     <label class="socks-toggle" title="Дополнительно перебрать каждый .bin-файл из /zapret-fakebin как payload для --dpi-desync-fake-tls=$FILE / --dpi-desync-fake-http=$FILE / --dpi-desync-fake-quic=$FILE. Сильно увеличивает количество стратегий."><input type="checkbox" id="bc1UseFakebin"><span>×fakebin</span></label>
   </div>
-  <div class="grid bc-grid">
+  <div class="grid bc-grid bc-grid-three">
     <label class="field"><span><b>Мин. размер ответа для 16-20KB теста, КБ</b><em>Применяется к доменам с путём.</em></span>
       <input id="bc1HardMinKb" type="number" min="4" max="256" value="16">
     </label>
     <label class="field" title="Стратегии с tls_mod=rnd рандомят ClientHello — probe засчитывается «ok» только если все N попыток прошли подряд. 2 — рекомендовано."><span><b>Повторов на rnd-стратегию</b><em>Probe считается «ok» только если все N попыток подряд прошли. Применяется к <code>rnd</code>-стратегиям. 2 — рекомендовано.</em></span>
       <input id="bc1RndRepeats" type="number" min="1" max="5" value="2">
+    </label>
+    <label class="field" title="Только для @full googlevideo/videoplayback. Это порог скорости для видеопотока, а не определение качества ссылки."><span><b>Качество YouTube</b><em>Поток за 5 с. Ориентир минимальной скорости; 480p — рекомендовано.</em></span>
+      <select id="bc1YoutubeQuality">
+        <option value="240p">240p — 512 КБ</option>
+        <option value="360p">360p — 1 МБ</option>
+        <option value="480p" selected>480p — 2 МБ</option>
+        <option value="720p">720p — 4 МБ</option>
+        <option value="1080p">1080p — 8 МБ</option>
+      </select>
     </label>
   </div>
   <div class="bc-actions">
@@ -1383,7 +1402,7 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
     <div class="bc-tier-info-body">
       <p>Контейнер не извлекает <code>youtube.com/watch</code> в прямые потоки. Можно попробовать получить прямую ссылку на видеопоток внешним инструментом <a class="doc-link" href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp/yt-dlp</a>.</p>
       <p>Пример строки для поля <b>Домены</b>: <code>@full https://...googlevideo.com/videoplayback?...</code></p>
-      <p><code>@full</code> для <code>googlevideo.com/videoplayback</code> включает YouTube-комплект: <code>www.youtube.com</code>, <code>redirector.googlevideo.com</code>, <code>i.ytimg.com</code> и сам видеопоток. Поток должен отдать 2 МБ за 5 секунд — ориентир для 480p. Та же googlevideo-ссылка без <code>@full</code> проверяет только видеопоток.</p>
+      <p><code>@full</code> для <code>googlevideo.com/videoplayback</code> включает YouTube-комплект: <code>www.youtube.com</code>, <code>redirector.googlevideo.com</code>, <code>i.ytimg.com</code> и сам видеопоток. Порог потока выбирается ниже; 480p по умолчанию — 2 МБ за 5 секунд. Это ориентир скорости, а не определение фактического формата видео. Та же googlevideo-ссылка без <code>@full</code> проверяет только видеопоток.</p>
       <p>⚠ <b>Ссылка живёт ~6 часов.</b> <code>videoplayback</code>-URL подписан параметром <code>expire</code>; протухшая ссылка отдаёт <b>HTTP 403</b>. Проверка это ловит: перед прогоном бьёт по ссылке напрямую, а по завершении — предупреждает, если все видео-пробы вернули 403. Увидели такое — возьмите свежую ссылку и запустите заново.</p>
     </div>
   </details>
@@ -1404,6 +1423,7 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
   <details class="bc-tier-info">
     <summary>Что добавляется в каждом уровне</summary>
     <div class="bc-tier-info-body">
+      <p><b>Во всех уровнях сначала идут seed-цепочки</b> — короткие Lua-сценарии по логике штатного BlockCheck2: соблюдается порядок <code>wssize → syndata</code> и <code>send → drop</code>. Затем запускается обычная матрица выбранного уровня.</p>
       <p><b>quick</b> — sanity-check инфраструктуры. 2 сплиттера (<code>multidisorder</code>, <code>multisplit</code>), 2 fooling (<code>badsum</code>, <code>tcp_ts=-1000</code>), <code>tls_mod=rnd,dupsid</code>, без pre-fake.</p>
       <p><b>basic</b> (+к quick) — типичный рабочий набор. Сплиттеры <code>fakedsplit</code>, <code>fakeddisorder</code>; <b>pre-fake on</b> (fake-цепочка перед split); <b>lua-цепочки</b> <code>syndata/oob → multisplit/multidisorder</code>; foolings <code>tcp_ack=-66000:tcp_ts_up</code>, <code>tcp_md5</code>; tls_mod <code>rnd</code>; seqovl <code>1, -1, 681</code>; позиции <code>1,midsld,1220</code>, <code>host+1</code>, <code>sld+1</code>.</p>
       <p><b>medium</b> (+к basic) — расширение. Сплиттер <code>hostfakesplit</code>; <b>TLS цепочки</b> <code>tcpseg → drop</code> и <code>fake → syndata → multisplit</code>; QUIC <code>send:ipfrag → drop</code> и <code>fake → ipfrag → drop</code>; foolings <code>tcp_seq=-3000</code>, <code>tcp_nop_del</code>; tls_mod <code>dupsid</code>; seqovl <code>652, 726</code>; позиции <code>1,sniext+1</code>, <code>sniext+1,midsld</code>, <code>1,sld+1,endsld-2</code>.</p>
@@ -1418,12 +1438,21 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
     <label class="socks-toggle" title="QUIC v1 handshake к UDP/443 через openssl s_client -quic -alpn h3 -servername host (handshake = пришёл Server certificate). Нужен OpenSSL ≥3.5 в контейнере."><input type="checkbox" id="bcTestQuic" checked><span>QUIC/443</span></label>
     <label class="socks-toggle" title="Дополнительно перебрать каждый .bin-файл из /zapret-fakebin в качестве fake-payload (заменяет fake_default_tls на --blob=fb:@…). Заметно увеличивает число стратегий (×N_blobs), но именно среди них чаще всего и находятся рабочие комбинации."><input type="checkbox" id="bcUseFakebin"><span>×fakebin</span></label>
   </div>
-  <div class="grid bc-grid">
+  <div class="grid bc-grid bc-grid-three">
     <label class="field"><span><b>Мин. размер ответа для 16-20KB теста, КБ</b><em>Применяется к доменам с путём.</em></span>
       <input id="bcHardMinKb" type="number" min="4" max="256" value="16">
     </label>
     <label class="field" title="Стратегии с tls_mod=rnd рандомят ClientHello — probe засчитывается «ok» только если все N попыток прошли подряд. 2 — рекомендовано."><span><b>Повторов на rnd-стратегию</b><em>Probe считается «ok» только если все N попыток подряд прошли. Применяется к <code>rnd</code>-стратегиям. 2 — рекомендовано.</em></span>
       <input id="bcRndRepeats" type="number" min="1" max="5" value="2">
+    </label>
+    <label class="field" title="Только для @full googlevideo/videoplayback. Это порог скорости для видеопотока, а не определение качества ссылки."><span><b>Качество YouTube</b><em>Поток за 5 с. Ориентир минимальной скорости; 480p — рекомендовано.</em></span>
+      <select id="bcYoutubeQuality">
+        <option value="240p">240p — 512 КБ</option>
+        <option value="360p">360p — 1 МБ</option>
+        <option value="480p" selected>480p — 2 МБ</option>
+        <option value="720p">720p — 4 МБ</option>
+        <option value="1080p">1080p — 8 МБ</option>
+      </select>
     </label>
   </div>
   <div class="bc-actions">

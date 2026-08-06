@@ -53,6 +53,7 @@ level=$(extract_field level)
 fakebin=$(extract_field fakebin)
 hard_min_kb=$(extract_field hard_min_kb)
 rnd_repeats=$(extract_field rnd_repeats)
+youtube_quality=$(extract_field youtube_quality)
 
 [ -z "$domains_b64" ] && err "domains_b64 required"
 case "$workers" in
@@ -152,6 +153,15 @@ case "$rnd_repeats" in ''|*[!0-9]*) rnd_repeats=2 ;; esac
 [ "$rnd_repeats" -lt 1 ] && rnd_repeats=1
 [ "$rnd_repeats" -gt 5 ] && rnd_repeats=5
 
+case "$youtube_quality" in
+  240p)  youtube_bytes=524288 ;;
+  360p)  youtube_bytes=1048576 ;;
+  480p)  youtube_bytes=2097152 ;;
+  720p)  youtube_bytes=4194304 ;;
+  1080p) youtube_bytes=8388608 ;;
+  *)     youtube_quality=480p; youtube_bytes=2097152 ;;
+esac
+
 gen_args="--level=$level"
 [ "$fakebin" = "1" ] && [ -d /zapret-fakebin ] && gen_args="$gen_args --fakebin-dir=/zapret-fakebin"
 include=""
@@ -219,6 +229,8 @@ exec env \
   BC_NFQWS="$BC_NFQWS" \
   BC_HARD_MIN_BYTES="$BC_HARD_MIN_BYTES" \
   BC_PROBE_RND_REPEATS="$BC_PROBE_RND_REPEATS" \
+  BC_YOUTUBE_THROUGHPUT_BYTES="$BC_YOUTUBE_THROUGHPUT_BYTES" \
+  BC_YOUTUBE_QUALITY="$BC_YOUTUBE_QUALITY" \
   BC_QUIC_DEFAULT="$BC_QUIC_DEFAULT" \
   sh "$BC_RUN_DIR/run" \
     --job="$JOB_ID" \
@@ -250,6 +262,8 @@ BC_SPORT_BASE="$BC1_SPORT_BASE" \
 BC_NFQWS="$BC1_NFQWS" \
 BC_HARD_MIN_BYTES="$hard_min_bytes" \
 BC_PROBE_RND_REPEATS="$rnd_repeats" \
+BC_YOUTUBE_THROUGHPUT_BYTES="$youtube_bytes" \
+BC_YOUTUBE_QUALITY="$youtube_quality" \
 BC_QUIC_DEFAULT="--filter-udp=0-65535 --dpi-desync=fake --dpi-desync-repeats=20" \
   nohup "$SETSID" sh "$prep_script" >>"$job_dir/runner.log" 2>&1 </dev/null &
 

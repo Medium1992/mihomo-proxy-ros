@@ -2933,6 +2933,32 @@ function addProxyFileRow(name, size) {
   wrap.appendChild(div);
 }
 
+function fetchFileList(type) {
+  return fetch('/cgi-bin/list-files?type=' + encodeURIComponent(type), { cache: 'no-store' })
+    .then((r) => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then((data) => (data && data.ok ? (data.files || []) : []));
+}
+
+function setMountListEmpty(wrap) {
+  const empty = document.createElement('div');
+  empty.className = 'empty';
+  empty.textContent = 'Файлов пока нет.';
+  wrap.appendChild(empty);
+}
+
+function refreshProxyFileList() {
+  const wrap = document.getElementById('proxy-mount-links');
+  if (!wrap) return Promise.resolve();
+  return fetchFileList('proxy').then((files) => {
+    wrap.replaceChildren();
+    files.forEach((file) => addProxyFileRow(file.file, file.size));
+    if (!files.length) setMountListEmpty(wrap);
+  });
+}
+
 function resetProxyValidateResult() {
   const box = document.getElementById("proxyValidateResult");
   if (!box) return;
@@ -3124,10 +3150,7 @@ function saveProxyFileModal() {
     .then((text) => {
       if (text.trim() === "OK") {
         closeProxyFileModal();
-        if (isNew) {
-          const size = new Blob([plainEl.value]).size;
-          addProxyFileRow(fileName, size);
-        }
+        return refreshProxyFileList();
       } else {
         alert('Ошибка сохранения: ' + text);
       }
@@ -3199,8 +3222,8 @@ function uploadAwgConf() {
         .then((r) => r.text())
         .then((text) => {
           if (text.trim() === "OK") {
-            addAwgFileRow(file.name, file.size);
             input.value = "";
+            return refreshAwgFileList();
           } else {
             alert('Ошибка загрузки: ' + text);
           }
@@ -3209,6 +3232,16 @@ function uploadAwgConf() {
   };
   reader.onerror = function () { alert("Ошибка чтения файла"); };
   reader.readAsDataURL(file);
+}
+
+function refreshAwgFileList() {
+  const wrap = document.getElementById('awg-mount-links');
+  if (!wrap) return Promise.resolve();
+  return fetchFileList('awg').then((files) => {
+    wrap.replaceChildren();
+    files.forEach((file) => addAwgFileRow(file.file, file.size));
+    if (!files.length) setMountListEmpty(wrap);
+  });
 }
 
 function uploadProxyYaml() {
@@ -3244,6 +3277,7 @@ function uploadProxyYaml() {
             if (existingRow) existingRow.remove();
             addProxyFileRow(file.name, file.size);
             input.value = "";
+            return refreshProxyFileList();
           } else {
             alert('Ошибка загрузки: ' + text);
           }
@@ -3334,10 +3368,7 @@ function saveAwgFileModal() {
     .then((text) => {
       if (text.trim() === "OK") {
         closeAwgFileModal();
-        if (isNew) {
-          const size = new Blob([plainEl.value]).size;
-          addAwgFileRow(fileName, size);
-        }
+        return refreshAwgFileList();
       } else {
         alert('Ошибка сохранения: ' + text);
       }
@@ -3445,8 +3476,8 @@ function uploadMountedConfig(type) {
         .then((r) => r.text())
         .then((text) => {
           if (text.trim() === "OK") {
-            addMountedConfigRow(type, file.name, file.size);
             input.value = "";
+            return refreshMountedConfigList(type);
           } else {
             alert('Ошибка загрузки: ' + text);
           }
@@ -3455,6 +3486,25 @@ function uploadMountedConfig(type) {
   };
   reader.onerror = function () { alert("Ошибка чтения файла"); };
   reader.readAsDataURL(file);
+}
+
+function refreshMountedConfigList(type) {
+  const meta = mountedConfigMeta[type];
+  const wrap = meta && document.getElementById(meta.linksId);
+  if (!wrap) return Promise.resolve();
+  return fetchFileList(type).then((files) => {
+    wrap.replaceChildren();
+    files.forEach((file) => addMountedConfigRow(type, file.file, file.size));
+    if (!files.length) setMountListEmpty(wrap);
+  });
+}
+
+function initProviderMountLists() {
+  if (!document.getElementById('proxy-mount-links')) return;
+  refreshProxyFileList().catch(() => {});
+  refreshAwgFileList().catch(() => {});
+  refreshMountedConfigList('trusttunnel').catch(() => {});
+  refreshMountedConfigList('openvpn').catch(() => {});
 }
 
 function editMountedConfigFile(type, btn) {
@@ -3540,10 +3590,7 @@ function saveMountedConfigModal(type) {
     .then((text) => {
       if (text.trim() === "OK") {
         closeMountedConfigModal(type);
-        if (isNew) {
-          const size = new Blob([plainEl.value]).size;
-          addMountedConfigRow(type, fileName, size);
-        }
+        return refreshMountedConfigList(type);
       } else {
         alert('Ошибка сохранения: ' + text);
       }
@@ -5177,6 +5224,7 @@ function bootstrapUI() {
   initPasswordToggles(document);
   initPageTabs();
   initSocksEditor();
+  initProviderMountLists();
   initFieldValidators();
   initToolsPage();
   initBlockcheck();
@@ -5287,7 +5335,7 @@ function initBlockcheck() {
   // Используется и в draftCollect (см. DRAFT_KEYS_RE), чтобы значения уезжали
   // на сервер вместе с остальным черновиком и переживали F5 / переоткрытие.
   const bcPersistFields = [
-    "bcWorkers", "bcLevel", "bcHardMinKb", "bcRndRepeats",
+    "bcWorkers", "bcLevel", "bcHardMinKb", "bcRndRepeats", "bcYoutubeQuality",
     "bcTestHttp", "bcTestTls12", "bcTestTls13", "bcTestQuic",
     "bcUseFakebin",
     "bcCustomArgs",
@@ -5783,6 +5831,7 @@ function bcFormValues() {
     // here applies to all such domains in this run.
     hard_min_kb: parseInt(document.getElementById("bcHardMinKb").value, 10) || 16,
     rnd_repeats: parseInt(document.getElementById("bcRndRepeats").value, 10) || 2,
+    youtube_quality: document.getElementById("bcYoutubeQuality").value,
     tests:       tests,
   };
 }
@@ -5840,6 +5889,7 @@ function blockcheck2Custom() {
   body.set("level",          v.level);
   body.set("hard_min_kb",    String(v.hard_min_kb));
   body.set("rnd_repeats",    String(v.rnd_repeats));
+  body.set("youtube_quality", v.youtube_quality);
 
   fetch("/cgi-bin/blockcheck2", {
     method: "POST",
@@ -5900,6 +5950,7 @@ function blockcheck2Start() {
   body.set("fakebin",     v.fakebin);
   body.set("hard_min_kb", String(v.hard_min_kb));
   body.set("rnd_repeats", String(v.rnd_repeats));
+  body.set("youtube_quality", v.youtube_quality);
 
   fetch("/cgi-bin/blockcheck2", {
     method: "POST",
@@ -6090,7 +6141,7 @@ function initBlockcheck1() {
   // Используется и в draftCollect (см. DRAFT_KEYS_RE), чтобы значения уезжали
   // на сервер вместе с остальным черновиком и переживали F5 / переоткрытие.
   const bcPersistFields = [
-    "bc1Workers", "bc1Level", "bc1HardMinKb", "bc1RndRepeats",
+    "bc1Workers", "bc1Level", "bc1HardMinKb", "bc1RndRepeats", "bc1YoutubeQuality",
     "bc1TestHttp", "bc1TestTls12", "bc1TestTls13", "bc1TestQuic",
     "bc1UseFakebin",
     "bc1CustomArgs",
@@ -6565,6 +6616,7 @@ function bc1FormValues() {
     // here applies to all such domains in this run.
     hard_min_kb: parseInt(document.getElementById("bc1HardMinKb").value, 10) || 16,
     rnd_repeats: parseInt(document.getElementById("bc1RndRepeats").value, 10) || 2,
+    youtube_quality: document.getElementById("bc1YoutubeQuality").value,
     tests:       tests,
   };
 }
@@ -6619,6 +6671,7 @@ function blockcheck1Custom() {
   body.set("level",          v.level);
   body.set("hard_min_kb",    String(v.hard_min_kb));
   body.set("rnd_repeats",    String(v.rnd_repeats));
+  body.set("youtube_quality", v.youtube_quality);
 
   fetch("/cgi-bin/blockcheck1", {
     method: "POST",
@@ -6679,6 +6732,7 @@ function blockcheck1Start() {
   body.set("fakebin",     v.fakebin);
   body.set("hard_min_kb", String(v.hard_min_kb));
   body.set("rnd_repeats", String(v.rnd_repeats));
+  body.set("youtube_quality", v.youtube_quality);
 
   fetch("/cgi-bin/blockcheck1", {
     method: "POST",
@@ -6841,7 +6895,7 @@ function initByedpiCheck() {
   document.getElementById("bdcDomains").addEventListener("input", (e) => {
     try { Store.set("mihomo-bdc-domains", e.target.value); draftSaveDebounced(); } catch (e2) {}
   });
-  ["bdcWorkers","bdcLevel","bdcHardMinKb","bdcRndRepeats","bdcTestHttp","bdcTestTls12","bdcTestTls13","bdcTestQuic","bdcUseFakebin","bdcCustomArgs","bdcCustomHttp","bdcCustomTls12","bdcCustomTls13","bdcCustomQuic"].forEach((id) => {
+  ["bdcWorkers","bdcLevel","bdcHardMinKb","bdcRndRepeats","bdcYoutubeQuality","bdcTestHttp","bdcTestTls12","bdcTestTls13","bdcTestQuic","bdcUseFakebin","bdcCustomArgs","bdcCustomHttp","bdcCustomTls12","bdcCustomTls13","bdcCustomQuic"].forEach((id) => {
     const el = document.getElementById(id); if (!el) return;
     const key = "mihomo-bdc-form:" + id;
     const val = Store.get(key);
@@ -7064,7 +7118,7 @@ function bdcFormValues() {
   if (document.getElementById("bdcTestTls12").checked) tests.push("tls12");
   if (document.getElementById("bdcTestTls13").checked) tests.push("tls13");
   if (document.getElementById("bdcTestQuic").checked) tests.push("quic");
-  return { domains: checkerDomainsValue("bdcDomains"), workers: parseInt(document.getElementById("bdcWorkers").value, 10) || 4, level: document.getElementById("bdcLevel").value, fakebin: document.getElementById("bdcUseFakebin").checked ? "1" : "0", hard_min_kb: parseInt(document.getElementById("bdcHardMinKb").value, 10) || 16, rnd_repeats: parseInt(document.getElementById("bdcRndRepeats").value, 10) || 2, tests };
+  return { domains: checkerDomainsValue("bdcDomains"), workers: parseInt(document.getElementById("bdcWorkers").value, 10) || 4, level: document.getElementById("bdcLevel").value, fakebin: document.getElementById("bdcUseFakebin").checked ? "1" : "0", hard_min_kb: parseInt(document.getElementById("bdcHardMinKb").value, 10) || 16, rnd_repeats: parseInt(document.getElementById("bdcRndRepeats").value, 10) || 2, youtube_quality: document.getElementById("bdcYoutubeQuality").value, tests };
 }
 
 function byedpiCheckCustom() {
@@ -7089,7 +7143,7 @@ function byedpiCheckCustom() {
   body.set("domains_b64", btoa(unescape(encodeURIComponent(v.domains))));
   body.set("workers", "1"); body.set("tests", tests.join(","));
   body.set("strategies_b64", btoa(unescape(encodeURIComponent(tag + "|all|" + args + "\n"))));
-  body.set("level", v.level); body.set("hard_min_kb", String(v.hard_min_kb)); body.set("rnd_repeats", String(v.rnd_repeats));
+  body.set("level", v.level); body.set("hard_min_kb", String(v.hard_min_kb)); body.set("rnd_repeats", String(v.rnd_repeats)); body.set("youtube_quality", v.youtube_quality);
   bdcPostStart(body, "custom-test запущен");
 }
 
@@ -7108,7 +7162,7 @@ function byedpiCheckStart() {
   document.getElementById("bdcTableBox").hidden = true; document.getElementById("bdcCounts").hidden = true; document.getElementById("bdcProgress").hidden = true; document.getElementById("bdcCurrent").textContent = ""; document.getElementById("bdcDownloadBtn").disabled = true; document.getElementById("bdcCombinedBox").hidden = true;
   const body = new URLSearchParams();
   body.set("domains_b64", btoa(unescape(encodeURIComponent(v.domains))));
-  body.set("workers", String(v.workers)); body.set("tests", v.tests.join(",")); body.set("level", v.level); body.set("fakebin", v.fakebin); body.set("hard_min_kb", String(v.hard_min_kb)); body.set("rnd_repeats", String(v.rnd_repeats));
+  body.set("workers", String(v.workers)); body.set("tests", v.tests.join(",")); body.set("level", v.level); body.set("fakebin", v.fakebin); body.set("hard_min_kb", String(v.hard_min_kb)); body.set("rnd_repeats", String(v.rnd_repeats)); body.set("youtube_quality", v.youtube_quality);
   bdcPostStart(body, "запущен");
 }
 

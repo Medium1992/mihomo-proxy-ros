@@ -2210,6 +2210,7 @@ nav a .nav-badge[data-kind="changed"] + .nav-badge[data-kind="error"] {
 
 /* Blockcheck additions */
 .bc-grid { gap: 12px; }
+.bc-grid-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .bc-tests { margin: 12px 0; }
 .bc-current { font-family: monospace; font-size: 12px; opacity: 0.8; margin-left: 12px; }
 .bc-counts { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0; font-size: 13px; }
