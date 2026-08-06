@@ -592,6 +592,9 @@ read_cfg() {
 
   echo "    allowed-ips: [$allowed_ips_yaml]"
   echo "    udp: true"
+  echo "    ip-stack:"
+  echo "      mode: mips"
+  echo "      congestion-controller: bbr"
   local dns_raw=$(read_cfg "DNS")
   if [ -n "$dns_raw" ] && ! echo "$dns_raw" | grep -q '\$'; then
     local dns_list=$(echo "$dns_raw" | tr ',' '\n' | \
@@ -1248,6 +1251,9 @@ emit_vpn_wireguard_proxy() {
   [ -n "$mtu" ] && echo "    mtu: $mtu"
   echo "    allowed-ips: [\"0.0.0.0/0\", \"::/0\"]"
   echo "    udp: true"
+  echo "    ip-stack:"
+  echo "      mode: mips"
+  echo "      congestion-controller: bbr"
 
   if [ "$has_awg_param" -eq 1 ]; then
     echo "    amnezia-wg-option:"
@@ -1427,8 +1433,8 @@ emit_vpn_openvpn_proxy() {
   local ovpn_file="$1"
   local name="$2"
   local tmp_prefix="$3"
-  local server="" port="" proto="" dev="" cipher="" auth="" mtu="" username="" password="" comp_lzo=""
-  local ca_file cert_file key_file tls_file auth_user_file tls_source="" cipher_item=""
+  local server="" port="" proto="" dev="" cipher="" data_ciphers="" data_ciphers_fallback="" auth="" mtu="" username="" password="" comp_lzo="" key_direction="" ping="" ping_restart=""
+  local ca_file cert_file key_file tls_auth_file tls_crypt_file tls_crypt_v2_file auth_user_file tls_source="" cipher_item="" data_ciphers_yaml=""
 
   grep -q '^[[:space:]]*remote[[:space:]]' "$ovpn_file" 2>/dev/null || return 1
   grep -q '^[[:space:]]*<ca>[[:space:]]*$' "$ovpn_file" 2>/dev/null || return 1
@@ -1439,11 +1445,16 @@ emit_vpn_openvpn_proxy() {
   [ -n "$proto" ] || proto=$(ovpn_directive_value "$ovpn_file" "remote" 4)
   dev=$(ovpn_directive_value "$ovpn_file" "dev" 2)
   cipher=$(ovpn_directive_value "$ovpn_file" "cipher" 2)
-  [ -n "$cipher" ] || cipher=$(ovpn_directive_value "$ovpn_file" "data-ciphers" 2)
+  data_ciphers=$(ovpn_directive_value "$ovpn_file" "data-ciphers" 2)
+  data_ciphers_fallback=$(ovpn_directive_value "$ovpn_file" "data-ciphers-fallback" 2)
   auth=$(ovpn_directive_value "$ovpn_file" "auth" 2)
   comp_lzo=$(ovpn_directive_value "$ovpn_file" "comp-lzo" 2)
   mtu=$(ovpn_directive_value "$ovpn_file" "tun-mtu" 2)
   [ -n "$mtu" ] || mtu=$(ovpn_directive_value "$ovpn_file" "mtu" 2)
+  key_direction=$(ovpn_directive_value "$ovpn_file" "key-direction" 2)
+  [ -n "$key_direction" ] || key_direction=$(ovpn_directive_value "$ovpn_file" "tls-auth" 3)
+  ping=$(ovpn_directive_value "$ovpn_file" "ping" 2)
+  ping_restart=$(ovpn_directive_value "$ovpn_file" "ping-restart" 2)
 
   [ -n "$server" ] || return 1
   [ -n "$port" ] || port=1194
@@ -1472,20 +1483,48 @@ emit_vpn_openvpn_proxy() {
       esac
     done
   fi
+  case "$key_direction" in 0|1) ;; *) key_direction="" ;; esac
+  case "$ping" in *[!0-9]*|'') ping="" ;; esac
+  case "$ping_restart" in *[!0-9]*|'') ping_restart="" ;; esac
+
+  if [ -n "$data_ciphers" ]; then
+    for cipher_item in $(printf '%s' "$data_ciphers" | tr ':,' '  '); do
+      cipher_item=$(printf '%s' "$cipher_item" | tr '[:lower:]' '[:upper:]')
+      [ "$cipher_item" = "AES-CBC" ] && cipher_item="AES-128-CBC"
+      case "$cipher_item" in
+        AES-128-GCM|AES-192-GCM|AES-256-GCM|AES-128-CBC|AES-192-CBC|AES-256-CBC|CHACHA20-POLY1305)
+          [ -n "$data_ciphers_yaml" ] && data_ciphers_yaml="$data_ciphers_yaml, "
+          data_ciphers_yaml="$data_ciphers_yaml\"$cipher_item\""
+          ;;
+      esac
+    done
+  fi
+  if [ -n "$data_ciphers_fallback" ]; then
+    data_ciphers_fallback=$(printf '%s' "$data_ciphers_fallback" | tr '[:lower:]' '[:upper:]')
+    [ "$data_ciphers_fallback" = "AES-CBC" ] && data_ciphers_fallback="AES-128-CBC"
+    case "$data_ciphers_fallback" in
+      AES-128-GCM|AES-192-GCM|AES-256-GCM|AES-128-CBC|AES-192-CBC|AES-256-CBC|CHACHA20-POLY1305) ;;
+      *) data_ciphers_fallback="" ;;
+    esac
+  fi
   comp_lzo=$(printf '%s' "$comp_lzo" | tr '[:upper:]' '[:lower:]')
 
   ca_file="${tmp_prefix}.ca"
   cert_file="${tmp_prefix}.cert"
   key_file="${tmp_prefix}.key"
-  tls_file="${tmp_prefix}.tls"
+  tls_auth_file="${tmp_prefix}.tls-auth"
+  tls_crypt_file="${tmp_prefix}.tls-crypt"
+  tls_crypt_v2_file="${tmp_prefix}.tls-crypt-v2"
   auth_user_file="${tmp_prefix}.auth_user"
 
   ovpn_extract_pem_block "$ovpn_file" "ca" "$ca_file" || return 1
   ovpn_extract_pem_block "$ovpn_file" "cert" "$cert_file" || true
   ovpn_extract_pem_block "$ovpn_file" "key" "$key_file" || true
-  if ovpn_extract_pem_block "$ovpn_file" "tls-crypt" "$tls_file"; then
+  if ovpn_extract_pem_block "$ovpn_file" "tls-crypt-v2" "$tls_crypt_v2_file"; then
+    tls_source="tls-crypt-v2"
+  elif ovpn_extract_pem_block "$ovpn_file" "tls-crypt" "$tls_crypt_file"; then
     tls_source="tls-crypt"
-  elif ovpn_extract_pem_block "$ovpn_file" "tls-auth" "$tls_file"; then
+  elif ovpn_extract_pem_block "$ovpn_file" "tls-auth" "$tls_auth_file"; then
     tls_source="tls-auth"
   fi
 
@@ -1509,11 +1548,16 @@ emit_vpn_openvpn_proxy() {
   emit_yaml_block_file "ca" "$ca_file"
   [ -s "$cert_file" ] && emit_yaml_block_file "cert" "$cert_file"
   [ -s "$key_file" ] && emit_yaml_block_file "key" "$key_file"
-  [ -s "$tls_file" ] && emit_yaml_block_file "tls-crypt" "$tls_file"
+  [ -s "$tls_auth_file" ] && emit_yaml_block_file "tls-auth" "$tls_auth_file"
+  [ "$tls_source" = "tls-auth" ] && [ -n "$key_direction" ] && echo "    key-direction: $key_direction"
+  [ -s "$tls_crypt_file" ] && emit_yaml_block_file "tls-crypt" "$tls_crypt_file"
+  [ -s "$tls_crypt_v2_file" ] && emit_yaml_block_file "tls-crypt-v2" "$tls_crypt_v2_file"
   echo "    dev: $dev"
   case "$cipher" in
     AES-128-GCM|AES-192-GCM|AES-256-GCM|AES-128-CBC|AES-192-CBC|AES-256-CBC|CHACHA20-POLY1305) echo "    cipher: $cipher" ;;
   esac
+  [ -n "$data_ciphers_yaml" ] && echo "    data-ciphers: [$data_ciphers_yaml]"
+  [ -n "$data_ciphers_fallback" ] && echo "    data-ciphers-fallback: $data_ciphers_fallback"
   case "$auth" in
     MD5|SHA1|SHA256|SHA384|SHA512) echo "    auth: $auth" ;;
   esac
@@ -1521,9 +1565,14 @@ emit_vpn_openvpn_proxy() {
     yes|no|adaptive) echo "    comp-lzo: \"$comp_lzo\"" ;;
   esac
   [ -n "$mtu" ] && echo "    mtu: $mtu"
+  [ "$proto" = "udp" ] && echo "    udp: true"
+  [ -n "$ping" ] && echo "    ping: $ping"
+  [ -n "$ping_restart" ] && echo "    ping-restart: $ping_restart"
+  echo "    ip-stack:"
+  echo "      mode: mips"
+  echo "      congestion-controller: bbr"
   echo ""
 
-  [ "$tls_source" = "tls-auth" ] && log "Warning: $name OpenVPN uses <tls-auth>; emitted it as tls-crypt for mihomo compatibility" >&2
   return 0
 }
 
@@ -1675,7 +1724,10 @@ emit_trusttunnel_proxy() {
     printf '    sni: %s\n' "$(printf '%s' "$hostname" | yaml_quote)"
   fi
   [ "$skip_verify" = "true" ] && echo "    skip-cert-verify: true"
-  [ "$protocol" = "http3" ] && echo "    quic: true"
+  if [ "$protocol" = "http3" ]; then
+    echo "    quic: true"
+    echo "    congestion-controller: bbr"
+  fi
   echo "    health-check: true"
   echo "    udp: true"
   echo ""
