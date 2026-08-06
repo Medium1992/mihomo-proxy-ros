@@ -1964,6 +1964,7 @@ tools_page() {
     <button type="button" class="active" data-tool-tab="authhash"><b>Пароль вебки</b><small>пароль → md5-хеш</small></button>
     <button type="button" data-tool-tab="b64enc"><b>Base64 encode</b><small>текст → base64</small></button>
     <button type="button" data-tool-tab="b64dec"><b>Base64 decode</b><small>base64 → текст</small></button>
+    <button type="button" data-tool-tab="mrs"><b>MRS → текст</b><small>скачать и декомпилировать</small></button>
     <button type="button" data-tool-tab="regex"><b>Regex test</b><small>проверка строк</small></button>
     <button type="button" data-tool-tab="xray"><b>Xray outbounds</b><small>JSON → proxy URI</small></button>
     <button type="button" data-tool-tab="happ"><b>Happ crypto</b><small>crypt/crypt5 inspect</small></button>
@@ -2013,6 +2014,19 @@ tools_page() {
       </div>
       <label class="field field-wide"><span><b>Текст</b><em>UTF-8</em></span><textarea id="toolB64Decoded" rows="10" readonly spellcheck="false"></textarea></label>
       <div class="tool-status" id="toolB64DecodeStatus"></div>
+    </article>
+    <article class="tool-pane" data-tool-pane="mrs" hidden>
+      <div class="notice"><b>Декомпиляция MRS</b><span>Файл скачивается во временную папку <code>/dev/shm</code>, Mihomo преобразует его в текст, затем оба файла удаляются. MRS поддерживает только типы <code>domain</code> и <code>ipcidr</code>; для mixed/classical YAML используйте исходный YAML.</span></div>
+      <div class="tool-compact-grid cols2">
+        <label class="field"><span><b>URL MRS</b><em>http:// или https://</em></span><input id="toolMrsUrl" spellcheck="false" placeholder="https://example.com/ruleset.mrs"></label>
+        <label class="field"><span><b>Тип rule-set</b><em>должен совпадать с исходным MRS</em></span><select id="toolMrsBehavior"><option value="domain">domain</option><option value="ipcidr">ipcidr</option></select></label>
+      </div>
+      <div class="bc-actions">
+        <button type="button" class="primary" onclick="toolMrsDecompile()">Декомпилировать</button>
+        <button type="button" onclick="toolCopy('toolMrsResult', this)">Скопировать результат</button>
+        <span class="tool-status" id="toolMrsStatus"></span>
+      </div>
+      <label class="field field-wide"><span><b>Текстовый rule-set</b><em>результат в памяти браузера</em></span><textarea id="toolMrsResult" rows="18" readonly spellcheck="false" placeholder="После декомпиляции здесь появятся правила."></textarea></label>
     </article>
     <article class="tool-pane" data-tool-pane="regex" hidden>
       <label class="field field-wide"><span><b>Regex</b><em>/pattern/flags или просто pattern</em></span><input id="toolRegexSource" spellcheck="false" placeholder="/^(https?:\/\/)?([a-z0-9-]+\.)*[a-z0-9-]+\.video(\/.*)?$/i"></label>

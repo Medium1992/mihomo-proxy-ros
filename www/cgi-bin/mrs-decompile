@@ -1,0 +1,93 @@
+#!/bin/sh
+# Download an MRS rule-set to tmpfs and convert it to its text representation.
+# The result is returned as plain text so it is not copied through base64/JSON.
+
+echo "Content-Type: text/plain; charset=utf-8"
+echo "Cache-Control: no-store"
+echo ""
+
+. /www/cgi-bin/_guard.sh
+csrf_guard_text
+
+fail() {
+  printf 'ERROR: %s\n' "$1"
+  exit 0
+}
+
+urldecode() {
+  printf '%s\n' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\\x\1/g' | while IFS= read -r line; do printf '%b' "$line"; done
+}
+
+field() {
+  printf '%s' "$body" | awk -v k="$1" -F'&' '{
+    for (i = 1; i <= NF; i++) {
+      n = index($i, "=")
+      if (n > 0 && substr($i, 1, n - 1) == k) { print substr($i, n + 1); exit }
+    }
+  }'
+}
+
+[ "$REQUEST_METHOD" = "POST" ] || fail "POST required"
+
+case "$CONTENT_LENGTH" in
+  ''|*[!0-9]*) CONTENT_LENGTH=0 ;;
+esac
+[ "$CONTENT_LENGTH" -gt 4096 ] && fail "request body too large"
+
+body=$(head -c "$CONTENT_LENGTH")
+url=$(urldecode "$(field url)")
+behavior=$(urldecode "$(field behavior)")
+
+case "$behavior" in
+  domain|ipcidr) ;;
+  *) fail "behavior must be domain or ipcidr" ;;
+esac
+
+case "$url" in
+  http://*|https://*) ;;
+  *) fail "only http:// or https:// URLs are allowed" ;;
+esac
+
+case "$url" in
+  *[\ \"\'\`\<\>\|\{\}\\^]*) fail "invalid URL characters" ;;
+esac
+
+if host_is_private "$(url_host "$url")"; then
+  fail "private/loopback addresses are blocked (set ALLOW_PRIVATE_FETCH=true to allow)"
+fi
+
+command -v mihomo >/dev/null 2>&1 || fail "mihomo executable not found"
+command -v wget >/dev/null 2>&1 || fail "wget not found"
+
+tmpdir="/dev/shm/mihomo-mrs-decompile-$$"
+input="$tmpdir/input.mrs"
+output="$tmpdir/output.txt"
+err="$tmpdir/error.txt"
+mkdir -p "$tmpdir" || fail "cannot create temporary directory"
+trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
+
+# BusyBox wget has no portable max-file-size option. The process file limit
+# stops a malformed URL from filling tmpfs; 512-byte blocks => 32 MiB.
+ulimit -f 65536 2>/dev/null || true
+
+if command -v timeout >/dev/null 2>&1; then
+  timeout 35 wget -q -T 30 -O "$input" "$url" 2>"$err"
+else
+  wget -q -T 30 -O "$input" "$url" 2>"$err"
+fi
+if [ "$?" -ne 0 ]; then
+  msg=$(head -c 300 "$err" | tr '\r\n' ' ')
+  [ -n "$msg" ] || msg="download failed or source exceeds 32 MiB"
+  fail "$msg"
+fi
+
+[ -s "$input" ] || fail "downloaded file is empty"
+
+if ! mihomo convert-ruleset "$behavior" mrs "$input" "$output" 2>"$err"; then
+  msg=$(head -c 500 "$err" | tr '\r\n' ' ')
+  [ -n "$msg" ] || msg="MRS conversion failed; check rule-set type"
+  fail "$msg"
+fi
+
+[ -s "$output" ] || fail "MRS contains no rules"
+cat "$output"
