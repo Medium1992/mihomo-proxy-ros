@@ -3001,11 +3001,16 @@ function resetProxyValidateResult() {
   box.textContent = "";
 }
 
+function mountedCardDisplayName(row, fallback) {
+  const label = row?.querySelector(".mount-link-title span")?.textContent?.trim();
+  return label || fallback;
+}
+
 function editProxyFile(btn) {
   const row = btn.closest(".proxy-file");
   if (!row) return;
   proxyEditName = row.dataset.file;
-  const displayName = proxyEditName.replace(/\.(yaml|yml|conf)$/, '');
+  const displayName = mountedCardDisplayName(row, proxyEditName.replace(/\.(yaml|yml|conf)$/, ''));
   const titleEl = document.getElementById("proxyEditTitle");
   if (titleEl) titleEl.textContent = displayName;
   const nameEl = document.getElementById("proxyEditName");
@@ -3146,8 +3151,8 @@ function saveProxyFileModal() {
   if (!plainEl || !nameEl) return;
   const name = nameEl.value.trim();
   if (!name) { alert("Укажите имя файла"); return; }
-  const fileName = name.endsWith(".yaml") || name.endsWith(".yml") ? name : name + ".yaml";
   const isNew = !nameEl.readOnly;
+  const fileName = isNew ? (name.endsWith(".yaml") || name.endsWith(".yml") ? name : name + ".yaml") : proxyEditName;
   const newNames = extractProxyNames(plainEl.value);
 
   fetchProxyList()
@@ -3326,7 +3331,7 @@ function editAwgFile(btn) {
   const row = btn.closest(".awg-file");
   if (!row) return;
   awgEditName = row.dataset.file;
-  const displayName = awgEditName.replace(/\.conf$/, '');
+  const displayName = mountedCardDisplayName(row, awgEditName.replace(/\.conf$/, ''));
   const titleEl = document.getElementById("awgEditTitle");
   if (titleEl) titleEl.textContent = displayName;
   const nameEl = document.getElementById("awgEditName");
@@ -3377,8 +3382,8 @@ function saveAwgFileModal() {
   if (!plainEl || !nameEl) return;
   const name = nameEl.value.trim();
   if (!name) { alert("Укажите имя файла"); return; }
-  const fileName = name.endsWith(".conf") ? name : name + ".conf";
   const isNew = !nameEl.readOnly;
+  const fileName = isNew ? (name.endsWith(".conf") ? name : name + ".conf") : awgEditName;
 
   // Filename uniqueness for new files
   const checkPromise = isNew
@@ -3546,7 +3551,7 @@ function editMountedConfigFile(type, btn) {
   const row = btn.closest("." + meta.rowClass);
   if (!row) return;
   mountedConfigEditName[type] = row.dataset.file;
-  const displayName = mountedConfigEditName[type].replace(meta.stripRe, "");
+  const displayName = mountedCardDisplayName(row, mountedConfigEditName[type].replace(meta.stripRe, ""));
   const titleEl = document.getElementById(meta.editTitleId);
   if (titleEl) titleEl.textContent = displayName;
   const nameEl = document.getElementById(meta.editNameId);
@@ -3601,8 +3606,8 @@ function saveMountedConfigModal(type) {
   if (!plainEl || !nameEl) return;
   const name = nameEl.value.trim();
   if (!name) { alert("Укажите имя файла"); return; }
-  const fileName = meta.extRe.test(name) ? name : name + meta.ext;
   const isNew = !nameEl.readOnly;
+  const fileName = isNew ? (meta.extRe.test(name) ? name : name + meta.ext) : mountedConfigEditName[type];
   const checkPromise = isNew
     ? fetch('/cgi-bin/list-files?type=' + encodeURIComponent(type)).then((r) => r.json()).then((data) => {
         const existing = (data && data.files) || [];
