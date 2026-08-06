@@ -1,0 +1,24 @@
+proxies:
+  - name: zerotier-example
+    type: zerotier
+    network: "0123456789abcdef"
+    state-dir: /root/.config/mihomo/zerotier
+    udp: true
+    ip-stack:
+      mode: mips
+      congestion-controller: bbr
+    # planet: /root/.config/mihomo/zerotier/planet
+    # mtu: 1400
+    # physical-mtu: 1432
+    # primary-port: 0
+    # secondary-port: 0
+    # tcp-fallback-mode: auto
+    # tcp-fallback-relay: 204.80.128.1:443
+    # low-bandwidth: false
+    # encrypted-hello: false
+    # remote-dns-resolve: true
+    # dns:
+    #   - 10.147.17.1
+    # orbit:
+    #   - world: "0123456789abcdef"
+    #     seed: "0123456789"

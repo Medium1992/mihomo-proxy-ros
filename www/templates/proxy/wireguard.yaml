@@ -9,6 +9,10 @@ proxies:
     pre-shared-key: <psk, optional>
     mtu: 1408
     udp: true
+    persistent-keepalive: 25
+    ip-stack:
+      mode: mips
+      congestion-controller: bbr
     remote-dns-resolve: true
     dns:
       - 1.1.1.1

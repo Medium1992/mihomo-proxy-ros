@@ -5,4 +5,8 @@ proxies:
     port: 443
     username: <username>
     password: <password>
+    # Set these only when the TrustTunnel server uses HTTP/3.
+    # quic: true
+    # congestion-controller: bbr
+    # bbr-profile: standard
     udp: true
