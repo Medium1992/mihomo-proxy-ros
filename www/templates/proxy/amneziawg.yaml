@@ -9,6 +9,10 @@ proxies:
     pre-shared-key: <psk, optional>
     mtu: 1408
     udp: true
+    persistent-keepalive: 25
+    ip-stack:
+      mode: mips
+      congestion-controller: bbr
     remote-dns-resolve: true
     dns:
       - 1.1.1.1
@@ -16,18 +20,17 @@ proxies:
       - 0.0.0.0/0
       - ::/0
     amnezia-wg-option:
-      # version: 3 включает v3-реализацию ядра; при любом другом значении
-      # (или без ключа) работает legacy — она же обслуживает 1.5 и 2.0.
+      # Only version 3 selects the v3 implementation. Other values use legacy.
       # version: 3
       jc: 4
       jmin: 40
       jmax: 70
       s1: 50
       s2: 100
-      # s3/s4 — с 1.5; при header-protection-key все s1-s4 должны быть >= 12
+      # s3/s4 require AmneziaWG 1.5+. With header-protection-key all s1-s4 must be >= 12.
       s3: 0
       s4: 0
-      # h1-h4: одно число или диапазон "начало-конец" (2.0+)
+      # h1-h4 accept one number or a "start-end" range in AmneziaWG 2.0+.
       h1: 1
       h2: 2
       h3: 3
@@ -37,12 +40,12 @@ proxies:
       i3: <hex>
       i4: <hex>
       i5: <hex>
-      # только 1.5, из 2.0+ убраны — не комбинировать с version: 3
+      # AmneziaWG 1.5 only; removed in 2.0+. Do not combine with version: 3.
       # j1: 0
       # j2: 0
       # j3: 0
       # itime: 0
-      # только AmneziaWG 3.0. Значение — диапазон "a-b" или одно число.
+      # AmneziaWG 3.0 only. Each value is a number or an "a-b" range.
       # header-protection-key: <base64 key>
       # content-padding-addition: "0-64"
       # rekey-after-time: "100-140"

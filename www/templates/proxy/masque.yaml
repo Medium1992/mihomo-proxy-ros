@@ -9,3 +9,7 @@ proxies:
     ipv6: fd00::2/128
     mtu: 1280
     udp: true
+    ip-stack:
+      mode: mips
+      congestion-controller: bbr
+    congestion-controller: bbr

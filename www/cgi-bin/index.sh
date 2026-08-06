@@ -1003,6 +1003,7 @@ EOF
             <option value="tuic">TUIC</option>
             <option value="masque">MASQUE</option>
             <option value="tailscale">Tailscale</option>
+            <option value="zerotier">ZeroTier</option>
             <option value="trusttunnel">TrustTunnel</option>
             <option value="openvpn">OpenVPN</option>
             <option value="ssh">SSH</option>

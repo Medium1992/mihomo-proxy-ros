@@ -3,4 +3,9 @@ proxies:
     type: tailscale
     hostname: mihomo
     auth-key: tskey-auth-xxxxxxxxxxxxxx
+    state-dir: /root/.config/mihomo/tailscale
+    # control-url: https://controlplane.tailscale.com
+    # accept-routes: true
+    # exit-node: 100.64.0.1
+    # exit-node-allow-lan-access: true
     udp: true

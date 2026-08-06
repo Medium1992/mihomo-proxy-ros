@@ -7,6 +7,17 @@ proxies:
     username: <username>
     password: <password>
     udp: true
+    dev: tun
+    data-ciphers:
+      - AES-256-GCM
+      - AES-128-GCM
+    data-ciphers-fallback: AES-256-CBC
+    auth: SHA512
+    ping: 10
+    ping-restart: 60
+    ip-stack:
+      mode: mips
+      congestion-controller: bbr
     ca: |
       -----BEGIN CERTIFICATE-----
       <CA cert here>
@@ -15,3 +26,13 @@ proxies:
       -----BEGIN OpenVPN Static key V1-----
       <static key here>
       -----END OpenVPN Static key V1-----
+    # Use only one of tls-auth, tls-crypt, or tls-crypt-v2.
+    # tls-auth: |
+    #   -----BEGIN OpenVPN Static key V1-----
+    #   <static key here>
+    #   -----END OpenVPN Static key V1-----
+    # key-direction: "1"
+    # tls-crypt-v2: |
+    #   -----BEGIN OpenVPN tls-crypt-v2 client key-----
+    #   <client key here>
+    #   -----END OpenVPN tls-crypt-v2 client key-----
