@@ -6,7 +6,7 @@ proxies:
     udp: true
     ip-stack:
       mode: mips
-      congestion-controller: bbr
+      congestion-controller: bbr3
     # planet: /root/.config/mihomo/zerotier/planet
     # mtu: 1400
     # physical-mtu: 1432
