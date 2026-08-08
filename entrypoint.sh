@@ -616,7 +616,7 @@ read_cfg() {
   echo "    udp: true"
   echo "    ip-stack:"
   echo "      mode: mips"
-  echo "      congestion-controller: bbr"
+  echo "      congestion-controller: bbr3"
   local dns_raw=$(read_cfg "DNS")
   if [ -n "$dns_raw" ] && ! echo "$dns_raw" | grep -q '\$'; then
     local dns_list=$(echo "$dns_raw" | tr ',' '\n' | \
@@ -1294,7 +1294,7 @@ emit_vpn_wireguard_proxy() {
   echo "    udp: true"
   echo "    ip-stack:"
   echo "      mode: mips"
-  echo "      congestion-controller: bbr"
+  echo "      congestion-controller: bbr3"
 
   if [ "$has_awg_param" -eq 1 ]; then
     echo "    amnezia-wg-option:"
@@ -1611,7 +1611,7 @@ emit_vpn_openvpn_proxy() {
   [ -n "$ping_restart" ] && echo "    ping-restart: $ping_restart"
   echo "    ip-stack:"
   echo "      mode: mips"
-  echo "      congestion-controller: bbr"
+  echo "      congestion-controller: bbr3"
   echo ""
 
   return 0

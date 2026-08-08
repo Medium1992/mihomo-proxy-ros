@@ -17,7 +17,7 @@ proxies:
     ping-restart: 60
     ip-stack:
       mode: mips
-      congestion-controller: bbr
+      congestion-controller: bbr3
     ca: |
       -----BEGIN CERTIFICATE-----
       <CA cert here>

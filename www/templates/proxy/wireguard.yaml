@@ -12,7 +12,7 @@ proxies:
     persistent-keepalive: 25
     ip-stack:
       mode: mips
-      congestion-controller: bbr
+      congestion-controller: bbr3
     remote-dns-resolve: true
     dns:
       - 1.1.1.1
