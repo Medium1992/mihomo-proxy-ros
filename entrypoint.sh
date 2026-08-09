@@ -120,6 +120,7 @@ HTTPD_CONF="${HTTPD_CONF:-/etc/httpd.conf}"
 # SUB_LINK*): только 127.0.0.1, без авторизации. 0 = выключить.
 WEB_API_PORT="${WEB_API_PORT:-81}"
 API_ROOT=/dev/shm/webapi
+API_HTTPD_CONF=/dev/shm/httpd-api.conf
 export WEB_API_PORT
 
 # Amnezia Premium vpn:// support.
@@ -3161,7 +3162,7 @@ EOF
   while IFS= read -r var; do
     name=$(echo "$var" | cut -d '=' -f1)
     url=$(echo "$var" | cut -d '=' -f2- | tr -d '\r')
-    url=$(normalize_local_sub_url "$url")
+    url=$(normalize_local_sub_url "$url" "$name")
     interval=$(printenv "${name}_INTERVAL" || echo "$SUB_LINK_INTERVAL")
     proxy="DIRECT"
     eval "proxy=\"\${${name}_PROXY:-DIRECT}\"" 2>/dev/null
@@ -3200,7 +3201,8 @@ EOF
     esac
 
     # auto: happ отдаёт Xray JSON -> через конвертер, обычная ссылка -> как есть
-    sub_convert=$(printenv "${name}_CONVERT" 2>/dev/null || echo "")
+    sub_convert_requested=$(printenv "${name}_CONVERT" 2>/dev/null || echo "")
+    sub_convert="$sub_convert_requested"
     [ -z "$sub_convert" ] && sub_convert=auto
     case "$sub_convert" in
       auto) [ "$sub_is_happ" = 1 ] && sub_convert=xray2mihomo || sub_convert=none ;;
@@ -3212,6 +3214,7 @@ EOF
         log "$name: WEB_API_PORT=0, converter unavailable, using the link as is"
       else
         url=$(build_converter_url "$url" "$headers_raw")
+        log "$name: routed through xray2mihomo on 127.0.0.1:${WEB_API_PORT:-81} (${name}_CONVERT=${sub_convert_requested:-auto})"
         # заголовки уехали в query конвертера, иначе mihomo слал бы их на localhost
         headers_raw=""
         # proxy применяется к загрузке провайдера, а это теперь localhost;
@@ -4471,12 +4474,13 @@ build_converter_url() {
 # что уходит в config.yaml.
 normalize_local_sub_url() {
   _u="$1"
+  _provider="${2:-SUB_LINK}"
   [ "${WEB_API_PORT:-81}" = "0" ] && { printf '%s' "$_u"; return 0; }
   case "$_u" in
     http://127.0.0.1/cgi-bin/xray2mihomo-sub*|http://localhost/cgi-bin/xray2mihomo-sub*)
       _tail="${_u#*/cgi-bin/xray2mihomo-sub}"
       # log пишет в stdout, а stdout этой функции — сам URL: только в stderr.
-      log "SUB_LINK: rewrote local converter URL to 127.0.0.1:${WEB_API_PORT} (port 80 is behind basic auth now)" >&2
+      log "$_provider: rewrote local xray2mihomo URL to 127.0.0.1:${WEB_API_PORT} (port 80 is behind basic auth)" >&2
       printf 'http://127.0.0.1:%s/cgi-bin/xray2mihomo-sub%s' "${WEB_API_PORT:-81}" "$_tail"
       ;;
     *) printf '%s' "$_u" ;;
@@ -4496,9 +4500,11 @@ setup_api_listener() {
   [ "${WEB_API_PORT:-81}" = "0" ] && { log "Loopback API listener disabled (WEB_API_PORT=0)"; return 0; }
   rm -rf "$API_ROOT"
   mkdir -p "$API_ROOT/cgi-bin"
+  : > "$API_HTTPD_CONF" 2>/dev/null || { log "Cannot write $API_HTTPD_CONF, loopback API listener disabled"; return 0; }
+  chmod 600 "$API_HTTPD_CONF" 2>/dev/null || true
   cp /www/cgi-bin/xray2mihomo-sub "$API_ROOT/cgi-bin/xray2mihomo-sub" 2>/dev/null || return 0
   chmod +x "$API_ROOT/cgi-bin/xray2mihomo-sub" 2>/dev/null || true
-  httpd -f -p "127.0.0.1:${WEB_API_PORT:-81}" -h "$API_ROOT" >/dev/null 2>&1 &
+  httpd -f -p "127.0.0.1:${WEB_API_PORT:-81}" -h "$API_ROOT" -c "$API_HTTPD_CONF" >/dev/null 2>&1 &
   log "Loopback API listener on 127.0.0.1:${WEB_API_PORT:-81} (xray2mihomo-sub for SUB_LINK*)"
 }
 
