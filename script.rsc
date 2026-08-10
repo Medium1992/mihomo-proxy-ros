@@ -418,6 +418,7 @@ add name=FWD_update source="# Define global variables\r\
 \n\"anime\";\r\
 \n\"deepl\";\r\
 \n\"category-ai-!cn\";\r\
+\n\"category-anticensorship\";\r\
 \n\"openai\";\r\
 \n\"google-gemini\";\r\
 \n\"canva\";\r\
