@@ -3057,7 +3057,7 @@ EOF
     type: tun
     stack: system
     inet4-address:
-      - 100.64.0.1/32
+      - 100.64.0.1/30
     udp-timeout: 30
     mtu: 1500
 EOF
