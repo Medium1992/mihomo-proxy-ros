@@ -98,6 +98,20 @@ RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ]; then \
         || { echo "patch did not apply: reality minClientVer (component/tls/reality.go)" >&2; exit 1; }; \
     fi
 
+# Default to X25519MLKEM768 for REALITY, while allowing an explicit YAML false.
+# Subscription links do not reliably carry the Mihomo-specific option, while our
+# target servers require it.
+RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ]; then set -eu; \
+      grep -Fq 'SupportX25519MLKEM768 bool `proxy:"support-x25519mlkem768,omitempty"`' adapter/outbound/reality.go && \
+      grep -Fq 'config.SupportX25519MLKEM768 = o.SupportX25519MLKEM768' adapter/outbound/reality.go \
+        || { echo "patch source changed: reality X25519MLKEM768 default" >&2; exit 1; }; \
+      awk '$0 == "\tSupportX25519MLKEM768 bool `proxy:\"support-x25519mlkem768,omitempty\"`" { print "\tSupportX25519MLKEM768 *bool `proxy:\"support-x25519mlkem768,omitempty\"`"; type_changed = 1; next } $0 == "\t\tconfig.SupportX25519MLKEM768 = o.SupportX25519MLKEM768" { print "\t\tconfig.SupportX25519MLKEM768 = true"; print "\t\tif o.SupportX25519MLKEM768 != nil {"; print "\t\t\tconfig.SupportX25519MLKEM768 = *o.SupportX25519MLKEM768"; print "\t\t}"; assignment_changed = 1; next } { print } END { if (!type_changed || !assignment_changed) exit 1 }' adapter/outbound/reality.go > /tmp/reality.go && mv /tmp/reality.go adapter/outbound/reality.go; \
+      grep -Fq 'SupportX25519MLKEM768 *bool `proxy:"support-x25519mlkem768,omitempty"`' adapter/outbound/reality.go && \
+      grep -Fq 'config.SupportX25519MLKEM768 = true' adapter/outbound/reality.go && \
+      grep -Fq 'config.SupportX25519MLKEM768 = *o.SupportX25519MLKEM768' adapter/outbound/reality.go \
+        || { echo "patch did not apply: reality X25519MLKEM768 default" >&2; exit 1; }; \
+    fi
+
 # Временная подмена utls: ветка v1.9.0-mod-meta (нативный JLS, отпечатки
 # firefox 148 и safari 26.3). Пустой UTLS_OVERRIDE_BRANCH = собирать как в go.mod.
 ARG UTLS_OVERRIDE_BRANCH=v1.9.0-mod-meta
