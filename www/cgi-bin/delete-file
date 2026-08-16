@@ -33,7 +33,21 @@ field() {
   }'
 }
 urldecode() {
-  printf '%s\n' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\\x\1/g' | while IFS= read -r line; do printf '%b' "$line"; done
+  printf '%s' "$1" | LC_ALL=C awk '
+    function hex(c) { c = tolower(c); return index("0123456789abcdef", c) - 1 }
+    {
+      for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        if (c == "+") {
+          printf " "
+        } else if (c == "%" && i + 2 <= length($0) && hex(substr($0, i + 1, 1)) >= 0 && hex(substr($0, i + 2, 1)) >= 0) {
+          printf "%c", hex(substr($0, i + 1, 1)) * 16 + hex(substr($0, i + 2, 1))
+          i += 2
+        } else {
+          printf "%s", c
+        }
+      }
+    }'
 }
 
 dir_type=$(field type)
