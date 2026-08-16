@@ -284,6 +284,16 @@ function cssEscape(value) {
   return String(value).replace(/["\\]/g, "\\$&");
 }
 
+function displayFileName(name) {
+  const value = String(name || "");
+  if (!/\\x[0-9a-f]{2}/i.test(value) || typeof TextDecoder === "undefined") return value;
+  return value.replace(/(?:\\x[0-9a-f]{2})+/gi, (escaped) => {
+    const bytes = escaped.match(/[0-9a-f]{2}/gi).map((hex) => parseInt(hex, 16));
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(bytes)); }
+    catch (e) { return escaped; }
+  });
+}
+
 // Снимает маску с поля: убирает placeholder-«задано» и кнопку «Показать».
 function secretMarkRevealed(el) {
   if (!el) return;
@@ -2934,7 +2944,7 @@ function deleteRuleSetFile(btn) {
   const row = btn.closest(".rule-set-file");
   if (!row) return;
   const name = row.dataset.file;
-  if (!window.confirm("Удалить файл " + name.replace(/\.txt$/, '') + "?")) return;
+  if (!window.confirm("Удалить файл " + displayFileName(name.replace(/\.txt$/, '')) + "?")) return;
   row.remove();
   deleteFileRequest(name, 'ruleset')
     .then((r) => r.text())
@@ -3201,7 +3211,7 @@ function deleteProxyFile(btn) {
   const row = btn.closest(".proxy-file");
   if (!row) return;
   const name = row.dataset.file;
-  if (!window.confirm("Удалить файл " + name.replace(/\.(yaml|yml|conf)$/, '') + "?")) return;
+  if (!window.confirm("Удалить файл " + displayFileName(name.replace(/\.(yaml|yml|conf)$/, '')) + "?")) return;
   row.remove();
   deleteFileRequest(name, 'proxy')
     .then((r) => r.text())
@@ -3419,7 +3429,7 @@ function deleteAwgFile(btn) {
   const row = btn.closest(".awg-file");
   if (!row) return;
   const name = row.dataset.file;
-  if (!window.confirm("Удалить файл " + name.replace(/\.conf$/, '') + "?")) return;
+  if (!window.confirm("Удалить файл " + displayFileName(name.replace(/\.conf$/, '')) + "?")) return;
   row.remove();
   deleteFileRequest(name, 'awg')
     .then((r) => r.text())
@@ -3642,7 +3652,7 @@ function deleteMountedConfigFile(type, btn) {
   const row = btn.closest("." + meta.rowClass);
   if (!row) return;
   const name = row.dataset.file;
-  if (!window.confirm("Удалить файл " + name.replace(meta.stripRe, "") + "?")) return;
+  if (!window.confirm("Удалить файл " + displayFileName(name.replace(meta.stripRe, "")) + "?")) return;
   row.remove();
   deleteFileRequest(name, type)
     .then((r) => r.text())
@@ -3740,7 +3750,7 @@ function deleteFakebin(btn) {
   const row = btn.closest(".fakebin-file");
   if (!row) return;
   const name = row.dataset.file;
-  if (!window.confirm("Удалить " + name + "?")) return;
+  if (!window.confirm("Удалить " + displayFileName(name) + "?")) return;
   row.remove();
   deleteFileRequest(name, 'fakebin')
     .then((r) => r.text())
@@ -3846,7 +3856,7 @@ function deleteZlistFile(btn) {
   const row = btn.closest(".zlist-file");
   if (!row) return;
   const name = row.dataset.file;
-  if (!window.confirm("Удалить " + name + "?")) return;
+  if (!window.confirm("Удалить " + displayFileName(name) + "?")) return;
   row.remove();
   deleteFileRequest(name, 'zlist')
     .then((r) => r.text())
