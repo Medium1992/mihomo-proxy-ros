@@ -531,6 +531,19 @@ read_cfg() {
   local reject_after=$(read_cfg "RejectAfterTime")
   local keepalive_timeout=$(read_cfg "KeepaliveTimeout")
   local max_handshakes=$(read_cfg "MaxHandshakeAttempts")
+  # AmneziaWG 3.1 boolean options.
+  local random_trailers=$(read_cfg "RandomTrailers")
+  local disable_cookies=$(read_cfg "DisableCookies")
+  case "$(printf '%s' "$random_trailers" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) random_trailers=true ;;
+    0|false|no|off) random_trailers=false ;;
+    *) random_trailers="" ;;
+  esac
+  case "$(printf '%s' "$disable_cookies" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) disable_cookies=true ;;
+    0|false|no|off) disable_cookies=false ;;
+    *) disable_cookies="" ;;
+  esac
   # Ручное переопределение — на случай, когда 3.0 нужна без единого
   # v3-параметра (секция [Mihomo], см. www/templates/awg.conf).
   local awg_version=$(read_cfg "AwgVersion")
@@ -640,7 +653,7 @@ read_cfg() {
   # Версия протокола. mihomo поднимает v3-реализацию только при version: 3;
   # при любом другом значении работает legacy — она же обслуживает 1.5 и 2.0.
   local awg3=0
-  for v in "$hp_key" "$content_padding" "$rekey_after" "$rekey_timeout" "$reject_after" "$keepalive_timeout" "$max_handshakes"; do
+  for v in "$hp_key" "$content_padding" "$rekey_after" "$rekey_timeout" "$reject_after" "$keepalive_timeout" "$max_handshakes" "$random_trailers" "$disable_cookies"; do
     [ -n "$v" ] && awg3=1
   done
   case "$awg_version" in
@@ -672,7 +685,7 @@ read_cfg() {
   fi
 
   local awg_params="jc jmin jmax s1 s2 s3 s4 h1 h2 h3 h4 i1 i2 i3 i4 i5 j1 j2 j3 itime"
-  awg_params="$awg_params hp_key content_padding rekey_after rekey_timeout reject_after keepalive_timeout max_handshakes"
+  awg_params="$awg_params hp_key content_padding rekey_after rekey_timeout reject_after keepalive_timeout max_handshakes random_trailers disable_cookies"
   local has_awg_param=0
   for v in i1 i2 i3 i4 i5; do
     eval val=\$$v
@@ -726,6 +739,8 @@ read_cfg() {
 '        "$(printf '%s' "$keepalive_timeout" | yaml_quote)"
       [ -n "$max_handshakes" ]    && printf '      max-handshake-attempts: %s
 '   "$(printf '%s' "$max_handshakes" | yaml_quote)"
+      [ -n "$random_trailers" ]   && echo "      random-trailers: $random_trailers"
+      [ -n "$disable_cookies" ]   && echo "      disable-cookies: $disable_cookies"
     fi
   fi
   echo ""
@@ -1187,7 +1202,7 @@ emit_vpn_wireguard_proxy() {
   local private_key client_ip server port public_key psk keepalive mtu
   local ip_v4="" ip_v6="" addr
   local jc jmin jmax s1 s2 s3 s4 h1 h2 h3 h4 i1 i2 i3 i4 i5 j1 j2 j3 itime
-  local hp_key content_padding rekey_after rekey_timeout reject_after keepalive_timeout max_handshakes awg3=0
+  local hp_key content_padding rekey_after rekey_timeout reject_after keepalive_timeout max_handshakes random_trailers disable_cookies awg3=0
   local has_awg_param=0
 
   private_key=$(vpn_awg_value "$last_file" "$json_file" "client_priv_key")
@@ -1253,8 +1268,24 @@ emit_vpn_wireguard_proxy() {
   reject_after=$(vpn_awg_value "$last_file" "$json_file" "RejectAfterTime")
   keepalive_timeout=$(vpn_awg_value "$last_file" "$json_file" "KeepaliveTimeout")
   max_handshakes=$(vpn_awg_value "$last_file" "$json_file" "MaxHandshakeAttempts")
+  random_trailers=$(vpn_awg_value "$last_file" "$json_file" "RandomTrailers")
+  [ -n "$random_trailers" ] || random_trailers=$(vpn_awg_value "$last_file" "$json_file" "random_trailers")
+  [ -n "$random_trailers" ] || random_trailers=$(vpn_awg_value "$last_file" "$json_file" "randomTrailers")
+  disable_cookies=$(vpn_awg_value "$last_file" "$json_file" "DisableCookies")
+  [ -n "$disable_cookies" ] || disable_cookies=$(vpn_awg_value "$last_file" "$json_file" "disable_cookies")
+  [ -n "$disable_cookies" ] || disable_cookies=$(vpn_awg_value "$last_file" "$json_file" "disableCookies")
+  case "$(printf '%s' "$random_trailers" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) random_trailers=true ;;
+    0|false|no|off) random_trailers=false ;;
+    *) random_trailers="" ;;
+  esac
+  case "$(printf '%s' "$disable_cookies" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) disable_cookies=true ;;
+    0|false|no|off) disable_cookies=false ;;
+    *) disable_cookies="" ;;
+  esac
 
-  for v in "$hp_key" "$content_padding" "$rekey_after" "$rekey_timeout" "$reject_after" "$keepalive_timeout" "$max_handshakes"; do
+  for v in "$hp_key" "$content_padding" "$rekey_after" "$rekey_timeout" "$reject_after" "$keepalive_timeout" "$max_handshakes" "$random_trailers" "$disable_cookies"; do
     [ -n "$v" ] && awg3=1
   done
   if [ "$awg3" -eq 1 ]; then
@@ -1275,7 +1306,7 @@ emit_vpn_wireguard_proxy() {
   done
 
   for v in jc jmin jmax s1 s2 s3 s4 h1 h2 h3 h4 i1 i2 i3 i4 i5 j1 j2 j3 itime \
-           hp_key content_padding rekey_after rekey_timeout reject_after keepalive_timeout max_handshakes; do
+           hp_key content_padding rekey_after rekey_timeout reject_after keepalive_timeout max_handshakes random_trailers disable_cookies; do
     eval val=\$$v
     [ -n "$val" ] && has_awg_param=1
   done
@@ -1335,6 +1366,8 @@ emit_vpn_wireguard_proxy() {
 '        "$(printf '%s' "$keepalive_timeout" | yaml_quote)"
       [ -n "$max_handshakes" ]    && printf '      max-handshake-attempts: %s
 '   "$(printf '%s' "$max_handshakes" | yaml_quote)"
+      [ -n "$random_trailers" ]   && echo "      random-trailers: $random_trailers"
+      [ -n "$disable_cookies" ]   && echo "      disable-cookies: $disable_cookies"
     fi
   fi
   echo ""

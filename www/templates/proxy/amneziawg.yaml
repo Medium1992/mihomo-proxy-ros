@@ -53,3 +53,6 @@ proxies:
       # reject-after-time: "160-200"
       # keepalive-timeout: "8-12"
       # max-handshake-attempts: "16-20"
+      # AmneziaWG 3.1 only.
+      # random-trailers: true
+      # disable-cookies: true
