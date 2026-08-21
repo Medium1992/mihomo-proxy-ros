@@ -4222,18 +4222,15 @@ EOF
 generate_nameserver_policy >>  $CONFIG_YAML
     cat >> "$CONFIG_YAML" <<EOF
   nameserver:
-    - https://dns.google/dns-query#disable-qtype-65=true&disable-ipv6=true
-    - https://cloudflare-dns.com/dns-query#disable-qtype-65=true&disable-ipv6=true
-    - https://dns.quad9.net/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://8.8.8.8/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://9.9.9.9/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://1.1.1.1/dns-query#disable-qtype-65=true&disable-ipv6=true
   proxy-server-nameserver:
-    - https://dns.google/dns-query#disable-qtype-65=true&disable-ipv6=true
-    - https://cloudflare-dns.com/dns-query#disable-qtype-65=true&disable-ipv6=true
-    - https://dns.quad9.net/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://8.8.8.8/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://9.9.9.9/dns-query#disable-qtype-65=true&disable-ipv6=true
+    - https://1.1.1.1/dns-query#disable-qtype-65=true&disable-ipv6=true
     - https://common.dot.dns.yandex.net/dns-query#disable-qtype-65=true&disable-ipv6=true
 hosts:
-  dns.google: [8.8.8.8, 8.8.4.4]
-  dns.quad9.net: [9.9.9.9, 149.112.112.112]
-  cloudflare-dns.com: [104.16.248.249, 104.16.249.249]
   common.dot.dns.yandex.net: [77.88.8.8]
   
 sniffer:
