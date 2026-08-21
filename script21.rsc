@@ -117,15 +117,15 @@ foreach i in=$slotArray do={
 
 :do {
 /ip dns forwarders
-add doh-servers=https://dns.google/dns-query name=Google
-add doh-servers=https://cloudflare-dns.com/dns-query name=CloudFlare
-add dns-servers=9.9.9.9,149.112.112.112 name=Quad9
+add doh-servers=https://8.8.8.8/dns-query name=Google
+add doh-servers=https://1.1.1.1/dns-query name=CloudFlare
+add doh-servers=https://9.9.9.9/dns-query name=Quad9
 add dns-servers=111.88.96.50,111.88.96.51 name=XBOX
 add doh-servers=https://xbox-dns.ru/dns-query name=XBOX-DOH
 add dns-servers=77.88.8.8,77.88.8.1 name=Yandex verify-doh-cert=no
 add dns-servers=8.8.8.8 name=Google8 verify-doh-cert=no
 /certificate/settings/set builtin-trust-store=dns,container
-/ip/dns/set allow-remote-requests=yes cache-max-ttl=1d cache-size=15000KiB doh-max-concurrent-queries=500 doh-max-server-connections=10 servers=8.8.8.8 use-doh-server=https://dns.google/dns-query verify-doh-cert=yes
+/ip/dns/set allow-remote-requests=yes cache-max-ttl=1d cache-size=15000KiB doh-max-concurrent-queries=500 doh-max-server-connections=10 servers=8.8.8.8 use-doh-server=https://8.8.8.8/dns-query verify-doh-cert=yes
 /ip dns static
 add forward-to=Google8 match-subdomain=yes name=pool.ntp.org type=FWD
 add address=8.8.8.8 comment="DNS Google" name=dns.google type=A
