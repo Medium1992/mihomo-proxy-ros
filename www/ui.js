@@ -4247,11 +4247,15 @@ function mihomoPanelUrl(secret, preset) {
   panel.hash = "";
   const q = new URLSearchParams({ hostname: location.hostname, port: "9090", http: "1" });
   if (secret) q.set("secret", secret);
-  // Каждая панель читает параметры подключения по-своему, а metacubexd не
-  // читает их вовсе (см. его README: адрес задаётся только переменной
-  // DEFAULT_BACKEND_URL при сборке образа). Ему ссылку не портим — она всё
-  // равно откроется на форме подключения.
-  if (preset === "zashboard") {
+  // Каждая панель читает параметры подключения по-своему: zashboard и
+  // yacd-meta — из query string, metacubexd — из фрагмента. В README
+  // metacubexd про это не сказано, но форма подключения предзаполняется
+  // именно так — проверено на mihomo-remnasub-ros, откуда и взят разбор.
+  // Секрет при этом попадает в историю браузера, иначе панель не
+  // подключится сама.
+  if (preset === "metacubexd") {
+    panel.hash = "/?" + q.toString();
+  } else if (preset === "zashboard") {
     q.set("label", "MihomoProxyRoS");
     panel.search = "?" + q.toString();
   } else if (preset === "yacd") {
