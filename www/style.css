@@ -901,12 +901,12 @@ input[data-secret-hidden="1"]::placeholder {
 }
 
 .dpi-single-row {
-  grid-template-columns: 28px 56px minmax(0, 1fr) 120px;
+  grid-template-columns: 28px 56px minmax(0, 1fr) 160px 120px;
   align-items: center;
 }
 
 .dpi-packet-row {
-  grid-template-columns: 28px 56px minmax(0, 1fr) 120px 120px;
+  grid-template-columns: 28px 56px minmax(0, 1fr) 100px 160px 120px;
   align-items: center;
 }
 
@@ -914,7 +914,9 @@ input[data-secret-hidden="1"]::placeholder {
 .dpi-packet-row .env-index { grid-column: 2; }
 .dpi-single-row label:nth-of-type(2),
 .dpi-packet-row label:nth-of-type(2) { grid-column: 3; }
+.dpi-single-row label:nth-of-type(3) { grid-column: 4; }
 .dpi-packet-row label:nth-of-type(3) { grid-column: 4; }
+.dpi-packet-row label:nth-of-type(4) { grid-column: 5; }
 
 .dpi-single-row > button,
 .dpi-packet-row > button {
@@ -922,8 +924,8 @@ input[data-secret-hidden="1"]::placeholder {
   align-self: end;
 }
 
-.dpi-single-row > button { grid-column: 4; }
-.dpi-packet-row > button { grid-column: 5; }
+.dpi-single-row > button { grid-column: 5; }
+.dpi-packet-row > button { grid-column: 6; }
 
 .dpi-single-row > button::before,
 .dpi-packet-row > button::before {
@@ -1099,6 +1101,50 @@ input[data-secret-hidden="1"]::placeholder {
 .dns-policy-rows {
   display: grid;
   gap: 8px;
+}
+
+.dns-list-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.dns-list-editor {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.dns-list-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.dns-list-head span {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.dns-list-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.dns-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.dns-list-editor > small {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .split {
@@ -1664,7 +1710,7 @@ body[data-page="yaml"] #commands {
   .top { align-items: flex-start; }
   .top-actions { justify-content: flex-start; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .grid, .split, .map, .mounts, .tools, .yaml-browser, .tools-browser, .groups-browser, .group-pane-head, .command-grid, .dns-policy-grid, .dns-policy-head { grid-template-columns: 1fr; }
+  .grid, .split, .map, .mounts, .tools, .yaml-browser, .tools-browser, .groups-browser, .group-pane-head, .command-grid, .dns-policy-grid, .dns-policy-head, .dns-list-head, .dns-list-row { grid-template-columns: 1fr; }
   .tool-regex-row { grid-template-columns: 1fr; }
   .tool-link-card { grid-template-columns: 1fr; }
   .final-rule-row { grid-template-columns: 1fr; }
