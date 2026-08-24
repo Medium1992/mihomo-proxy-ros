@@ -3117,6 +3117,44 @@ start_zapret2_wg() {
 
 }
 
+# --- Адрес бэкенда для готовой панели ---
+# Nuxt-сборка metacubexd не принимает параметры подключения из ссылки:
+# её роутер срезает их и уводит на #/setup, а в форме остаётся дефолтный
+# http://127.0.0.1:9090. Зато её index.html подключает config.js с ключом
+# defaultBackendURL — единственный документированный способ предзаполнить
+# форму. Панель отдаёт сам контроллер, поэтому location.origin в браузере
+# всегда указывает ровно на тот адрес и порт, по которым человек её открыл,
+# каким бы из адресов контейнера он ни пользовался.
+# Файл распаковывает сама mihomo по external-ui-url, поэтому пишем после
+# старта ядра и только когда панель этого семейства и адрес ещё не наш.
+write_external_ui_config() {
+  _uic_index="$CONFIG_DIR/ui/index.html"
+  _uic_file="$CONFIG_DIR/ui/config.js"
+  [ -f "$_uic_index" ] || return 1
+  grep -q '__METACUBEXD_CONFIG__' "$_uic_index" 2>/dev/null || return 0
+  grep -q 'location.origin' "$_uic_file" 2>/dev/null && return 0
+  cat > "$_uic_file" <<'EOF'
+window.__METACUBEXD_CONFIG__ = { defaultBackendURL: location.origin }
+EOF
+  log "external-ui: defaultBackendURL points at the controller itself"
+  return 0
+}
+
+# Ядро скачивает и распаковывает панель в фоне, так что ждём появления
+# index.html, но недолго: без панели контейнер работает как обычно.
+watch_external_ui_config() {
+  (
+    _uic_try=0
+    while [ "$_uic_try" -lt 60 ]; do
+      if write_external_ui_config; then
+        break
+      fi
+      _uic_try=$((_uic_try + 1))
+      sleep 2
+    done
+  ) &
+}
+
 # ------------------- CONFIG -------------------
 config_file_mihomo() {
   echo "Generating $CONFIG_YAML"
@@ -4609,6 +4647,8 @@ run() {
   MIHOMO_PID=$!
 
   wait_for_meta
+
+  watch_external_ui_config
 
   if lsmod | grep nf_tables >/dev/null 2>&1; then
     nft_rules
