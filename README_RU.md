@@ -159,6 +159,18 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 | `FAKE_IP_TTL` | `1` | [TTL записи fake-ip в DNS-кеше](https://wiki.metacubex.one/ru/config/dns/#fake-ip-ttl) (сек). |
 | `FAKE_IP_FILTERxx` | — | Список правил для DNS-сервера в режиме `rule`. |
 
+### DNS-серверы
+
+Три списка серверов в блоке `dns` задаются переменными: элементы перечисляются через запятую. Значения по умолчанию повторяют то, что контейнер писал в конфиг раньше, поэтому не заданная (как и очищенная) переменная ничего не меняет — контейнер подставит встроенный список. Всё остальное в блоке `dns` остаётся как было. В веб-панели списки правятся на вкладке **Ядро и DNS → DNS**.
+
+| ENV | По умолчанию | Описание |
+|---|---|---|
+| `DNS_DEFAULT_NAMESERVER` | `8.8.8.8,9.9.9.9,1.1.1.1` | [default-nameserver](https://wiki.metacubex.one/ru/config/dns/#default-nameserver): нешифрованные DNS для резолва адресов самих DoH/DoT-серверов и прокси. Только чистые IP — mihomo не принимает здесь домены. |
+| `DNS_NAMESERVER` | три DoH: Google, Quad9, Cloudflare | [nameserver](https://wiki.metacubex.one/ru/config/dns/#nameserver): основные серверы для запросов, не попавших в `NAMESERVER_POLICY`. |
+| `DNS_PROXY_SERVER_NAMESERVER` | те же три DoH + `common.dot.dns.yandex.net` | [proxy-server-nameserver](https://wiki.metacubex.one/ru/config/dns/#proxy-server-nameserver): резолв доменов самих прокси-серверов. |
+
+Из `DNS_DEFAULT_NAMESERVER` и `DNS_NAMESERVER` контейнер собирает `DNS_ruleset` — набор правил, по которому трафик к DNS-серверам уходит в группу `DNS`. Домены попадают туда как `DOMAIN,...`, литеральные адреса — как `IP-CIDR,.../32,no-resolve`; схема, порт и параметры после `#` отбрасываются, а `system`, `dhcp://` и `rcode://` пропускаются. `DNS_PROXY_SERVER_NAMESERVER` в набор не входит: mihomo обрабатывает эти запросы в обход правил маршрутизации.
+
 ### Логи и UI
 
 | ENV | По умолчанию | Описание |
@@ -248,7 +260,7 @@ ETH1_GATEWAY2=192.168.5.11#сосед-tor
 | ENV | По умолчанию | Описание |
 |---|---|---|
 | `BYEDPI_CMDxx` | — | Стратегия [ByeDPI](https://github.com/hufrea/byedpi). `BYEDPI_CMD` → выход `BYEDPI`; `BYEDPI_CMD1` → `BYEDPI_1` и т.д. Подбор стратегий — [byedpi-orchestrator](https://hub.docker.com/r/vindibona/byedpi-orchestrator). |
-| `ZAPRET_CMDxx` | — | Стратегия [Zapret/nfqws](https://github.com/bol-van/zapret). В контейнере есть готовые fake-файлы в `/zapret-fakebin/` (например `quic_initial_www_google_com.bin`) и списки в `/zapret-lists/` (`ipset-all.txt`, `list-general.txt` и т.п.). |
+| `ZAPRET_CMDxx` | — | Стратегия [Zapret/nfqws](https://github.com/bol-van/zapret). В конце значения можно дописать `#ИМЯ` — это имя получит прокси в панели mihomo (`ZAPRET_2` → `ZAPRET_2_ИМЯ`); имя прокси-провайдера при этом не меняется, а сама метка в командную строку nfqws не попадает. То же работает для `ZAPRET2_CMDxx` и `BYEDPI_CMDxx`. В контейнере есть готовые fake-файлы в `/zapret-fakebin/` (например `quic_initial_www_google_com.bin`) и списки в `/zapret-lists/` (`ipset-all.txt`, `list-general.txt` и т.п.). |
 | `ZAPRET2_CMDxx` | — | Стратегия [Zapret2/nfqws2](https://github.com/bol-van/zapret2). |
 | `ZAPRET2_WG_CMD` | *(дефолт с blob `quic_initial_vk_com`)* | Отдельная стратегия nfqws2 для заворота WireGuard handshake. |
 | `ZAPRET_PACKETSxx` | `12` | Сколько первых пакетов идёт через очередь nfqws. `ZAPRET_PACKETS` — для всех по умолчанию, `ZAPRET_PACKETSxx` — переопределение конкретному провайдеру. Не-натуральное число = неограниченно (всегда в очереди). |

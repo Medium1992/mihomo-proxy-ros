@@ -1911,7 +1911,11 @@ function addRow(containerId, prefix, startAtOne) {
   if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") {
     const packets = prefix === "ZAPRET_CMD" ? "ZAPRET_PACKETS" : "ZAPRET2_PACKETS";
     const packetsKey = packets + idx;
-    div.innerHTML = `<label><span>${displayKey}</span><input name="${key}" placeholder="--dpi-desync=..."></label><label><span>${packetsKey}</span><input name="${packetsKey}" placeholder="12"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    div.innerHTML =
+      `<label><span>${displayKey}</span><input type="hidden" name="${key}" data-dpi-value data-default=""><input class="dpi-cmd" placeholder="--dpi-desync=..."></label>` +
+      `<label><span>${packetsKey}</span><input name="${packetsKey}" placeholder="12"></label>` +
+      `<label class="dpi-name"><span>Имя прокси</span><input class="dpi-label" placeholder="без имени"></label>` +
+      `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   } else if (prefix === "RULE_SET") {
     div.innerHTML = `<label><span>${displayKey}</span><input name="${key}" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Редактировать">&#10002;</button><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   } else if (prefix === "RULES") {
@@ -1946,7 +1950,10 @@ function addRow(containerId, prefix, startAtOne) {
       `</div>` +
       `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   } else if (prefix === "BYEDPI_CMD") {
-    div.innerHTML = `<label><span>${displayKey}</span><input name="${key}" placeholder="стратегия BYEDPI без --port и --transparent (например --tlsrec 41+s --udp-fake 1 --oob 1 --auto=torst)"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    div.innerHTML =
+      `<label><span>${displayKey}</span><input type="hidden" name="${key}" data-dpi-value data-default=""><input class="dpi-cmd" placeholder="стратегия BYEDPI без --port и --transparent (например --tlsrec 41+s --udp-fake 1 --oob 1 --auto=torst)"></label>` +
+      `<label class="dpi-name"><span>Имя прокси</span><input class="dpi-label" placeholder="без имени"></label>` +
+      `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   } else {
     div.innerHTML = `<label><span>${displayKey}</span><input name="${key}" placeholder="значение env"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   }
@@ -1956,6 +1963,7 @@ function addRow(containerId, prefix, startAtOne) {
     el.dataset.fromDraft = "true";
   });
   wireFieldEvents(div);
+  initStrategyRow(div);
   if (prefix === "MIXED_IN_USER") initMixedUserRow(div);
   initPasswordToggles(div);
   ensureIndexedRowControls(div);
@@ -2556,9 +2564,16 @@ function restoreMissingIndexedRows() {
       const packets = spec.packets;
       const packetsName = packets + idx; // ZAPRET_PACKETS / ZAPRET2_PACKETS have no zeroPlain
       const packetsVal = Store.get(envKey(packetsName)) || "";
-      div.innerHTML = `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="--dpi-desync=..."></label><label><span>${packetsName}</span><input name="${packetsName}" value="${escapeAttr(packetsVal)}" placeholder="12"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+      div.innerHTML =
+        `<label><span>${displayName}</span><input type="hidden" name="${envName}" value="${escapeAttr(value)}" data-dpi-value data-default=""><input class="dpi-cmd" placeholder="--dpi-desync=..."></label>` +
+        `<label><span>${packetsName}</span><input name="${packetsName}" value="${escapeAttr(packetsVal)}" placeholder="12"></label>` +
+        `<label class="dpi-name"><span>Имя прокси</span><input class="dpi-label" placeholder="без имени"></label>` +
+        `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
     } else if (prefix === "BYEDPI_CMD") {
-      div.innerHTML = `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="стратегия BYEDPI без --port и --transparent"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+      div.innerHTML =
+        `<label><span>${displayName}</span><input type="hidden" name="${envName}" value="${escapeAttr(value)}" data-dpi-value data-default=""><input class="dpi-cmd" placeholder="стратегия BYEDPI без --port и --transparent"></label>` +
+        `<label class="dpi-name"><span>Имя прокси</span><input class="dpi-label" placeholder="без имени"></label>` +
+        `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
     } else {
       div.innerHTML = `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="значение env"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
     }
@@ -2571,6 +2586,7 @@ function restoreMissingIndexedRows() {
       el.dataset.fromDraft = "true";
     });
     wireFieldEvents(div);
+    initStrategyRow(div);
     ensureIndexedRowControls(div);
     if (prefix === "SUB_LINK" && typeof initHeadersEditors === "function") initHeadersEditors(div);
     if (typeof wirePaneValidators === "function") wirePaneValidators(div);
@@ -4184,6 +4200,203 @@ function restoreDraftGroups() {
   });
 }
 
+// ---------- Панель mihomo ----------
+// Панель живёт не на этой странице, а на RESTful-контроллере ядра: тот же
+// хост, порт 9090, путь /ui/. Схему принудительно ставим http — контроллер
+// TLS не слушает, даже если сюда пришли через https-реверс. Secret в HTML не
+// печатается (страницы пре-рендерятся в статику и оседают в кеше браузера),
+// он запрашивается через env-state по клику.
+function mihomoPanelPreset(uiUrl) {
+  const url = String(uiUrl || "").toLowerCase();
+  if (url.includes("zashboard")) return "zashboard";
+  if (url.includes("yacd")) return "yacd";
+  if (url.includes("metacubexd")) return "metacubexd";
+  return "";
+}
+
+function mihomoPanelUrl(secret, preset) {
+  const panel = new URL(location.href);
+  panel.protocol = "http:";
+  panel.port = "9090";
+  panel.pathname = "/ui/";
+  panel.search = "";
+  panel.hash = "";
+  const q = new URLSearchParams({ hostname: location.hostname, port: "9090", http: "1" });
+  if (secret) q.set("secret", secret);
+  // Каждая панель читает параметры подключения по-своему: metacubexd — из
+  // фрагмента, zashboard и yacd-meta — из query string.
+  if (preset === "metacubexd") {
+    panel.hash = "/?" + q.toString();
+  } else if (preset === "zashboard") {
+    q.set("label", "MihomoProxyRoS");
+    panel.search = "?" + q.toString();
+  } else if (preset === "yacd") {
+    q.delete("http");
+    q.set("hostname", "http://" + location.hostname);
+    q.set("theme", "auto");
+    q.set("title", "MihomoProxyRoS");
+    panel.search = "?" + q.toString();
+  }
+  return panel.toString();
+}
+
+async function openMihomoPanel(btn) {
+  const preset = mihomoPanelPreset(btn && btn.dataset ? btn.dataset.uiUrl : "");
+  // Вкладку открываем синхронно, до await: после него браузер уже не считает
+  // window.open реакцией на клик и режет вызов как попап. noopener здесь
+  // передать нельзя — с ним window.open возвращает null, поэтому связь с
+  // открытой вкладкой рвём вручную.
+  const win = window.open("about:blank", "_blank");
+  let secret = "";
+  try {
+    const values = await fetchSecretValues(["UI_SECRET"]);
+    secret = values.UI_SECRET || "";
+  } catch (e) {
+    console.warn("UI_SECRET fetch failed:", e);
+  }
+  const url = mihomoPanelUrl(secret, preset);
+  if (win) {
+    win.opener = null;
+    win.location.replace(url);
+  } else {
+    window.open(url, "_blank", "noopener");
+  }
+}
+
+// ---------- Строки DPI: аргументы и имя прокси ----------
+// В env лежит одно значение "<аргументы> #ИМЯ", в интерфейсе это два поля.
+// Склеенное значение хранится в скрытом input с настоящим именем env, а
+// разбор повторяет strategy_label из entrypoint.sh: метка — только последний
+// сегмент после '#' без пробелов и служебных символов.
+const STRATEGY_LABEL_BAD = /[\s=/\\,"#]/;
+const STRATEGY_LABEL_BAD_G = /[\s=/\\,"#]/g;
+
+function splitStrategyValue(value) {
+  const raw = String(value || "");
+  const pos = raw.lastIndexOf("#");
+  if (pos < 0) return { cmd: raw, label: "" };
+  const label = raw.slice(pos + 1);
+  if (!label || STRATEGY_LABEL_BAD.test(label)) return { cmd: raw, label: "" };
+  return { cmd: raw.slice(0, pos).replace(/\s+$/, ""), label };
+}
+
+function joinStrategyValue(cmd, label) {
+  const args = String(cmd || "").trim();
+  const name = String(label || "").replace(STRATEGY_LABEL_BAD_G, "");
+  if (!name) return args;
+  return args ? args + " #" + name : "#" + name;
+}
+
+function syncStrategyRow(row) {
+  if (!row) return;
+  const hidden = row.querySelector("input[data-dpi-value][name]");
+  const cmd = row.querySelector(".dpi-cmd");
+  if (!hidden || !cmd) return;
+  const label = row.querySelector(".dpi-label");
+  if (label) {
+    const clean = label.value.replace(STRATEGY_LABEL_BAD_G, "");
+    if (label.value !== clean) label.value = clean;
+  }
+  hidden.value = joinStrategyValue(cmd.value, label ? label.value : "");
+  rememberField(hidden);
+}
+
+function initStrategyRow(row) {
+  if (!row || row.dataset.strategyWired === "true") return;
+  const hidden = row.querySelector("input[data-dpi-value][name]");
+  const cmd = row.querySelector(".dpi-cmd");
+  if (!hidden || !cmd) return;
+  row.dataset.strategyWired = "true";
+  const label = row.querySelector(".dpi-label");
+  // Источник правды — скрытое поле: к этому моменту wireFieldEvents мог
+  // подставить в него значение из черновика, и оно расходится с тем, что
+  // отрисовал сервер. Видимые поля всегда пересобираются из него.
+  const parts = splitStrategyValue(hidden.value);
+  cmd.value = parts.cmd;
+  if (label) label.value = parts.label;
+  [cmd, label].forEach((input) => {
+    if (input) input.addEventListener("input", () => syncStrategyRow(row));
+  });
+}
+
+function initStrategyRows(root) {
+  (root || document).querySelectorAll(".dpi-single-row, .dpi-packet-row").forEach(initStrategyRow);
+}
+
+// ---------- Списки серверов секции dns ----------
+// Одна env на раздел, элементы через запятую. Видимые строки собираются
+// обратно в скрытый input с именем env — так же, как headers у SUB_LINK.
+function dnsEditorHidden(editor) {
+  return editor.querySelector("input[name][data-dns-list-value]");
+}
+
+function syncDnsEditor(editor) {
+  if (!editor) return;
+  const hidden = dnsEditorHidden(editor);
+  if (!hidden) return;
+  const items = [];
+  editor.querySelectorAll(".dns-list-item").forEach((input) => {
+    const value = input.value.trim();
+    if (value) items.push(value);
+  });
+  hidden.value = items.join(",");
+  rememberField(hidden);
+}
+
+function wireDnsEditorRow(row) {
+  const editor = row.closest(".dns-list-editor");
+  row.querySelectorAll("input").forEach((input) => input.addEventListener("input", () => syncDnsEditor(editor)));
+}
+
+function dnsListRowHtml(editor, value) {
+  const placeholder = escapeAttr(editor.dataset.placeholder || "");
+  return `<input class="dns-list-item" value="${escapeAttr(value || "")}" placeholder="${placeholder}"><button type="button" onclick="removeDnsListRow(this)">Удалить</button>`;
+}
+
+function addDnsListRow(btn) {
+  const editor = btn.closest(".dns-list-editor");
+  if (!editor) return;
+  const row = document.createElement("div");
+  row.className = "dns-list-row";
+  row.innerHTML = dnsListRowHtml(editor, "");
+  editor.querySelector(".dns-list-rows").appendChild(row);
+  wireDnsEditorRow(row);
+  row.querySelector("input").focus();
+  syncDnsEditor(editor);
+}
+
+function removeDnsListRow(btn) {
+  const editor = btn.closest(".dns-list-editor");
+  const row = btn.closest(".dns-list-row");
+  if (row) row.remove();
+  syncDnsEditor(editor);
+}
+
+// Строки всегда перерисовываются из скрытого input: к моменту вызова
+// wireFieldEvents уже мог подставить туда значение из черновика, и оно
+// отличается от того, что отрисовал сервер.
+function renderDnsEditorRows(editor) {
+  const hidden = dnsEditorHidden(editor);
+  const rows = editor.querySelector(".dns-list-rows");
+  if (!hidden || !rows) return;
+  rows.innerHTML = "";
+  String(hidden.value || "").split(",").map((item) => item.trim()).filter(Boolean).forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "dns-list-row";
+    row.innerHTML = dnsListRowHtml(editor, item);
+    rows.appendChild(row);
+  });
+}
+
+function initDnsListEditors(root) {
+  (root || document).querySelectorAll(".dns-list-editor").forEach((editor) => {
+    if (editor.dataset.wired === "true") return;
+    editor.dataset.wired = "true";
+    renderDnsEditorRows(editor);
+    editor.querySelectorAll(".dns-list-row").forEach(wireDnsEditorRow);
+  });
+}
+
 function addDnsPolicyRow(match, server, params) {
   const rows = document.getElementById("dnsPolicyRows");
   if (!rows) return;
@@ -5042,7 +5255,7 @@ function refreshFieldMarkers() {
 
     // Mark closest visual container: prefer .field / .toggle (server-rendered
     // fields), fall back to .env-row (dynamic rows like LINK/SUB_LINK/SOCKS).
-    const box = input.closest(".field, .toggle") || input.closest(".env-row");
+    const box = input.closest(".field, .toggle") || input.closest(".dns-list-editor") || input.closest(".env-row");
     if (box) box.classList.add("field-modified");
 
     const statusEl = box && box.querySelector(":scope > .field-meta > i, :scope > i");
@@ -5324,6 +5537,8 @@ function bootstrapUI() {
   });
   document.querySelectorAll(".dns-policy-row input").forEach((input) => input.addEventListener("input", syncDnsPolicy));
   syncDnsPolicy();
+  initStrategyRows();
+  initDnsListEditors();
   const requestedYaml = decodeURIComponent(location.hash.slice(1));
   const requestedButton = requestedYaml ? [...document.querySelectorAll(".file-list button")].find((btn) => btn.dataset.name === requestedYaml) : null;
   const first = requestedButton || document.querySelector(".file-list button");
@@ -5833,7 +6048,7 @@ function bcInsertZapret2Row(args, name) {
   }
   if (!target) target = document.querySelector('#zapret2 .env-row:last-child');
   if (!target) return;
-  const input = target.querySelector('input[name^="ZAPRET2_CMD"]:not([name$="_PACKETS"])');
+  const input = target.querySelector('.dpi-cmd') || target.querySelector('input[name^="ZAPRET2_CMD"]:not([name$="_PACKETS"])');
   if (!input) return;
   input.value = args;
   input.dispatchEvent(new Event("input",  { bubbles: true }));
@@ -6618,7 +6833,7 @@ function bc1InsertZapretRow(args, name) {
   }
   if (!target) target = document.querySelector('#zapret .env-row:last-child');
   if (!target) return;
-  const input = target.querySelector('input[name^="ZAPRET_CMD"]:not([name$="_PACKETS"])');
+  const input = target.querySelector('.dpi-cmd') || target.querySelector('input[name^="ZAPRET_CMD"]:not([name$="_PACKETS"])');
   if (!input) return;
   input.value = args;
   input.dispatchEvent(new Event("input",  { bubbles: true }));
@@ -7295,7 +7510,7 @@ function bdcApplyStrategy(btn) {
   if (!target) target = wrap.querySelector(".env-row:last-child");
   if (!target) return;
 
-  const input = target.querySelector('input[name^="BYEDPI_CMD"]');
+  const input = target.querySelector('.dpi-cmd') || target.querySelector('input[name^="BYEDPI_CMD"]');
   if (!input) return;
   input.value = args;
   input.dispatchEvent(new Event("input",  { bubbles: true }));

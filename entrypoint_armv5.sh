@@ -66,6 +66,16 @@ CONFIG_YAML="$RUNTIME_DIR/config.yaml"
 UI_URL_CHECK="$CONFIG_DIR/.ui_url"
 FAKE_IP_RANGE="${FAKE_IP_RANGE:-198.18.0.0/15}"
 FAKE_IP_TTL="${FAKE_IP_TTL:-1}"
+# --- Списки DNS-серверов ---
+# Три env, каждая через запятую. Дефолты повторяют прежний хардкод, а пустое
+# значение возвращает их же: секции default-nameserver и nameserver в конфиге
+# mihomo обязаны быть заполнены, иначе ядро не стартует.
+DNS_DEFAULT_NAMESERVER_FALLBACK="8.8.8.8,9.9.9.9,1.1.1.1"
+DNS_NAMESERVER_FALLBACK="https://8.8.8.8/dns-query#disable-qtype-65=true&disable-ipv6=true,https://9.9.9.9/dns-query#disable-qtype-65=true&disable-ipv6=true,https://1.1.1.1/dns-query#disable-qtype-65=true&disable-ipv6=true"
+DNS_PROXY_SERVER_NAMESERVER_FALLBACK="https://8.8.8.8/dns-query#disable-qtype-65=true&disable-ipv6=true,https://9.9.9.9/dns-query#disable-qtype-65=true&disable-ipv6=true,https://1.1.1.1/dns-query#disable-qtype-65=true&disable-ipv6=true,https://common.dot.dns.yandex.net/dns-query#disable-qtype-65=true&disable-ipv6=true"
+DNS_DEFAULT_NAMESERVER="${DNS_DEFAULT_NAMESERVER:-$DNS_DEFAULT_NAMESERVER_FALLBACK}"
+DNS_NAMESERVER="${DNS_NAMESERVER:-$DNS_NAMESERVER_FALLBACK}"
+DNS_PROXY_SERVER_NAMESERVER="${DNS_PROXY_SERVER_NAMESERVER:-$DNS_PROXY_SERVER_NAMESERVER_FALLBACK}"
 ZAPRET_PACKETS="${ZAPRET_PACKETS:-12}"
 ZAPRET2_PACKETS="${ZAPRET2_PACKETS:-12}"
 HEALTHCHECK_INTERVAL="${HEALTHCHECK_INTERVAL:-120}"
@@ -123,6 +133,9 @@ export EXTERNAL_UI_URL
 export UI_SECRET
 export FAKE_IP_RANGE
 export FAKE_IP_TTL
+export DNS_DEFAULT_NAMESERVER
+export DNS_NAMESERVER
+export DNS_PROXY_SERVER_NAMESERVER
 export ZAPRET_PACKETS
 export ZAPRET2_PACKETS
 export HEALTHCHECK_INTERVAL
@@ -155,6 +168,43 @@ collect_cmds() {
     [ -n "$val" ] && list="$list $v"
   done
   echo "$list"
+}
+
+# --- Метка имени у стратегии DPI ---
+# Значение ZAPRET_CMD*/ZAPRET2_CMD*/BYEDPI_CMD* может оканчиваться на "#ИМЯ".
+# Метка уходит в имя прокси внутри провайдера (ZAPRET_1 -> ZAPRET_1_ИМЯ), но
+# в командную строку nfqws/byedpi не попадает. Меткой считается только
+# последний сегмент после '#', и только если в нём нет пробелов и служебных
+# символов — иначе '#' считается частью аргументов, а значение остаётся как есть.
+strategy_label() {
+  case "$1" in
+    *#*) ;;
+    *) return 0 ;;
+  esac
+  _sl_tail="${1##*#}"
+  [ -n "$_sl_tail" ] || return 0
+  printf '%s' "$_sl_tail" | grep -qE '^[^[:space:]=/\,"#]+$' || return 0
+  printf '%s' "$_sl_tail"
+}
+
+# Аргументы стратегии без метки имени.
+strategy_cmd() {
+  if [ -n "$(strategy_label "$1")" ]; then
+    printf '%s' "${1%#*}" | sed 's/[[:space:]]*$//'
+  else
+    printf '%s' "$1"
+  fi
+}
+
+# Имя прокси для стратегии: $2 или "$2_ИМЯ", если метка задана.
+# Имя прокси-провайдера при этом не меняется.
+strategy_proxy_name() {
+  _sp_label="$(strategy_label "$(printenv "$1" 2>/dev/null || true)")"
+  if [ -n "$_sp_label" ]; then
+    printf '%s_%s' "$2" "$_sp_label"
+  else
+    printf '%s' "$2"
+  fi
 }
 
 ZAPRET_LIST=$(collect_cmds ZAPRET)
@@ -201,11 +251,12 @@ generate_byedpi_proxies() {
     idx=$(get_cmd_index "$var" BYEDPI)
     mark=$((base_mark + idx))
     name=$(get_instance_name "BYEDPI" "$idx")
+    proxy_name=$(strategy_proxy_name "$var" "$name")
     yaml="$RUNTIME_DIR/${name}.yaml"
 
     cat > "$yaml" <<EOF
 proxies:
-  - name: "$name"
+  - name: "$proxy_name"
     type: direct
     udp: true
     ip-version: ipv4
@@ -298,7 +349,7 @@ start_byedpi_processes() {
     idx=$(get_cmd_index "$var" BYEDPI)
     tcp_port=$((base_tcp + idx))
     udp_port=$((base_udp + idx))
-    cmd=$(printenv "$var")
+    cmd=$(strategy_cmd "$(printenv "$var")")
 
     echo "Starting BYEDPI[$idx] tcp:$tcp_port udp:$udp_port"
 
@@ -326,11 +377,12 @@ generate_zapret_proxies() {
       name="${base}"
     fi
     mark=$((base_mark + idx))
+    proxy_name=$(strategy_proxy_name "$var" "$name")
     yaml="$RUNTIME_DIR/${name}.yaml"
 
     cat > "$yaml" <<EOF
 proxies:
-  - name: "$name"
+  - name: "$proxy_name"
     type: direct
     udp: true
     ip-version: ipv4
@@ -452,7 +504,7 @@ start_zapret_processes() {
     idx=$(get_cmd_index "$var" "$(echo "$var" | sed 's/_CMD.*//')")
 
     queue=$((base_queue + idx))
-    cmd=$(printenv "$var")
+    cmd=$(strategy_cmd "$(printenv "$var")")
 
     echo "Starting $var on queue $queue"
     "$bin" --qnum $queue --user=root $LUA_INIT_ARGS $cmd &
@@ -2681,6 +2733,70 @@ EOF
   echo "$mounted_providers"
 }
 
+# --- Списки DNS-серверов из env ---
+# Список приходит одной env через запятую. Пустая env (или список из одних
+# разделителей) откатывается на $2 — встроенный список контейнера.
+dns_list_lines() {
+  _dll_val="$1"
+  [ -n "$(printf '%s' "$_dll_val" | tr -d ' ,')" ] || _dll_val="$2"
+  printf '%s' "$_dll_val" | tr ',' '\n' | \
+    sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | sed 's/^/    - /'
+}
+
+# Хост DNS-сервера из строки любого поддерживаемого вида: 1.1.1.1,
+# tls://1.1.1.1:853, https://dns.google/dns-query#params, [2606:4700::1111]:853.
+# Псевдо-серверы (system, dhcp://, rcode://) адреса не имеют и пропускаются.
+dns_server_host() {
+  _dsh="${1%%#*}"
+  case "$_dsh" in
+    system|system://*|dhcp://*|rcode://*) return 0 ;;
+  esac
+  case "$_dsh" in
+    *://*) _dsh="${_dsh#*://}" ;;
+  esac
+  _dsh="${_dsh%%/*}"
+  _dsh="${_dsh%%\?*}"
+  case "$_dsh" in
+    \[*\]*)
+      _dsh="${_dsh#\[}"
+      _dsh="${_dsh%%\]*}"
+      ;;
+    *:*:*) ;;
+    *:*) _dsh="${_dsh%:*}" ;;
+  esac
+  [ -n "$_dsh" ] || return 0
+  printf '%s' "$_dsh"
+}
+
+# Одно правило DNS_ruleset для одного сервера. Для literal-адресов нужен
+# no-resolve, иначе mihomo пойдёт резолвить их же через этот DNS.
+dns_server_rule() {
+  _dsr="$(dns_server_host "$1")"
+  [ -n "$_dsr" ] || return 0
+  case "$_dsr" in
+    *:*)        printf 'IP-CIDR,%s/128,no-resolve\n' "$_dsr" ;;
+    *[!0-9.]*)  printf 'DOMAIN,%s\n' "$_dsr" ;;
+    *)          printf 'IP-CIDR,%s/32,no-resolve\n' "$_dsr" ;;
+  esac
+}
+
+# Payload DNS_ruleset целиком выводится из default-nameserver и nameserver:
+# весь DNS-трафик к этим адресам должен уходить в группу DNS. Значения по
+# умолчанию тех же env дают прежний набор серверов. proxy-server-nameserver
+# сюда не входит: parseNameServer вызывается для него с respectRules=false,
+# то есть эти запросы правила маршрутизации не проходят в принципе.
+# Дубликаты убираются с сохранением порядка.
+dns_ruleset_payload() {
+  {
+    for _drp in "$DNS_DEFAULT_NAMESERVER" "$DNS_NAMESERVER"; do
+      printf '%s\n' "$_drp" | tr ',' '\n' | \
+        sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | while IFS= read -r _dri; do
+          dns_server_rule "$_dri"
+        done
+    done
+  } | awk '!seen[$0]++'
+}
+
 #   NAMESERVER_POLICY="domain1#dns1,domain2#dns2"
 generate_nameserver_policy() {
   has_output=false
@@ -3132,6 +3248,7 @@ EOF
   # MOUNTED PROXIES from $PROXIES_DIR
   mounted_provs=$(generate_mounted_providers)
   providers="${providers}${mounted_provs}"
+  dns_other="${dns_other}${mounted_provs}"
 
   # SUB_LINK
   sub_link_envs="$RUNTIME_DIR/.sub_link_envs"
@@ -4156,9 +4273,7 @@ fi
     behavior: classical
     format: text
     payload:
-      - DOMAIN,dns.google
-      - DOMAIN,dns.quad9.net
-      - DOMAIN,cloudflare-dns.com
+$(dns_ruleset_payload | sed 's/^/      - /')
 EOF
 
 # Добавляем RULE-SET в all_rules (с приоритетом группы)
@@ -4202,9 +4317,7 @@ dns:
   listen: 0.0.0.0:53
   ipv6: false
   default-nameserver:
-    - 8.8.8.8
-    - 9.9.9.9
-    - 1.1.1.1
+$(dns_list_lines "$DNS_DEFAULT_NAMESERVER" "$DNS_DEFAULT_NAMESERVER_FALLBACK")
   enhanced-mode: ${DNS_MODE:-fake-ip}
   fake-ip-filter-mode: rule
   fake-ip-range: ${FAKE_IP_RANGE}
@@ -4220,19 +4333,16 @@ done
     - MATCH,fake-ip    
 EOF
 generate_nameserver_policy >>  $CONFIG_YAML
+{
+  echo "  nameserver:"
+  dns_list_lines "$DNS_NAMESERVER" "$DNS_NAMESERVER_FALLBACK"
+  echo "  proxy-server-nameserver:"
+  dns_list_lines "$DNS_PROXY_SERVER_NAMESERVER" "$DNS_PROXY_SERVER_NAMESERVER_FALLBACK"
+} >> "$CONFIG_YAML"
     cat >> "$CONFIG_YAML" <<EOF
-  nameserver:
-    - https://8.8.8.8/dns-query#disable-qtype-65=true&disable-ipv6=true
-    - https://9.9.9.9/dns-query#disable-qtype-65=true&disable-ipv6=true
-    - https://1.1.1.1/dns-query#disable-qtype-65=true&disable-ipv6=true
-  proxy-server-nameserver:
-    - https://8.8.8.8/dns-query#disable-qtype-65=true&disable-ipv6=true
-    - https://9.9.9.9/dns-query#disable-qtype-65=true&disable-ipv6=true
-    - https://1.1.1.1/dns-query#disable-qtype-65=true&disable-ipv6=true
-    - https://common.dot.dns.yandex.net/dns-query#disable-qtype-65=true&disable-ipv6=true
 hosts:
   common.dot.dns.yandex.net: [77.88.8.8]
-  
+
 sniffer:
   enable: ${SNIFFER:-true}
   override-destination: false

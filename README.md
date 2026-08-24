@@ -159,6 +159,18 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 | `FAKE_IP_TTL` | `1` | [fake-ip cache TTL](https://wiki.metacubex.one/en/config/dns/#fake-ip-ttl) (seconds). |
 | `FAKE_IP_FILTERxx` | — | Rules list for DNS server in `rule` mode. |
 
+### DNS servers
+
+Three server lists inside the `dns` block are configurable, items separated by commas. The defaults reproduce exactly what the container used to hardcode, so an unset — or cleared — variable changes nothing: the container falls back to the built-in list. The rest of the `dns` block stays as it was. The web panel edits the lists under **Core and DNS → DNS**.
+
+| ENV | Default | Description |
+|---|---|---|
+| `DNS_DEFAULT_NAMESERVER` | `8.8.8.8,9.9.9.9,1.1.1.1` | [default-nameserver](https://wiki.metacubex.one/en/config/dns/#default-nameserver): plain DNS used to resolve the DoH/DoT servers and the proxies themselves. Pure IPs only — mihomo rejects domains here. |
+| `DNS_NAMESERVER` | three DoH: Google, Quad9, Cloudflare | [nameserver](https://wiki.metacubex.one/en/config/dns/#nameserver): main servers for queries not matched by `NAMESERVER_POLICY`. |
+| `DNS_PROXY_SERVER_NAMESERVER` | the same three DoH + `common.dot.dns.yandex.net` | [proxy-server-nameserver](https://wiki.metacubex.one/en/config/dns/#proxy-server-nameserver): resolves the proxy servers’ own domains. |
+
+`DNS_DEFAULT_NAMESERVER` and `DNS_NAMESERVER` also build `DNS_ruleset` — the rule set that sends traffic aimed at DNS servers into the `DNS` group. Domains land there as `DOMAIN,...`, literal addresses as `IP-CIDR,.../32,no-resolve`; the scheme, port and everything after `#` are stripped, and `system`, `dhcp://` and `rcode://` are skipped. `DNS_PROXY_SERVER_NAMESERVER` is not included: mihomo handles those queries outside the routing rules.
+
 ### Logs & UI
 
 | ENV | Default | Description |
@@ -248,7 +260,7 @@ Special characters in the name (space, comma, colon, quotes, slashes) are replac
 | ENV | Default | Description |
 |---|---|---|
 | `BYEDPI_CMDxx` | — | [ByeDPI](https://github.com/hufrea/byedpi) strategy. `BYEDPI_CMD` → outbound `BYEDPI`; `BYEDPI_CMD1` → `BYEDPI_1`; etc. Pick strategies with [byedpi-orchestrator](https://hub.docker.com/r/vindibona/byedpi-orchestrator). |
-| `ZAPRET_CMDxx` | — | [Zapret/nfqws](https://github.com/bol-van/zapret) strategy. Bundled fakes in `/zapret-fakebin/` (e.g. `quic_initial_www_google_com.bin`) and lists in `/zapret-lists/` (`ipset-all.txt`, `list-general.txt`, etc.). |
+| `ZAPRET_CMDxx` | — | [Zapret/nfqws](https://github.com/bol-van/zapret) strategy. Append `#NAME` at the end of the value to name the proxy in the mihomo dashboard (`ZAPRET_2` becomes `ZAPRET_2_NAME`); the proxy provider keeps its name and the label never reaches the nfqws command line. The same applies to `ZAPRET2_CMDxx` and `BYEDPI_CMDxx`. Bundled fakes in `/zapret-fakebin/` (e.g. `quic_initial_www_google_com.bin`) and lists in `/zapret-lists/` (`ipset-all.txt`, `list-general.txt`, etc.). |
 | `ZAPRET2_CMDxx` | — | [Zapret2/nfqws2](https://github.com/bol-van/zapret2) strategy. |
 | `ZAPRET2_WG_CMD` | *(default with `quic_initial_vk_com` blob)* | Dedicated nfqws2 strategy for WireGuard handshake routing. |
 | `ZAPRET_PACKETSxx` | `12` | Number of first packets routed through the nfqws queue. `xx` overrides per-provider. Non-positive values = unlimited (always queued). |

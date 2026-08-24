@@ -332,6 +332,84 @@ toggle_field() {
 EOF
 }
 
+# --- Стратегии DPI: метка имени в конце значения ---
+# "<аргументы> #ИМЯ" — метка уходит в имя прокси (ZAPRET_1_ИМЯ), в командную
+# строку nfqws/byedpi не попадает. Разбор здесь повторяет strategy_label из
+# entrypoint.sh: метка — только последний сегмент после '#' без пробелов и
+# служебных символов.
+strategy_label_of() {
+  case "$1" in *#*) ;; *) return 0 ;; esac
+  _sl_tail="${1##*#}"
+  [ -n "$_sl_tail" ] || return 0
+  printf '%s' "$_sl_tail" | grep -qE '^[^[:space:]=/\,"#]+$' || return 0
+  printf '%s' "$_sl_tail"
+}
+
+strategy_cmd_of() {
+  if [ -n "$(strategy_label_of "$1")" ]; then
+    printf '%s' "${1%#*}" | sed 's/[[:space:]]*$//'
+  else
+    printf '%s' "$1"
+  fi
+}
+
+# Поле аргументов строки DPI. Настоящая env лежит в скрытом input внутри той
+# же <label>: applyIndexedBatch переименовывает input[name] и обновляет
+# подпись через closest("label"), поэтому скрытое поле обязано быть внутри.
+dpi_cmd_field() {
+  _dcf_name="$1"; _dcf_ph="$2"
+  _dcf_val="$(env_raw "$_dcf_name")"
+  printf '<label><span>%s</span>' "$_dcf_name"
+  printf '<input type="hidden" name="%s" value="%s" data-dpi-value data-default="">' \
+    "$_dcf_name" "$(printf '%s' "$_dcf_val" | h)"
+  printf '<input class="dpi-cmd" value="%s" placeholder="%s"></label>' \
+    "$(strategy_cmd_of "$_dcf_val" | h)" "$(printf '%s' "$_dcf_ph" | h)"
+}
+
+# Поле имени стратегии. Значение не отдельная env: syncStrategyRow склеивает
+# его с аргументами обратно в "<аргументы> #ИМЯ".
+dpi_label_field() {
+  _dlf_val="$(env_raw "$1")"
+  printf '<label class="dpi-name"><span>Имя прокси</span>'
+  printf '<input class="dpi-label" value="%s" placeholder="без имени"></label>' \
+    "$(strategy_label_of "$_dlf_val" | h)"
+}
+
+# --- Списочные env секции dns ---
+# Одна env на секцию, элементы через запятую. Значение живёт в скрытом input,
+# видимые строки собираются обратно в него из JS (syncDnsListEditor).
+# Аргументы: $1 env, $2 заголовок, $3 ключ mihomo, $4 placeholder, $5 подсказка, $6 default
+dns_list_editor() {
+  dle_env="$1"; dle_title="$2"; dle_key="$3"; dle_ph="$4"; dle_hint="$5"; dle_default="${6:-}"
+  dle_val="$(env_default "$dle_env" "$dle_default")"
+  dle_ph_h="$(printf '%s' "$dle_ph" | h)"
+  cat <<EOF
+  <div class="dns-list-editor" data-env="$dle_env" data-placeholder="$dle_ph_h">
+    <div class="dns-list-head">
+      <b>$dle_title</b>
+      <span>$dle_env · $dle_key</span>
+      <button type="button" onclick="addDnsListRow(this)">Добавить</button>
+    </div>
+    <input type="hidden" name="$dle_env" value="$(printf '%s' "$dle_val" | h)" data-default="$(printf '%s' "$dle_default" | h)" data-dns-list-value>
+    <div class="dns-list-rows">
+EOF
+  OLDIFS=$IFS
+  IFS=','
+  for raw in $dle_val; do
+    item="$(printf '%s' "$raw" | xargs)"
+    [ -z "$item" ] && continue
+    printf '      <div class="dns-list-row"><input class="dns-list-item" value="%s" placeholder="%s"><button type="button" onclick="removeDnsListRow(this)">Удалить</button></div>\n' \
+      "$(printf '%s' "$item" | h)" "$dle_ph_h"
+  done
+  IFS=$OLDIFS
+  cat <<EOF
+    </div>
+    <small>$dle_hint</small>
+    <i>$(is_set "$dle_env")</i>
+  </div>
+EOF
+}
+
 dns_policy_editor() {
   current="$(env_default NAMESERVER_POLICY "")"
   cat <<EOF
@@ -505,6 +583,7 @@ EOF
           <span class="theme-dot"></span>
           <b id="themeLabel">Темная</b>
         </button>
+        <button class="ghost panel-open" type="button" onclick="openMihomoPanel(this)" data-ui-url="$(env_attr EXTERNAL_UI_URL "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip")" title="Открыть панель mihomo: адрес контейнера, порт 9090, secret подставляется автоматически">Панель Mihomo</button>
         <a class="ghost" href="$(page_url yaml)">Смотреть YAML</a>
         <button class="ghost" type="button" onclick="resetCurrentPageDraft()">Сбросить страницу</button>
         <button class="ghost" type="button" onclick="resetUiDraft()">Сбросить черновик</button>
@@ -656,7 +735,22 @@ EOF
   <a class="doc-link" href="https://wiki.metacubex.one/ru/config/dns/#fake-ip-filter-mode" target="_blank" rel="noopener">Документация fake-ip-filter-mode</a>
   <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">Документация rules</a>
 </div>
+<div class="notice">
+  <b>DNS-серверы</b>
+  <span>Три списка ниже задаются переменными через запятую. Значения по умолчанию совпадают с тем, что контейнер писал в конфиг раньше, а пустой список возвращает их же: без <code>default-nameserver</code> и <code>nameserver</code> mihomo не стартует.</span>
+</div>
 EOF
+  echo '<div class="dns-list-grid">'
+  dns_list_editor DNS_DEFAULT_NAMESERVER "default-nameserver" "default-nameserver" "8.8.8.8" \
+    "Обычные DNS без шифрования: ими резолвятся адреса самих DoH/DoT-серверов и прокси. Только IP, без доменов и без схемы." \
+    "8.8.8.8,9.9.9.9,1.1.1.1"
+  dns_list_editor DNS_NAMESERVER "nameserver" "nameserver" "https://1.1.1.1/dns-query#disable-ipv6=true" \
+    "Основные серверы для всех запросов, которые не попали в nameserver-policy." \
+    "https://8.8.8.8/dns-query#disable-qtype-65=true&disable-ipv6=true,https://9.9.9.9/dns-query#disable-qtype-65=true&disable-ipv6=true,https://1.1.1.1/dns-query#disable-qtype-65=true&disable-ipv6=true"
+  dns_list_editor DNS_PROXY_SERVER_NAMESERVER "proxy-server-nameserver" "proxy-server-nameserver" "https://1.1.1.1/dns-query#disable-ipv6=true" \
+    "Серверы для резолва доменов самих прокси-серверов." \
+    "https://8.8.8.8/dns-query#disable-qtype-65=true&disable-ipv6=true,https://9.9.9.9/dns-query#disable-qtype-65=true&disable-ipv6=true,https://1.1.1.1/dns-query#disable-qtype-65=true&disable-ipv6=true,https://common.dot.dns.yandex.net/dns-query#disable-qtype-65=true&disable-ipv6=true"
+  echo '</div>'
   section_end
 }
 
@@ -1091,7 +1185,7 @@ dpi_page() {
   for name in $(env_names '^BYEDPI_CMD[0-9]*='); do
     idx="$(printf '%s' "$name" | sed 's/BYEDPI_CMD//')"; [ -z "$idx" ] && idx=0
     cat <<EOF
-<div class="env-row dpi-single-row" data-index="$idx" data-max-index="99"><label><span>$name</span><input name="$name" value="$(env_attr "$name" "")" placeholder="--transparent ..."></label><button type="button" onclick="removeEnvRow(this)">Удалить</button></div>
+<div class="env-row dpi-single-row" data-index="$idx" data-max-index="99">$(dpi_cmd_field "$name" "--transparent ...")$(dpi_label_field "$name")<button type="button" onclick="removeEnvRow(this)">Удалить</button></div>
 EOF
   done
   echo '</div>'
@@ -1232,7 +1326,7 @@ EOF
   for name in $(env_names '^ZAPRET_CMD[0-9]*='); do
     idx="$(printf '%s' "$name" | sed 's/ZAPRET_CMD//')"; [ -z "$idx" ] && idx=0
     cat <<EOF
-<div class="env-row dpi-packet-row" data-index="$idx" data-max-index="99"><label><span>$name</span><input name="$name" value="$(env_attr "$name" "")" placeholder="--dpi-desync=..."></label><label><span>ZAPRET_PACKETS$idx</span><input name="ZAPRET_PACKETS$idx" value="$(env_attr "ZAPRET_PACKETS$idx" "")" placeholder="12"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button></div>
+<div class="env-row dpi-packet-row" data-index="$idx" data-max-index="99">$(dpi_cmd_field "$name" "--dpi-desync=...")<label><span>ZAPRET_PACKETS$idx</span><input name="ZAPRET_PACKETS$idx" value="$(env_attr "ZAPRET_PACKETS$idx" "")" placeholder="12"></label>$(dpi_label_field "$name")<button type="button" onclick="removeEnvRow(this)">Удалить</button></div>
 EOF
   done
   echo '</div>'
@@ -1383,7 +1477,7 @@ EOF
   for name in $(env_names '^ZAPRET2_CMD[0-9]*='); do
     idx="$(printf '%s' "$name" | sed 's/ZAPRET2_CMD//')"; [ -z "$idx" ] && idx=0
     cat <<EOF
-<div class="env-row dpi-packet-row" data-index="$idx" data-max-index="99"><label><span>$name</span><input name="$name" value="$(env_attr "$name" "")" placeholder="--dpi-desync=..."></label><label><span>ZAPRET2_PACKETS$idx</span><input name="ZAPRET2_PACKETS$idx" value="$(env_attr "ZAPRET2_PACKETS$idx" "")" placeholder="12"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button></div>
+<div class="env-row dpi-packet-row" data-index="$idx" data-max-index="99">$(dpi_cmd_field "$name" "--dpi-desync=...")<label><span>ZAPRET2_PACKETS$idx</span><input name="ZAPRET2_PACKETS$idx" value="$(env_attr "ZAPRET2_PACKETS$idx" "")" placeholder="12"></label>$(dpi_label_field "$name")<button type="button" onclick="removeEnvRow(this)">Удалить</button></div>
 EOF
   done
   echo '</div>'
