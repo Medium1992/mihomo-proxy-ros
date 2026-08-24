@@ -179,6 +179,8 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 | `EXTERNAL_UI_URL` | [ссылка](https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip) | ZIP-источник для панели mihomo на `:9090`. [Docs](https://wiki.metacubex.one/ru/config/general/#url). |
 | `UI_SECRET` | — | Секрет для external-controller (порт `9090`). Пусто = без авторизации (только LAN). |
 
+Свежие сборки MetaCubeXD не принимают параметры подключения из ссылки, поэтому контейнер после старта ядра прописывает адрес контроллера в `ui/config.js` панели (`defaultBackendURL: location.origin`) — форма подключения открывается заполненной. Zashboard и Yacd-meta получают адрес и пароль прямо в ссылке из кнопки «Панель Mihomo».
+
 ### Веб-панель на `:80`
 
 | ENV | По умолчанию | Описание |

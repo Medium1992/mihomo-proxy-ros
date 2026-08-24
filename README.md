@@ -179,6 +179,8 @@ Three server lists inside the `dns` block are configurable, items separated by c
 | `EXTERNAL_UI_URL` | [MetaCube zip](https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip) | Source zip for the panel served on `:9090`. [Docs](https://wiki.metacubex.one/en/config/general/#url). |
 | `UI_SECRET` | — | Secret for the external controller (port `9090`). Empty = no auth (LAN-only setups). |
 
+Recent MetaCubeXD builds ignore connection parameters passed in the link, so once the core is up the container writes the controller address into the panel's `ui/config.js` (`defaultBackendURL: location.origin`) and the connect form opens pre-filled. Zashboard and Yacd-meta take the address and the secret straight from the link behind the «Mihomo dashboard» button.
+
 ### Web UI on `:80`
 
 | ENV | Default | Description |
