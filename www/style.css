@@ -371,6 +371,19 @@ button, .ghost, .primary, .theme-btn {
   align-items: center;
 }
 
+/* Имя env — одно длинное слово без пробелов, а flex-элемент не сжимается
+   ниже min-content. Из-за этого заголовок вроде GROUP_DEFAULT_SELECTED,
+   напечатанный и жирным, и мелким моно, распирал карточку и она выезжала
+   за колонку сетки. overflow-wrap: anywhere разрешает перенос внутри слова
+   и заодно уменьшает min-content, min-width: 0 снимает флекс-минимум. */
+.field > span > b,
+.field > span > em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.field > span > em { text-align: right; }
+
 .field em, .field i, .toggle i {
   color: var(--faint);
   font-style: normal;
