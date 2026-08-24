@@ -410,6 +410,38 @@ EOF
 EOF
 }
 
+# Пресеты готовых панелей. Отдельной env у выбора нет: select только
+# подставляет ссылку в EXTERNAL_UI_URL, а текущий пресет определяется по
+# самой ссылке. Список совпадает с mihomo-remnasub-ros.
+external_ui_preset_field() {
+  _eup_url="$(env_default EXTERNAL_UI_URL "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip")"
+  case "$_eup_url" in
+    *dist-cdn-fonts.zip) _eup_cur=zashboard-cdn ;;
+    *zashboard*)         _eup_cur=zashboard ;;
+    *metacubexd*)        _eup_cur=metacubexd ;;
+    *Yacd-meta*|*yacd*)  _eup_cur=yacd-meta ;;
+    *)                   _eup_cur=custom ;;
+  esac
+  cat <<'EOF'
+<label class="field">
+  <span><b>Готовая панель</b><em>подставляет EXTERNAL_UI_URL</em></span>
+  <select id="externalUiPreset" onchange="applyExternalUiPreset(this)">
+EOF
+  for _eup_opt in "zashboard-cdn|Zashboard, компактная" "zashboard|Zashboard, полная" \
+                  "metacubexd|MetaCubeXD" "yacd-meta|Yacd-meta" "custom|Свой URL"; do
+    _eup_val="${_eup_opt%%|*}"
+    _eup_sel=""
+    [ "$_eup_val" = "$_eup_cur" ] && _eup_sel=" selected"
+    printf '    <option value="%s"%s>%s</option>\n' "$_eup_val" "$_eup_sel" "${_eup_opt#*|}"
+  done
+  cat <<'EOF'
+  </select>
+  <small>Кнопка <b>Панель Mihomo</b> в шапке открывает контроллер на порту <code>9090</code> и подставляет в ссылку адрес контейнера с паролем из <code>UI_SECRET</code>. Zashboard и Yacd-meta читают их из ссылки и открываются сразу, MetaCubeXD параметры подключения из URL не принимает — там адрес вводится один раз вручную.</small>
+  <i>preset</i>
+</label>
+EOF
+}
+
 dns_policy_editor() {
   current="$(env_default NAMESERVER_POLICY "")"
   cat <<EOF
@@ -583,7 +615,7 @@ EOF
           <span class="theme-dot"></span>
           <b id="themeLabel">Темная</b>
         </button>
-        <button class="ghost panel-open" type="button" onclick="openMihomoPanel(this)" data-ui-url="$(env_attr EXTERNAL_UI_URL "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip")" title="Открыть панель mihomo: адрес контейнера, порт 9090, secret подставляется автоматически">Панель Mihomo</button>
+        <button class="panel-open" type="button" onclick="openMihomoPanel(this)" data-ui-url="$(env_attr EXTERNAL_UI_URL "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip")" title="Открыть панель mihomo: адрес контейнера, порт 9090, secret подставляется автоматически"><span aria-hidden="true">◫</span>Панель Mihomo</button>
         <a class="ghost" href="$(page_url yaml)">Смотреть YAML</a>
         <button class="ghost" type="button" onclick="resetCurrentPageDraft()">Сбросить страницу</button>
         <button class="ghost" type="button" onclick="resetUiDraft()">Сбросить черновик</button>
@@ -697,6 +729,7 @@ core_page() {
   section_start_tab core "Ядро mihomo" "Базовые настройки контроллера, UI, inbound-режима и sniffing."
   echo '<div class="grid">'
   select_field LOG_LEVEL "Логи" "Уровень <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/#log-level\" target=\"_blank\" rel=\"noopener\">log-level</a> mihomo." error "silent error warning info debug"
+  external_ui_preset_field
   field EXTERNAL_UI_URL "External UI" "Zip-архив панели для <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/#external-ui-url\" target=\"_blank\" rel=\"noopener\">external-ui-url</a>." "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip" text "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip"
   field UI_SECRET "UI secret" "Пароль <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/#secret\" target=\"_blank\" rel=\"noopener\">secret</a> external-controller. Оставьте пустым только в закрытой сети." "" password ""
   field AMNEZIA_PREMIUM_PUBLIC_KEY_FILE "Amnezia public key file" "Файл публичного ключа gateway для vpn:// Amnezia Premium." "/awg" text "/awg"
@@ -1720,18 +1753,18 @@ EOF
   printf '<input type="hidden" name="GROUP" value="%s" data-default="">\n' "$(env_attr GROUP "")"
   # Same layout as user groups: proxies | use, type | interval, url | url_status,
   # strategy | tolerance, filter | exclude.
-  printf '<label class="field field-validated" data-env="GROUP_PROXIES" data-validate="proxies"><span><b>GROUP_PROXIES</b><em>GROUP_PROXIES</em></span><input type="text" name="GROUP_PROXIES" value="%s" placeholder="DIRECT,REJECT" data-default=""><small>Явные <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> по умолчанию: имена прокси-групп (регистрозависимо) либо служебные <code>DIRECT</code>, <code>REJECT</code>, <code>REJECT-DROP</code>, <code>PASS</code>.</small><i>%s</i></label>\n' "$(env_attr GROUP_PROXIES "")" "$(is_set GROUP_PROXIES)"
-  printf '<label class="field field-validated" data-env="GROUP_USE" data-validate="use"><span><b>GROUP_USE</b><em>GROUP_USE</em></span><input type="text" name="GROUP_USE" value="%s" placeholder="LINK1,SUB_LINK1,BYEDPI" data-default=""><small>Providers по умолчанию (регистрозависимо), параметр <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">use</a>, или <code>none</code>.</small><i>%s</i></label>\n' "$(env_attr GROUP_USE "")" "$(is_set GROUP_USE)"
-  select_field GROUP_TYPE "GROUP_TYPE" "Тип <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#type\" target=\"_blank\" rel=\"noopener\">proxy-groups type</a> по умолчанию." select "select url-test load-balance fallback"
-  field GROUP_DEFAULT_SELECTED "GROUP_DEFAULT_SELECTED" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#default-selected\" target=\"_blank\" rel=\"noopener\">default-selected</a> по умолчанию для type select: имя прокси или группы, которую выбрать при первом старте." "" text ""
-  field GROUP_INTERVAL "GROUP_INTERVAL" "Интервал <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#interval\" target=\"_blank\" rel=\"noopener\">health-check</a>." "60" number "60"
-  field GROUP_URL "GROUP_URL" "URL <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#url\" target=\"_blank\" rel=\"noopener\">health-check</a>, если HEALTHCHECK_PROVIDER=false." "https://www.gstatic.com/generate_204" text "https://www.gstatic.com/generate_204"
-  field GROUP_URL_STATUS "GROUP_URL_STATUS" "Ожидаемый <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status\" target=\"_blank\" rel=\"noopener\">expected-status</a>." "204" number "204"
-  select_field GROUP_STRATEGY "GROUP_STRATEGY" "Стратегия <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#strategy\" target=\"_blank\" rel=\"noopener\">load-balance</a>: round-robin, consistent-hashing или sticky-sessions." "consistent-hashing" "round-robin consistent-hashing sticky-sessions"
-  field GROUP_TOLERANCE "GROUP_TOLERANCE" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#tolerance\" target=\"_blank\" rel=\"noopener\">Tolerance</a> для url-test." "20" number "20"
-  field GROUP_FILTER "GROUP_FILTER" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#filter\" target=\"_blank\" rel=\"noopener\">filter</a> по умолчанию." "" text ""
-  field GROUP_EXCLUDE "GROUP_EXCLUDE" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter\" target=\"_blank\" rel=\"noopener\">exclude-filter</a> по умолчанию." "" text ""
-  printf '<label class="field field-validated" data-env="GROUP_EXCLUDE_TYPE" data-validate="exclude_type"><span><b>GROUP_EXCLUDE_TYPE</b><em>GROUP_EXCLUDE_TYPE</em></span><input type="text" name="GROUP_EXCLUDE_TYPE" value="%s" placeholder="vmess|direct" data-default=""><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type" target="_blank" rel="noopener">exclude-type</a> по умолчанию через <code>|</code>. <a class="doc-link" href="https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45" target="_blank" rel="noopener">Adapter Type</a>, регистр не важен. Пример: <code>vmess|direct</code>.</small><i>%s</i></label>\n' "$(env_attr GROUP_EXCLUDE_TYPE "")" "$(is_set GROUP_EXCLUDE_TYPE)"
+  printf '<label class="field field-validated" data-env="GROUP_PROXIES" data-validate="proxies"><span><b>Proxies</b><em>GROUP_PROXIES</em></span><input type="text" name="GROUP_PROXIES" value="%s" placeholder="DIRECT,REJECT" data-default=""><small>Явные <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> по умолчанию: имена прокси-групп (регистрозависимо) либо служебные <code>DIRECT</code>, <code>REJECT</code>, <code>REJECT-DROP</code>, <code>PASS</code>.</small><i>%s</i></label>\n' "$(env_attr GROUP_PROXIES "")" "$(is_set GROUP_PROXIES)"
+  printf '<label class="field field-validated" data-env="GROUP_USE" data-validate="use"><span><b>Use</b><em>GROUP_USE</em></span><input type="text" name="GROUP_USE" value="%s" placeholder="LINK1,SUB_LINK1,BYEDPI" data-default=""><small>Providers по умолчанию (регистрозависимо), параметр <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">use</a>, или <code>none</code>.</small><i>%s</i></label>\n' "$(env_attr GROUP_USE "")" "$(is_set GROUP_USE)"
+  select_field GROUP_TYPE "Type" "Тип <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#type\" target=\"_blank\" rel=\"noopener\">proxy-groups type</a> по умолчанию." select "select url-test load-balance fallback"
+  field GROUP_DEFAULT_SELECTED "Default selected" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#default-selected\" target=\"_blank\" rel=\"noopener\">default-selected</a> по умолчанию для type select: имя прокси или группы, которую выбрать при первом старте." "" text ""
+  field GROUP_INTERVAL "Interval" "Интервал <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#interval\" target=\"_blank\" rel=\"noopener\">health-check</a>." "60" number "60"
+  field GROUP_URL "URL" "URL <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#url\" target=\"_blank\" rel=\"noopener\">health-check</a>, если HEALTHCHECK_PROVIDER=false." "https://www.gstatic.com/generate_204" text "https://www.gstatic.com/generate_204"
+  field GROUP_URL_STATUS "URL status" "Ожидаемый <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status\" target=\"_blank\" rel=\"noopener\">expected-status</a>." "204" number "204"
+  select_field GROUP_STRATEGY "Strategy" "Стратегия <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#strategy\" target=\"_blank\" rel=\"noopener\">load-balance</a>: round-robin, consistent-hashing или sticky-sessions." "consistent-hashing" "round-robin consistent-hashing sticky-sessions"
+  field GROUP_TOLERANCE "Tolerance" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#tolerance\" target=\"_blank\" rel=\"noopener\">Tolerance</a> для url-test." "20" number "20"
+  field GROUP_FILTER "Filter" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#filter\" target=\"_blank\" rel=\"noopener\">filter</a> по умолчанию." "" text ""
+  field GROUP_EXCLUDE "Exclude" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter\" target=\"_blank\" rel=\"noopener\">exclude-filter</a> по умолчанию." "" text ""
+  printf '<label class="field field-validated" data-env="GROUP_EXCLUDE_TYPE" data-validate="exclude_type"><span><b>Exclude type</b><em>GROUP_EXCLUDE_TYPE</em></span><input type="text" name="GROUP_EXCLUDE_TYPE" value="%s" placeholder="vmess|direct" data-default=""><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type" target="_blank" rel="noopener">exclude-type</a> по умолчанию через <code>|</code>. <a class="doc-link" href="https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45" target="_blank" rel="noopener">Adapter Type</a>, регистр не важен. Пример: <code>vmess|direct</code>.</small><i>%s</i></label>\n' "$(env_attr GROUP_EXCLUDE_TYPE "")" "$(is_set GROUP_EXCLUDE_TYPE)"
   echo '</div></article>'
 }
 
