@@ -222,6 +222,21 @@ button, .ghost, .primary, .theme-btn {
 
 .primary:hover { background: var(--accent-strong); }
 
+/* Переход в панель mihomo — главное действие в шапке после «Команд»,
+   поэтому не сливается с остальными ghost-кнопками. */
+.panel-open {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.panel-open:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.panel-open span { font-size: 15px; line-height: 1; }
+
 .theme-btn {
   color: var(--muted);
   font-weight: 700;
@@ -353,14 +368,27 @@ button, .ghost, .primary, .theme-btn {
 
 .field, .toggle {
   position: relative;
-  display: grid;
-  gap: 8px;
   min-width: 0;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-2);
 }
+
+/* Карточки одной строки сетки растягиваются по самой высокой из них. Пока
+   .field был гридом, лишняя высота раскладывалась поровну между его
+   авто-строками, и подпись, поле ввода и подсказка вставали в каждой
+   карточке на своей высоте — соседние поля не совпадали по уровню.
+   Колонка на flex складывает весь избыток в одно место: auto-margin
+   прижимает подсказку со статусом к низу карточки, а подпись и само поле
+   остаются на одном уровне во всех карточках строки. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field > .field-meta { margin-top: auto; }
 
 .field-wide { grid-column: 1 / -1; }
 
@@ -441,8 +469,11 @@ input:focus, textarea:focus, select:focus {
 }
 
 .toggle {
+  display: grid;
+  gap: 8px;
   grid-template-columns: 44px minmax(0, 1fr);
   align-items: center;
+  align-content: start;
   min-height: auto;
 }
 

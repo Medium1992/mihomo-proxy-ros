@@ -4074,6 +4074,11 @@ function addGroupPane(name) {
     </div>`;
   panes.appendChild(pane);
   wireFieldEvents(pane);
+  // Панель, собранная здесь, иначе осталась бы без .field-meta: подсказка и
+  // статус лежали бы отдельными строками, а не парой «слева хинт, справа
+  // статус», как в панелях, отрисованных сервером. Из-за этого только что
+  // добавленная группа выглядела иначе, чем те же поля после перезагрузки.
+  if (typeof normalizeFieldMeta === "function") normalizeFieldMeta(pane);
   wireGroupRename(pane);
   wirePaneValidators(pane);
   switchGroupPane(clean);
@@ -4200,6 +4205,25 @@ function restoreDraftGroups() {
   });
 }
 
+// Ссылки на готовые панели — тот же список, что в mihomo-remnasub-ros.
+// Выбор пресета не отдельная env: он просто подставляет URL в EXTERNAL_UI_URL.
+const EXTERNAL_UI_PRESETS = {
+  "zashboard-cdn": "https://github.com/Zephyruso/zashboard/releases/latest/download/dist-cdn-fonts.zip",
+  "zashboard": "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip",
+  "metacubexd": "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip",
+  "yacd-meta": "https://github.com/MetaCubeX/Yacd-meta/archive/refs/heads/gh-pages.zip"
+};
+
+function applyExternalUiPreset(select) {
+  const url = EXTERNAL_UI_PRESETS[select.value];
+  if (!url) return; // «Свой URL» — поле не трогаем
+  const input = document.querySelector('input[name="EXTERNAL_UI_URL"]');
+  if (!input) return;
+  input.value = url;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
 // ---------- Панель mihomo ----------
 // Панель живёт не на этой странице, а на RESTful-контроллере ядра: тот же
 // хост, порт 9090, путь /ui/. Схему принудительно ставим http — контроллер
@@ -4223,11 +4247,11 @@ function mihomoPanelUrl(secret, preset) {
   panel.hash = "";
   const q = new URLSearchParams({ hostname: location.hostname, port: "9090", http: "1" });
   if (secret) q.set("secret", secret);
-  // Каждая панель читает параметры подключения по-своему: metacubexd — из
-  // фрагмента, zashboard и yacd-meta — из query string.
-  if (preset === "metacubexd") {
-    panel.hash = "/?" + q.toString();
-  } else if (preset === "zashboard") {
+  // Каждая панель читает параметры подключения по-своему, а metacubexd не
+  // читает их вовсе (см. его README: адрес задаётся только переменной
+  // DEFAULT_BACKEND_URL при сборке образа). Ему ссылку не портим — она всё
+  // равно откроется на форме подключения.
+  if (preset === "zashboard") {
     q.set("label", "MihomoProxyRoS");
     panel.search = "?" + q.toString();
   } else if (preset === "yacd") {
