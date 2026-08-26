@@ -200,6 +200,8 @@ The link from *Tools → xray2mihomo* can go straight into `SUB_LINK*`:
 SUB_LINK1=http://127.0.0.1:81/cgi-bin/xray2mihomo-sub?sub=https://provider.example/sub&format=uri
 ```
 
+The converter copies the provider's `subscription-userinfo` header into its own response — the mihomo dashboard shows the traffic counters and the expiry date from it. That is the only header the core reads.
+
 #### Encrypted Happ links in `SUB_LINK*`
 
 `SUB_LINKxx` accepts `happ://crypt…happ://crypt5` directly:

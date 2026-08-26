@@ -200,6 +200,8 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 SUB_LINK1=http://127.0.0.1:81/cgi-bin/xray2mihomo-sub?sub=https://provider.example/sub&format=uri
 ```
 
+Конвертер переносит в свой ответ заголовок `subscription-userinfo` провайдера — по нему панель mihomo показывает трафик и дату истечения подписки. Это единственный заголовок, который читает ядро.
+
 #### Зашифрованные ссылки Happ в `SUB_LINK*`
 
 `SUB_LINKxx` принимает `happ://crypt…happ://crypt5` напрямую:
