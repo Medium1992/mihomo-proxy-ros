@@ -33,7 +33,38 @@ emit_head() {
   printf 'Content-Type: text/plain; charset=utf-8\r\n'
   printf 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n'
   printf 'Pragma: no-cache\r\n'
-  printf 'Expires: 0\r\n\r\n'
+  printf 'Expires: 0\r\n'
+  emit_userinfo
+  printf '\r\n'
+}
+
+# Из всех заголовков подписки mihomo читает ровно один —
+# subscription-userinfo (adapter/provider/provider.go: resp.Header.Get).
+# В нём приходят upload/download/total/expire, и панель показывает по нему
+# дату истечения. Прямая ссылка попадает в ядро сама и заголовок доезжает,
+# а здесь ответ апстрима пересобираем мы, поэтому его надо перенести руками.
+#
+# Значение задаёт провайдер подписки, то есть внешняя сторона. Прежде чем
+# положить его в свой ответ, вычищаем CR/LF (иначе это инъекция заголовков в
+# ответ CGI) и всё, что не входит в формат, плюс режем длину.
+UPSTREAM_USERINFO=""
+
+extract_userinfo() {
+  [ -s "$1" ] || return 0
+  tr -d '\r' < "$1" \
+    | awk 'tolower($0) ~ /^[[:space:]]*subscription-userinfo:/ {
+             sub(/^[^:]*:[[:space:]]*/, "")
+             print
+             exit
+           }' \
+    | tr -d '\n' \
+    | LC_ALL=C tr -cd 'A-Za-z0-9=;,._:+/ -' \
+    | cut -c1-512
+}
+
+emit_userinfo() {
+  [ -n "$UPSTREAM_USERINFO" ] || return 0
+  printf 'subscription-userinfo: %s\r\n' "$UPSTREAM_USERINFO"
 }
 
 b64_one() {
@@ -75,11 +106,16 @@ headers_have_ua() {
 
 fetch_wget() {
   url="$1"; out="$2"; hf="$3"
-  set -- -q -T "$TIMEOUT" -O "$out"
+  # -S просит wget напечатать заголовки ответа в stderr: другого способа
+  # их увидеть у него нет. -q убран намеренно — и busybox, и GNU wget под
+  # ним могут заглушить в том числе вывод -S; болтовня про прогресс уходит
+  # в тот же файл и разбору заголовка не мешает. Если заголовков в файле не
+  # окажется, поведение останется ровно прежним.
+  set -- -S -T "$TIMEOUT" -O "$out"
   while IFS= read -r h; do [ -n "$h" ] && set -- "$@" --header="$h"; done < "$hf"
   headers_have_ua "$hf" || set -- "$@" --header="User-Agent: $DEFAULT_UA"
   set -- "$@" --header="Cache-Control: no-cache"
-  wget "$@" "$url" >/dev/null 2>&1
+  wget "$@" "$url" >/dev/null 2>"${UPSTREAM_HDR:-/dev/null}"
 }
 
 fetch_openssl_https() {
@@ -116,7 +152,7 @@ fetch_openssl_https() {
   # Strip HTTP headers, de-chunk a Transfer-Encoding: chunked body, drop UTF-8 BOM.
   # The old code only stripped headers, so a chunked response left hex chunk-size
   # lines inside the body — tolerated by the old awk scanner but fatal to jq.
-  awk '
+  awk -v hdrfile="${UPSTREAM_HDR:-/dev/null}" '
     function hexdec(s,   i, c, v, r) { s = tolower(s); r = 0; for (i = 1; i <= length(s); i++) { c = substr(s, i, 1); v = index("0123456789abcdef", c) - 1; if (v < 0) break; r = r * 16 + v } return r }
     BEGIN { RS = "\004"; BOM = sprintf("%c%c%c", 239, 187, 191) }
     {
@@ -124,6 +160,7 @@ fetch_openssl_https() {
       hi = index(data, "\r\n\r\n"); sep = 4
       if (hi == 0) { hi = index(data, "\n\n"); sep = 2 }
       if (hi == 0) { headers = ""; body = data } else { headers = substr(data, 1, hi - 1); body = substr(data, hi + sep) }
+      if (headers != "") { print headers > hdrfile; close(hdrfile) }
       if (tolower(headers) ~ /transfer-encoding:[ \t]*chunked/) {
         n = length(body); pos = 1; out = ""
         while (pos <= n) {
@@ -315,11 +352,12 @@ fi
 JQ_PROG="${XRAY2MIHOMO_JQ:-/www/cgi-bin/xray2mihomo.jq}"
 
 hf="$STATE_DIR/headers.$$"
+UPSTREAM_HDR="$STATE_DIR/uphdr.$$"
 body="$STATE_DIR/body.$$"
 uris="$STATE_DIR/uris.$$"
 res="$STATE_DIR/res.$$"
 jqerr="$STATE_DIR/jqerr.$$"
-trap 'rm -f "$hf" "$body" "$uris" "$res" "$jqerr"' EXIT
+trap 'rm -f "$hf" "$body" "$uris" "$res" "$jqerr" "$UPSTREAM_HDR"' EXIT
 build_headers > "$hf"
 
 if [ "$resolve" = openssl ]; then
@@ -327,6 +365,8 @@ if [ "$resolve" = openssl ]; then
 else
   fetch_wget "$sub" "$body" "$hf" || fetch_openssl_https "$sub" "$body" "$hf" || emit_error 502 "subscription fetch failed"
 fi
+
+UPSTREAM_USERINFO="$(extract_userinfo "$UPSTREAM_HDR")"
 
 # Primary path: jq converter (1:1 with the Cloudflare worker, supports yaml).
 # jq writes straight to a file so a large response never round-trips through a
@@ -339,7 +379,9 @@ if command -v jq >/dev/null 2>&1 && [ -r "$JQ_PROG" ]; then
       printf 'Content-Type: text/yaml; charset=utf-8\r\n'
       printf 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n'
       printf 'Pragma: no-cache\r\n'
-      printf 'Expires: 0\r\n\r\n'
+      printf 'Expires: 0\r\n'
+      emit_userinfo
+      printf '\r\n'
     else
       emit_head
     fi
