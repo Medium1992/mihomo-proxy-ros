@@ -168,11 +168,6 @@ add blackhole comment=BlackHole distance=254 dst-address=172.16.0.0/12 gateway="
 add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway="" routing-table=MihomoProxyRoS
 :put "Add default route 0.0.0.0/0 into routing table MihomoProxyRoS & BlackHole route"}
 
-/ip firewall nat
-:if ([:len [find comment="GitHub_Fastly_fix_dstnat"]] = 0) do={add action=netmap chain=dstnat dst-address=185.199.108.0/22 to-addresses=185.199.109.0/24 comment="GitHub_Fastly_fix_dstnat"; :put "Add nat rule GitHub_Fastly_fix_dstnat"}
-:if ([:len [find comment="GitHub_Fastly_fix_output"]] = 0) do={add action=netmap chain=output dst-address=185.199.108.0/22 to-addresses=185.199.109.0/24 comment="GitHub_Fastly_fix_output"; :put "Add nat rule GitHub_Fastly_fix_output"}
-:delay 1
-
 :global whatsappRules
 :set whatsappRules [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/custom_list/add_env_WA.rsc mode=https output=user as-value]
 :if (($whatsappRules->"status")="finished") do={
