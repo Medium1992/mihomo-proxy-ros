@@ -127,7 +127,7 @@ def gatherOutbounds:
 # ---------- streamParams (for URIs) ----------
 def streamParams($stream):
   ($stream // {}) as $s
-  | ($s.network // "tcp") as $net
+  | ($s.method // $s.network // "tcp") as $net
   | ($s.security // "") as $sec
   | ($s.tlsSettings // {}) as $tls
   | ($s.realitySettings // {}) as $reality
@@ -198,7 +198,7 @@ def buildVmess:
       ($ob.streamSettings // {}) as $stream | ($stream.wsSettings // {}) as $ws | ($stream.tlsSettings // {}) as $tls
       | { v: "2", ps: ($ob | tagOf($host)), add: ($host | tostring), port: ($port | tostring),
           id: $id, aid: (($e.u.alterId // 0) | tostring), scy: ($e.u.security // "auto"),
-          net: ($stream.network // "tcp"), type: "none",
+          net: ($stream.method // $stream.network // "tcp"), type: "none",
           host: (($ws.headers.Host // $ws.headers.host) // $tls.serverName // ""),
           path: ($ws.path // ""), tls: (if $stream.security == "tls" then "tls" else "" end),
           sni: ($tls.serverName // ""),
@@ -220,22 +220,104 @@ def buildShadowsocks:
       | "ss://" + $user + "@" + hostPort($host; $port) + (if $qs != "" then "?" + $qs else "" end) + "#" + ($ob | tagOf($host) | encComp)
     else null end;
 
+# ---------- hysteria2: finalmask ----------
+# До Xray 26.2.x всё лежало плоско в streamSettings.hysteriaSettings: up, down,
+# congestion, udphop, окна QUIC. Начиная с #6137 / #6198 / #6327 обфускация
+# salamander, прыжки по портам и параметры QUIC уехали в
+# streamSettings.finalmask, а в hysteriaSettings остались только version, auth,
+# udpIdleTimeout и masquerade. Читаем обе формы: подписки со старых сборок
+# никуда не делись.
+def objOf($v): if (($v | type) == "object") then $v else {} end;
+
+def udpMask($ss; $name):
+  ((($ss.finalmask | objOf(.)).udp // [])
+   | map(select(((.type // "") | tostring | lc) == $name)) | first) as $m
+  | objOf($m) | objOf(.settings);
+
+# Int32Range приходит строкой "100-200" либо числом.
+def rngLow($v):
+  if tv($v) then (($v | tostring | split("-") | .[0]) | tonumber? // null) else null end;
+def rngHigh($v):
+  if tv($v) then
+    (($v | tostring | split("-")) | (if length > 1 then .[1] else .[0] end) | tonumber? // null)
+  else null end;
+
+# Xray Bandwidth: голое число — биты/с, суффиксы k/m/g идут шагом 1024.
+# mihomo StringToBps понимает "<N> Mbps" и "<N> bps", а голое число считает
+# мегабитами — пропустить значение как есть нельзя, ошибётся в миллион раз.
+def bwBits($v):
+  if (tv($v) | not) then null
+  else
+    (($v | tostring | lc | gsub("[ \t]"; ""))
+     | capture("^(?<n>[0-9]+(\\.[0-9]+)?)(?<u>[a-z]*)$") // null) as $c
+    | if $c == null then null
+      else
+        ({"": 1, "b": 1, "bps": 1,
+          "k": 1024, "kb": 1024, "kbps": 1024,
+          "m": 1048576, "mb": 1048576, "mbps": 1048576,
+          "g": 1073741824, "gb": 1073741824, "gbps": 1073741824}[$c.u] // null) as $mul
+        | if $mul == null then null else (($c.n | tonumber) * $mul | floor) end
+      end
+  end;
+def bwStr($v):
+  bwBits($v) as $b
+  | if ($b == null or $b <= 0) then null
+    elif (($b % 1000000) == 0) then (($b / 1000000) | floor | tostring) + " Mbps"
+    else ($b | tostring) + " bps"
+    end;
+
+# Всё, что нужно обоим сборщикам hysteria2, собранное из обеих форм конфига.
+# Salamander с packetSize — это Gecko (Hysteria v2.9.2): Xray строит для него
+# GeckoConfig, а mihomo ждёт obfs: gecko с min/max размера пакета.
+def hyExtra($ss):
+  objOf($ss.hysteriaSettings // $ss.hy2Settings) as $hy
+  | objOf($hy.udphop) as $oldhop
+  | udpMask($ss; "salamander") as $sal
+  | udpMask($ss; "udphop") as $hop
+  | objOf(($ss.finalmask | objOf(.)).quicParams) as $q
+  | ($sal.password // null) as $obfsPw
+  | ((rngHigh($sal.packetSize) // 0) > 0) as $gecko
+  | {
+      obfs: (if tv($obfsPw) then (if $gecko then "gecko" else "salamander" end) else null end),
+      obfsPassword: $obfsPw,
+      obfsMin: (if $gecko then rngLow($sal.packetSize) else null end),
+      obfsMax: (if $gecko then rngHigh($sal.packetSize) else null end),
+      ports: (($hop.remotePorts // $oldhop.port) | if . == null then null else tostring end),
+      hopInterval: (($hop.interval // $oldhop.interval) | if . == null then null else tostring end),
+      up: bwStr($q.brutalUp // $hy.up),
+      down: bwStr($q.brutalDown // $hy.down),
+      bbr: ($q.bbrProfile // null),
+      isw: ($q.initStreamReceiveWindow // $hy.initStreamReceiveWindow),
+      msw: ($q.maxStreamReceiveWindow // $hy.maxStreamReceiveWindow),
+      icw: ($q.initConnectionReceiveWindow // $hy.initConnectionReceiveWindow),
+      mcw: ($q.maxConnectionReceiveWindow // $hy.maxConnectionReceiveWindow)
+    };
+
 def buildHy2:
   . as $ob
-  | ($ob.streamSettings.hysteriaSettings // $ob.streamSettings.hy2Settings // {}) as $hy
+  | objOf($ob.streamSettings) as $ss
+  | objOf($ss.hysteriaSettings // $ss.hy2Settings) as $hy
   | ($ob.settings.servers[0] // $ob.settings.server // $ob.settings // {}) as $s
   | ($s.address // $s.server // $ob.address // $ob.server) as $host
   | ($s.port // $ob.port) as $port
   | ($hy.auth // $hy.password // $s.password // $s.auth // $ob.settings.password // $ob.settings.auth) as $pw
   | if (tv($host) and tv($pw)) then
-      ($ob.streamSettings.tlsSettings // {}) as $tls
+      ($ss.tlsSettings // {}) as $tls
+      | hyExtra($ss) as $x
       | ( []
           | pset("sni"; ($tls.serverName // $s.serverName))
           | pset("alpn"; (if ($tls.alpn | type) == "array" then ($tls.alpn | join(",")) else $tls.alpn end))
           | pset("insecure"; (if tv($tls.allowInsecure) then "1" else "" end))
-          | pset("obfs"; ($hy.obfs // $ob.settings.obfs // $s.obfs)) ) as $p
+          | pset("obfs"; $x.obfs)
+          | pset("obfs-password"; $x.obfsPassword)
+          | pset("up"; $x.up)
+          | pset("down"; $x.down) ) as $p
       | (if (($hy.version // $ob.settings.version // $ob.version // "2") | tostring) == "1" then "hysteria" else "hysteria2" end) as $scheme
-      | $scheme + "://" + ($pw | encComp) + "@" + hostPort($host; $port) + "?" + ($p | pstr) + "#" + ($ob | tagOf($host) | encComp)
+      # Прыжки по портам mihomo вытаскивает из host-части ссылки
+      # (splitHysteria2Ports), отдельного query-параметра для них нет.
+      | (($port // 443) | tostring) as $base
+      | (if tv($x.ports) then $base + "," + $x.ports else $base end) as $portPart
+      | $scheme + "://" + ($pw | encComp) + "@" + hostPort($host; $portPart) + "?" + ($p | pstr) + "#" + ($ob | tagOf($host) | encComp)
     else null end;
 
 def toUri:
@@ -412,7 +494,7 @@ def applyXhttpTransport($proxy; $xhttp):
 
 def addTransportDirect($proxy; $stream; $protocol):
   ($stream // {}) as $s
-  | (normNet($s.network // "tcp")) as $network
+  | (normNet($s.method // $s.network // "tcp")) as $network
   | ($s.tcpSettings // $s.rawSettings // {}) as $tcp
   | ($s.wsSettings // {}) as $ws
   | ($s.httpupgradeSettings // {}) as $httpup
@@ -477,19 +559,33 @@ def ssProxy($idx):
 
 def hyProxy($idx):
   . as $ob
-  | ($ob.streamSettings.hysteriaSettings // $ob.streamSettings.hy2Settings // {}) as $hy
+  | objOf($ob.streamSettings) as $ss
+  | objOf($ss.hysteriaSettings // $ss.hy2Settings) as $hy
   | ($ob.settings.servers[0] // $ob.settings.server // $ob.settings // {}) as $s
   | ($s.address // $s.server // $ob.address // $ob.server) as $host
   | ($s.port // $ob.port) as $port
   | ($hy.auth // $hy.password // $s.password // $s.auth // $ob.settings.password // $ob.settings.auth) as $pw
   | if (tv($host) and tv($pw)) then
-      ($ob.streamSettings.tlsSettings // {}) as $tls
+      ($ss.tlsSettings // {}) as $tls
+      | hyExtra($ss) as $x
       | (if (($hy.version // $ob.settings.version // $ob.version // "2") | tostring) == "1" then "hysteria" else "hysteria2" end) as $type
       | ({name: ($ob | tagOf($type + "-" + (($idx + 1) | tostring))), type: $type, server: $host, port: (($port // 443) | tonumber? // ($port // 443)), password: $pw, udp: true}
          | setIf("sni"; ($tls.serverName // $s.serverName))
          | setIf("alpn"; asList($tls.alpn))
          | (if tv($tls.allowInsecure) then . + {"skip-cert-verify": true} else . end)
-         | setIf("obfs"; ($hy.obfs // $ob.settings.obfs // $s.obfs)))
+         | setIf("obfs"; $x.obfs)
+         | setIf("obfs-password"; $x.obfsPassword)
+         | setIf("obfs-min-packet-size"; $x.obfsMin)
+         | setIf("obfs-max-packet-size"; $x.obfsMax)
+         | setIf("ports"; $x.ports)
+         | setIf("hop-interval"; $x.hopInterval)
+         | setIf("up"; $x.up)
+         | setIf("down"; $x.down)
+         | setIf("bbr-profile"; $x.bbr)
+         | setIf("initial-stream-receive-window"; $x.isw)
+         | setIf("max-stream-receive-window"; $x.msw)
+         | setIf("initial-connection-receive-window"; $x.icw)
+         | setIf("max-connection-receive-window"; $x.mcw))
     else null end;
 
 def toProxy($idx):
