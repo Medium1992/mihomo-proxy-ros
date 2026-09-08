@@ -266,6 +266,82 @@ def bwStr($v):
     else ($b | tostring) + " bps"
     end;
 
+# Процентное декодирование для полей realm-ссылки: токен и id Xray достаёт
+# через url.PathUnescape. Раскрываем только ASCII-последовательности — implode
+# в jq работает с кодовыми точками, а не байтами, и многобайтовый UTF-8 из %XX
+# собрать нельзя. Токены и идентификаторы таких символов не содержат.
+def pctDecode:
+  tostring
+  | if test("%[0-9a-fA-F]{2}") then
+      [ scan("%[0-9a-fA-F]{2}|[^%]+|%") ]
+      | map(
+          if test("^%[0-9a-fA-F]{2}$") then
+            ((.[1:3] | explode | map(if . >= 97 then . - 87 elif . >= 65 then . - 55 else . - 48 end)) as $d
+             | (($d[0] * 16) + $d[1]) as $c
+             | if ($c >= 32 and $c < 127) then ([$c] | implode) else . end)
+          else . end)
+      | join("")
+    else . end;
+
+# Xray pinnedPeerCertSha256 и mihomo fingerprint — одно и то же: hex от
+# sha256(cert.Raw), двоеточия допускаются с обеих сторон. Разница лишь в том,
+# что Xray принимает список через запятую, а mihomo одно значение — берём
+# первое. Устаревший pinnedPeerCertificateChainSha256 сюда не годится: там
+# base64 и хеш всей цепочки, а не сертификата.
+def pinHex($v):
+  ((($v // "") | tostring | split(",") | (.[0] // "")) | gsub("[: \t]"; "") | lc) as $h
+  | if ($h | test("^[0-9a-f]{64}$")) then $h else null end;
+
+# realm://TOKEN@host:port/ID (realm+http:// — то же поверх http)
+def realmParse($u):
+  ((($u // "") | tostring)
+   | capture("^realm(?<plain>\\+http)?://(?<token>[^@/?#]*)@(?<hostport>[^/?#]+)(?<path>/[^?#]*)?") // null) as $c
+  | if $c == null then null
+    else
+      ((($c.plain // "") != "") as $http
+       | (if ($c.hostport | test("^\\[")) then ($c.hostport | capture("^\\[(?<h>[^\\]]+)\\](:(?<p>[0-9]+))?"))
+          else ($c.hostport | capture("^(?<h>[^:]+)(:(?<p>[0-9]+))?")) end) as $x
+       | ($c.token | pctDecode) as $token
+       | ((($c.path // "") | sub("^/"; "")) | pctDecode) as $id
+       | if (($x.h // "") == "" or $token == "" or $id == "") then null
+         else
+           { scheme: (if $http then "http" else "https" end),
+             host: $x.h,
+             port: ($x.p // (if $http then "80" else "443" end)),
+             token: $token,
+             id: $id }
+         end)
+    end;
+
+# Realm — рандеву-сервис из Hysteria 2.9.1: клиент берёт у него реальную точку
+# и пробивает UDP через STUN. В mihomo это realm-opts со своим TLS-блоком для
+# обращения к самому сервису.
+def rlist($v):
+  if ($v == null or $v == "") then []
+  elif (($v | type) == "array") then ($v | map(select(. != null and . != "")) | map(tostring))
+  else [($v | tostring)] end;
+def rset($k; $v):
+  if ($v == null or $v == "" or (($v | type) == "array" and ($v | length) == 0)) then .
+  else . + {($k): $v} end;
+
+def realmOpts($ss):
+  udpMask($ss; "realm") as $rm
+  | realmParse($rm.url) as $r
+  | if $r == null then null
+    else
+      (objOf($rm.tlsConfig) as $rtls
+       | ({ enable: true,
+            "server-url": ($r.scheme + "://" + $r.host + ":" + ($r.port | tostring)),
+            token: $r.token,
+            "realm-id": $r.id }
+          | rset("stun-servers"; rlist($rm.stunServers))
+          | rset("sni"; $rtls.serverName)
+          | rset("alpn"; rlist($rtls.alpn))
+          | rset("fingerprint"; pinHex($rtls.pinnedPeerCertSha256))
+          | rset("name-cert-verify"; $rtls.verifyPeerCertByName)
+          | (if tv($rtls.allowInsecure) then . + {"skip-cert-verify": true} else . end)))
+    end;
+
 # Всё, что нужно обоим сборщикам hysteria2, собранное из обеих форм конфига.
 # Salamander с packetSize — это Gecko (Hysteria v2.9.2): Xray строит для него
 # GeckoConfig, а mihomo ждёт obfs: gecko с min/max размера пакета.
@@ -290,7 +366,8 @@ def hyExtra($ss):
       isw: ($q.initStreamReceiveWindow // $hy.initStreamReceiveWindow),
       msw: ($q.maxStreamReceiveWindow // $hy.maxStreamReceiveWindow),
       icw: ($q.initConnectionReceiveWindow // $hy.initConnectionReceiveWindow),
-      mcw: ($q.maxConnectionReceiveWindow // $hy.maxConnectionReceiveWindow)
+      mcw: ($q.maxConnectionReceiveWindow // $hy.maxConnectionReceiveWindow),
+      realm: realmOpts($ss)
     };
 
 def buildHy2:
@@ -311,13 +388,34 @@ def buildHy2:
           | pset("obfs"; $x.obfs)
           | pset("obfs-password"; $x.obfsPassword)
           | pset("up"; $x.up)
-          | pset("down"; $x.down) ) as $p
+          | pset("down"; $x.down)
+          | pset("pinSHA256"; pinHex($tls.pinnedPeerCertSha256))
+          | (if ($x.realm != null and ($x.realm["server-url"] | startswith("https://")))
+             then (reduce (($x.realm["stun-servers"] // [])[]) as $sv (.; . + [{k: "stun", v: $sv}])
+                   | pset("auth"; $pw))
+             else . end) ) as $p
       | (if (($hy.version // $ob.settings.version // $ob.version // "2") | tostring) == "1" then "hysteria" else "hysteria2" end) as $scheme
       # Прыжки по портам mihomo вытаскивает из host-части ссылки
       # (splitHysteria2Ports), отдельного query-параметра для них нет.
       | (($port // 443) | tostring) as $base
       | (if tv($x.ports) then $base + "," + $x.ports else $base end) as $portPart
-      | $scheme + "://" + ($pw | encComp) + "@" + hostPort($host; $portPart) + "?" + ($p | pstr) + "#" + ($ob | tagOf($host) | encComp)
+      # В realm-режиме mihomo читает из ссылки адрес самого сервиса, токен из
+      # userinfo и id из пути, а пароль hysteria2 — из query-параметра auth.
+      # Подменять host правильно: реальную точку клиент всё равно получает от
+      # сервиса, и прыжки по портам там смысла не имеют.
+      # buildRealmOpts в mihomo склеивает server-url как "https://" + host,
+      # то есть схему из ссылки не читает. Для realm+http ссылка получилась бы
+      # с неверной схемой и сервис бы не ответил, поэтому такой профиль отдаём
+      # обычной hysteria2-ссылкой без realm.
+      | (if ($x.realm != null and ($x.realm["server-url"] | startswith("https://")))
+         then ($x.realm["server-url"] | sub("^https://"; "")) else null end) as $rhost
+      | if $rhost != null then
+          $scheme + "+realm://" + ($x.realm.token | encComp) + "@" + $rhost
+          + "/" + ($x.realm["realm-id"] | encComp)
+          + "?" + ($p | pstr) + "#" + ($ob | tagOf($host) | encComp)
+        else
+          $scheme + "://" + ($pw | encComp) + "@" + hostPort($host; $portPart) + "?" + ($p | pstr) + "#" + ($ob | tagOf($host) | encComp)
+        end
     else null end;
 
 def toUri:
@@ -585,7 +683,9 @@ def hyProxy($idx):
          | setIf("initial-stream-receive-window"; $x.isw)
          | setIf("max-stream-receive-window"; $x.msw)
          | setIf("initial-connection-receive-window"; $x.icw)
-         | setIf("max-connection-receive-window"; $x.mcw))
+         | setIf("max-connection-receive-window"; $x.mcw)
+         | setIf("fingerprint"; pinHex($tls.pinnedPeerCertSha256))
+         | setIf("realm-opts"; $x.realm))
     else null end;
 
 def toProxy($idx):
