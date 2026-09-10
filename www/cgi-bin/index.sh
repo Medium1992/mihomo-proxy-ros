@@ -796,6 +796,17 @@ providers_page() {
     veth      "Интерфейсы" \
     mounted   "Mounted"
   section_start_tab health "Health-check" "Общие настройки проверки доступности для file/http proxy-providers или proxy-groups."
+  cat <<'EOF'
+<div class="notice">
+  <b>REALITY и X25519MLKEM768</b>
+  <span>Подписки почти никогда не присылают <code>support-x25519mlkem768</code>, а серверам он бывает нужен. Контейнер дописывает флаг через <code>override-expr</code> провайдера, и правило смотрит на наличие <code>reality-opts</code> — обычные VLESS без REALITY, VMess, SS, Hysteria и прочие не задеваются. Действует на <code>LINK*</code>, <code>SUB_LINK*</code> и смонтированные YAML; у каждой подписки значение можно переопределить своим полем.</span>
+  <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#override" target="_blank" rel="noopener">Документация override</a>
+</div>
+EOF
+  echo '<div class="grid">'
+  select_field REALITY_MLKEM "REALITY MLKEM" "<code>auto</code> — проставить <code>true</code> только там, где подписка поле не прислала. <code>true</code> — навязать даже поверх присланного <code>false</code>. <code>false</code> — навязать выключение. <code>off</code> — не трогать." auto "auto true false off"
+  echo '</div>'
+
   echo '<div class="grid">'
   toggle_field HEALTHCHECK_PROVIDER "Healthcheck в providers" "true: health-check внутри proxy-providers, false: параметры в proxy-groups." true
   field HEALTHCHECK_INTERVAL "Интервал" "Секунды между проверками, параметр <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-providers/#interval\" target=\"_blank\" rel=\"noopener\">interval</a>." "120" number "120"
@@ -851,6 +862,8 @@ EOF
     <label><span>${name}_ADDITIONAL_PREFIX</span><input name="${name}_ADDITIONAL_PREFIX" value="$(env_attr "${name}_ADDITIONAL_PREFIX" "")" placeholder="${name} | "></label>
     <label><span>${name}_ADDITIONAL_SUFFIX</span><input name="${name}_ADDITIONAL_SUFFIX" value="$(env_attr "${name}_ADDITIONAL_SUFFIX" "")" placeholder=" | ${name}"></label>
     <label><span>${name}_CONVERT</span><select name="${name}_CONVERT"><option value=""$(selected "${name}_CONVERT" "" "")>auto</option><option value="xray2mihomo"$(selected "${name}_CONVERT" "xray2mihomo" "")>xray2mihomo</option><option value="none"$(selected "${name}_CONVERT" "none" "")>none</option></select></label>
+    <label><span>${name}_MLKEM</span><select name="${name}_MLKEM"><option value=""$(selected "${name}_MLKEM" "" "")>как REALITY_MLKEM</option><option value="auto"$(selected "${name}_MLKEM" "auto" "")>auto</option><option value="true"$(selected "${name}_MLKEM" "true" "")>true</option><option value="false"$(selected "${name}_MLKEM" "false" "")>false</option><option value="off"$(selected "${name}_MLKEM" "off" "")>off</option></select></label>
+    <label><span>${name}_OVERRIDE_EXPR</span><input name="${name}_OVERRIDE_EXPR" value="$(env_attr "${name}_OVERRIDE_EXPR" "")" placeholder=".udp = true # .name |= upcase"></label>
   </div>
   <div class="headers-editor">
     <span>${name}_HEADERS $(secret_btn "${name}_HEADERS" "inline")</span>

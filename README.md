@@ -285,9 +285,14 @@ Special characters in the name (space, comma, colon, quotes, slashes) are replac
 | `SUB_LINKxx_EXCLUDE_TYPE` | — | Provider-level [exclude-type](https://wiki.metacubex.one/en/config/proxy-providers/#exclude-type) — list of [Adapter Type](https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45) (case-insensitive) via `\|`. Example: `vmess\|direct`. |
 | `SUB_LINKxx_ADDITIONAL_PREFIX` | — | Goes into `override.`[`additional-prefix`](https://wiki.metacubex.one/en/config/proxy-providers/#overrideadditional-prefix) — fixed prefix for every node name. |
 | `SUB_LINKxx_CONVERT` | `auto` | What to do with the subscription body: `auto` — happ links go through the local converter (Happ serves Xray JSON), plain links reach mihomo untouched; `xray2mihomo` — always convert; `none` — never. Requires `WEB_API_PORT` to be enabled. |
+| `REALITY_MLKEM` | `auto` | Policy for the [`support-x25519mlkem768`](https://wiki.metacubex.one/en/config/proxies/vless/) flag on REALITY nodes. `auto` sets `true` only where the subscription omitted the field; `true` forces it even over a `false` from the subscription; `false` forces it off; `off` leaves it alone. Applies to `LINK*`, `SUB_LINK*` and mounted YAML. |
+| `SUB_LINKxx_MLKEM` | — | The same for a single subscription. Empty falls back to `REALITY_MLKEM`. Works as `LINKxx_MLKEM` too. |
+| `SUB_LINKxx_OVERRIDE_EXPR` | — | Extra provider [`override-expr`](https://wiki.metacubex.one/en/config/proxy-providers/#override) statements, several separated by `#`, e.g. `.udp = true # .name \|= upcase`. Works as `LINKxx_OVERRIDE_EXPR` too. |
 | `SUB_LINKxx_ADDITIONAL_SUFFIX` | — | Goes into `override.`[`additional-suffix`](https://wiki.metacubex.one/en/config/proxy-providers/#overrideadditional-suffix) — fixed suffix for every node name. |
 | `SOCKS0`, `SOCKS1`, … | — | SOCKS5 proxy. Format: `server=ip#port=1080#username=#password=#tls=#fingerprint=#skip-cert-verify=#udp=#ip-version=`. [Docs](https://wiki.metacubex.one/en/config/proxies/socks/). |
 | `XXX_DIALER_PROXY` | — | [Override dialer-proxy](https://wiki.metacubex.one/en/config/proxy-providers/#override) — route this provider's connections through another group. Example: `LINK1_DIALER_PROXY=YouTube`. |
+
+The `support-x25519mlkem768` flag used to be forced by a core patch applied at image build time, where a missing field meant `true` in the fork. The provider's own `override-expr` now does the same and the mihomo patch is gone. The rule keys off the presence of a `reality-opts` block, so plain VLESS without REALITY, VMess, Shadowsocks, Hysteria and the rest of a mixed subscription are untouched — and it makes no difference whether the subscription arrives as YAML or as `vless://` links, since the core turns links into the same internal mappings before applying `override`.
 
 ### Proxy groups
 

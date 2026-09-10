@@ -1941,6 +1941,8 @@ function addRow(containerId, prefix, startAtOne) {
         `<label><span>${displayKey}_ADDITIONAL_PREFIX</span><input name="${key}_ADDITIONAL_PREFIX" placeholder="${displayKey} | "></label>` +
         `<label><span>${displayKey}_ADDITIONAL_SUFFIX</span><input name="${key}_ADDITIONAL_SUFFIX" placeholder=" | ${displayKey}"></label>` +
         `<label><span>${displayKey}_CONVERT</span><select name="${key}_CONVERT"><option value="">auto</option><option value="xray2mihomo">xray2mihomo</option><option value="none">none</option></select></label>` +
+        `<label><span>${displayKey}_MLKEM</span><select name="${key}_MLKEM"><option value="">как REALITY_MLKEM</option><option value="auto">auto</option><option value="true">true</option><option value="false">false</option><option value="off">off</option></select></label>` +
+        `<label><span>${displayKey}_OVERRIDE_EXPR</span><input name="${key}_OVERRIDE_EXPR" placeholder=".udp = true # .name |= upcase"></label>` +
       `</div>` +
       `<div class="headers-editor">` +
         `<span>${displayKey}_HEADERS</span>` +
@@ -2552,6 +2554,10 @@ function restoreMissingIndexedRows() {
           `<label class="field-validated" data-validate="exclude_type"><span>${displayName}_EXCLUDE_TYPE</span><input name="${envName}_EXCLUDE_TYPE" value="${escapeAttr(Store.get(envKey(envName + "_EXCLUDE_TYPE")) || "")}" placeholder="vmess|direct"></label>` +
           `<label><span>${displayName}_ADDITIONAL_PREFIX</span><input name="${envName}_ADDITIONAL_PREFIX" value="${escapeAttr(Store.get(envKey(envName + "_ADDITIONAL_PREFIX")) || "")}" placeholder="${displayName} | "></label>` +
           `<label><span>${displayName}_ADDITIONAL_SUFFIX</span><input name="${envName}_ADDITIONAL_SUFFIX" value="${escapeAttr(Store.get(envKey(envName + "_ADDITIONAL_SUFFIX")) || "")}" placeholder=" | ${displayName}"></label>` +
+          `<label><span>${displayName}_MLKEM</span><select name="${envName}_MLKEM">` +
+            ["", "auto", "true", "false", "off"].map((v) => `<option value="${v}"${(Store.get(envKey(envName + "_MLKEM")) || "") === v ? " selected" : ""}>${v || "как REALITY_MLKEM"}</option>`).join("") +
+          `</select></label>` +
+          `<label><span>${displayName}_OVERRIDE_EXPR</span><input name="${envName}_OVERRIDE_EXPR" value="${escapeAttr(Store.get(envKey(envName + "_OVERRIDE_EXPR")) || "")}" placeholder=".udp = true # .name |= upcase"></label>` +
         `</div>` +
         `<div class="headers-editor">` +
           `<span>${displayName}_HEADERS</span>` +
