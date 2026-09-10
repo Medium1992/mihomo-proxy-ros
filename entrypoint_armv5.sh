@@ -87,6 +87,18 @@ HEALTHCHECK_URL_ZAPRET="${HEALTHCHECK_URL_ZAPRET:-https://www.facebook.com}"
 HEALTHCHECK_URL_STATUS_ZAPRET="${HEALTHCHECK_URL_STATUS_ZAPRET:-200}"
 HEALTHCHECK_PROVIDER="${HEALTHCHECK_PROVIDER:-true}"
 SUB_LINK_INTERVAL="${SUB_LINK_INTERVAL:-3600}"
+# --- REALITY: X25519MLKEM768 ---
+# Раньше это делал патч ядра в Dockerfile-release: тип поля менялся на *bool, а
+# отсутствие значения считалось true. Теперь то же самое делается штатным
+# механизмом mihomo — override-expr у прокси-провайдера, поэтому форк ядра ради
+# одного флага больше не нужен. Применяется к провайдерам, которые могут нести
+# REALITY: LINK*, SUB_LINK* и смонтированные YAML.
+#   auto  — проставить true только там, где подписка поле не прислала
+#           (ровно то, что делал патч ядра)
+#   true  — навязать true даже поверх присланного false
+#   false — навязать false
+#   off   — не трогать вовсе
+REALITY_MLKEM="${REALITY_MLKEM:-auto}"
 GROUP_TYPE="${GROUP_TYPE:-select}"
 GROUP_USE="${GROUP_USE:-}"
 GROUP_PROXIES="${GROUP_PROXIES:-}"
@@ -147,6 +159,7 @@ export HEALTHCHECK_URL_ZAPRET
 export HEALTHCHECK_URL_STATUS_ZAPRET
 export HEALTHCHECK_PROVIDER
 export SUB_LINK_INTERVAL
+export REALITY_MLKEM
 export GROUP_TYPE
 export GROUP_USE
 export GROUP_PROXIES
@@ -2721,7 +2734,7 @@ generate_mounted_providers() {
     type: file
     path: $yaml_file
 EOF
-emit_provider_override "$provider_name" >> "$CONFIG_YAML"
+emit_provider_override "$provider_name" reality >> "$CONFIG_YAML"
       if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
         cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
@@ -2975,19 +2988,68 @@ $prio|$rule"
   fi
 }
 
+# Выражение override-expr под выбранный режим MLKEM. Условие смотрит на
+# reality-opts, а не на тип прокси: этот блок есть у vless, vmess и trojan,
+# у остальных его нет, и select их просто пропустит.
+mlkem_expr() {
+  case "$1" in
+    auto)
+      printf '%s' '(select(.["reality-opts"] != null and .["reality-opts"]["support-x25519mlkem768"] == null) | .["reality-opts"]["support-x25519mlkem768"]) = true'
+      ;;
+    true)
+      printf '%s' '(select(.["reality-opts"] != null) | .["reality-opts"]["support-x25519mlkem768"]) = true'
+      ;;
+    false)
+      printf '%s' '(select(.["reality-opts"] != null) | .["reality-opts"]["support-x25519mlkem768"]) = false'
+      ;;
+  esac
+}
+
+# $2 = reality, если провайдер может нести REALITY-узлы: только тогда к нему
+# применяется политика MLKEM. У локальных провайдеров (awg, openvpn, socks,
+# zapret, byedpi) REALITY быть не может, и засорять их конфиг незачем.
 emit_provider_override() {
   local name="$1"
-  local dialer add_prefix add_suffix
+  local reality="${2:-}"
+  local dialer add_prefix add_suffix user_exprs expr_list mlkem mlkem_line
 
   dialer=$(printenv "${name}_DIALER_PROXY" 2>/dev/null || true)
   add_prefix=$(printenv "${name}_ADDITIONAL_PREFIX" 2>/dev/null || true)
   add_suffix=$(printenv "${name}_ADDITIONAL_SUFFIX" 2>/dev/null || true)
 
-  if [ -n "$dialer" ] || [ -n "$add_prefix" ] || [ -n "$add_suffix" ]; then
+  # Свои выражения идут первыми, MLKEM дописывается последним: каждое
+  # следующее выражение видит результат предыдущих.
+  expr_list=""
+  user_exprs=$(printenv "${name}_OVERRIDE_EXPR" 2>/dev/null || true)
+  if [ -n "$user_exprs" ]; then
+    expr_list=$(printf '%s\n' "$user_exprs" | tr '#' '\n' \
+      | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' || true)
+  fi
+
+  if [ -n "$reality" ]; then
+    mlkem=$(printenv "${name}_MLKEM" 2>/dev/null || true)
+    [ -n "$mlkem" ] || mlkem="${REALITY_MLKEM:-auto}"
+    mlkem_line=$(mlkem_expr "$(printf '%s' "$mlkem" | tr '[:upper:]' '[:lower:]')")
+    if [ -n "$mlkem_line" ]; then
+      expr_list="${expr_list:+$expr_list
+}$mlkem_line"
+    fi
+  fi
+
+  if [ -n "$dialer" ] || [ -n "$add_prefix" ] || [ -n "$add_suffix" ] || [ -n "$expr_list" ]; then
     echo "    override:"
     [ -n "$dialer" ]     && echo "      dialer-proxy: $dialer"
     [ -n "$add_prefix" ] && printf '      additional-prefix: "%s"\n' "$(echo "$add_prefix" | sed 's/"/\\"/g')"
     [ -n "$add_suffix" ] && printf '      additional-suffix: "%s"\n' "$(echo "$add_suffix" | sed 's/"/\\"/g')"
+    if [ -n "$expr_list" ]; then
+      echo "      override-expr:"
+      # В выражениях есть двойные кавычки, поэтому в YAML они идут в одинарных,
+      # а одинарная кавычка внутри удваивается.
+      printf '%s\n' "$expr_list" | while IFS= read -r _ove; do
+        [ -n "$_ove" ] || continue
+        printf "        - '%s'\n" "$(printf '%s' "$_ove" | sed "s/'/''/g")"
+      done
+    fi
   fi
 }
 
@@ -3274,7 +3336,7 @@ EOF
     type: file
     path: $RUNTIME_DIR/${provider_name}.yaml
 EOF
-emit_provider_override "$provider_name" >> "$CONFIG_YAML"
+emit_provider_override "$provider_name" reality >> "$CONFIG_YAML"
     if [ "${HEALTHCHECK_PROVIDER}" = "true" ]; then
       cat >> "$CONFIG_YAML" <<EOF
 $(health_check_block)
@@ -3365,7 +3427,7 @@ EOF
     interval: $interval
     proxy: $proxy
 EOF
-emit_provider_override "$name" >> "$CONFIG_YAML"
+emit_provider_override "$name" reality >> "$CONFIG_YAML"
     if [ -n "$headers_raw" ]; then
       cat >> "$CONFIG_YAML" <<EOF
     header:

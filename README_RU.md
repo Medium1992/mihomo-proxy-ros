@@ -285,9 +285,14 @@ ETH1_GATEWAY2=192.168.5.11#сосед-tor
 | `SUB_LINKxx_EXCLUDE_TYPE` | — | Provider-level [exclude-type](https://wiki.metacubex.one/ru/config/proxy-providers/#exclude-type) — список [Adapter Type](https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45) (регистр не важен) через `\|`. Пример: `vmess\|direct`. |
 | `SUB_LINKxx_ADDITIONAL_PREFIX` | — | Идёт в `override.`[`additional-prefix`](https://wiki.metacubex.one/ru/config/proxy-providers/#overrideadditional-prefix) — фиксированный префикс к каждому имени узла. |
 | `SUB_LINKxx_CONVERT` | `auto` | Что делать с телом подписки: `auto` — happ-ссылки идут через локальный конвертер (Happ отдаёт Xray JSON), обычные попадают в mihomo как есть; `xray2mihomo` — конвертировать всегда; `none` — никогда. Требует включённого `WEB_API_PORT`. |
+| `REALITY_MLKEM` | `auto` | Политика флага [`support-x25519mlkem768`](https://wiki.metacubex.one/ru/config/proxies/vless/) для REALITY-узлов. `auto` — проставить `true` только там, где подписка поле не прислала; `true` — навязать даже поверх присланного `false`; `false` — навязать выключение; `off` — не трогать. Применяется к `LINK*`, `SUB_LINK*` и смонтированным YAML. |
+| `SUB_LINKxx_MLKEM` | — | То же самое для одной подписки. Пусто — берётся `REALITY_MLKEM`. Работает и как `LINKxx_MLKEM`. |
+| `SUB_LINKxx_OVERRIDE_EXPR` | — | Свои выражения [`override-expr`](https://wiki.metacubex.one/ru/config/proxy-providers/#override) провайдера, несколько — через `#`. Например `.udp = true # .name \|= upcase`. Работает и как `LINKxx_OVERRIDE_EXPR`. |
 | `SUB_LINKxx_ADDITIONAL_SUFFIX` | — | Идёт в `override.`[`additional-suffix`](https://wiki.metacubex.one/ru/config/proxy-providers/#overrideadditional-suffix) — фиксированный суффикс к каждому имени узла. |
 | `SOCKS0`, `SOCKS1`, … | — | SOCKS5 прокси. Формат: `server=ip#port=1080#username=#password=#tls=#fingerprint=#skip-cert-verify=#udp=#ip-version=`. [Docs](https://wiki.metacubex.one/ru/config/proxies/socks/). |
 | `XXX_DIALER_PROXY` | — | [Override dialer-proxy](https://wiki.metacubex.one/ru/config/proxy-providers/#override) — пускать соединения этого провайдера через другую группу. Пример: `LINK1_DIALER_PROXY=YouTube`. |
+
+Флаг `support-x25519mlkem768` раньше включал патч ядра при сборке образа: у форка отсутствие поля означало `true`. Теперь то же самое делает штатный `override-expr` прокси-провайдера, и собственная правка mihomo для этого не нужна. Правило проверяет наличие блока `reality-opts`, поэтому обычные VLESS без REALITY, VMess, Shadowsocks, Hysteria и остальные протоколы в смешанной подписке не затрагиваются — и не важно, приходит подписка в YAML или ключами `vless://`: ядро сначала превращает ключи во внутренние структуры и только потом применяет `override`.
 
 ### Прокси-группы
 
