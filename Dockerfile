@@ -5,6 +5,11 @@ ARG TARGETARCH
 ARG TARGETVARIANT
 ARG AMD64VERSION
 ARG MIHOMO_RELEASE_TAG=latest
+# gvisor — взять сборку ядра с gVisor (нужна только Tailscale). Такие ассеты
+# лежат в релизе под префиксом mihomo-gvisor-linux-*, отдельным от обычного
+# mihomo-linux-*: иначе глоб выбора ниже цеплял бы оба варианта, а первым по
+# алфавиту шёл бы как раз gvisor.
+ARG MIHOMO_FLAVOR=
 RUN apk add --no-cache curl jq gzip tar unzip
 # gh_api — запросы к api.github.com: без токена лимит 60/час на общий IP раннера.
 # dl — скачивание ассета: без -f curl пишет тело ошибки прямо в файл бинарника.
@@ -22,12 +27,13 @@ SH
 RUN mkdir -p /final
 
 RUN --mount=type=secret,id=gh_token set -eu; . /gh.sh; \
+    P="${MIHOMO_FLAVOR:+mihomo-${MIHOMO_FLAVOR}-linux}"; P="${P:-mihomo-linux}"; \
     if [ "$MIHOMO_RELEASE_TAG" = "latest" ]; then \
       U="https://api.github.com/repos/medium1992/mihomo-proxy-ros/releases/latest"; \
     else \
       U="https://api.github.com/repos/medium1992/mihomo-proxy-ros/releases/tags/${MIHOMO_RELEASE_TAG}"; \
     fi; \
-    urls="$(gh_api "$U" | jq -r '.assets[].browser_download_url' | grep -E 'mihomo-linux-(amd64|arm64|armv7|armv5)')" || true; \
+    urls="$(gh_api "$U" | jq -r '.assets[].browser_download_url' | grep -E "${P}-(amd64|arm64|armv7|armv5)")" || true; \
     [ -n "$urls" ] || { echo "mihomo: no matching assets at $U" >&2; exit 1; }; \
     for u in $urls; do dl "$u"; done
 
@@ -84,14 +90,15 @@ RUN curl -fL --retry 5 --retry-all-errors --retry-delay 3 https://github.com/Ind
 
 RUN mkdir -p /final /final/usr/local/bin
 
-RUN if [ "$TARGETARCH" = "amd64" ]; then \
-      SRC="$(ls mihomo-linux-amd64-${AMD64VERSION} mihomo-linux-amd64-${AMD64VERSION}-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1)"; \
+RUN P="${MIHOMO_FLAVOR:+mihomo-${MIHOMO_FLAVOR}-linux}"; P="${P:-mihomo-linux}"; \
+    if [ "$TARGETARCH" = "amd64" ]; then \
+      SRC="$(ls ${P}-amd64-${AMD64VERSION} ${P}-amd64-${AMD64VERSION}-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1)"; \
     elif [ "$TARGETARCH" = "arm64" ]; then \
-      SRC="$(ls mihomo-linux-arm64 mihomo-linux-arm64-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1)"; \
+      SRC="$(ls ${P}-arm64 ${P}-arm64-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1)"; \
     elif [ "$TARGETARCH" = "arm" ] && [ "$TARGETVARIANT" = "v7" ]; then \
-      SRC="$(ls mihomo-linux-armv7 mihomo-linux-armv7-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1)"; \
+      SRC="$(ls ${P}-armv7 ${P}-armv7-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1)"; \
     else \
-      SRC="$(ls mihomo-linux-armv5 mihomo-linux-armv5-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1)"; \
+      SRC="$(ls ${P}-armv5 ${P}-armv5-* 2>/dev/null | grep -vE '\.(deb|rpm|pkg\.tar\.zst|gz)$' | head -n1)"; \
     fi && \
     [ -n "$SRC" ] && mv "$SRC" /final/usr/local/bin/mihomo
 

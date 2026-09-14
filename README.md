@@ -14,6 +14,7 @@
 ## ✨ Features
 
 - 🌍 **Multi-arch**: ARM, ARM64, AMD64v1/v2/v3 (the `latest` tag bundles ARM, ARM64, AMD64v3 — for v1/v2 pull the dedicated tag)
+- 🪶 **Two image flavours**: the regular one (`latest`, `alpha`, `<version>`) is built without gVisor and is about 9 MiB lighter; the `-gvisor` suffix (`latest-gvisor`, `alpha-gvisor`, `amd64v1-gvisor`, `<version>-gvisor` …) is only needed for the Tailscale outbound
 - 🖥 **Built-in WebUI** on port `80` — visual ENV editor, YAML validator, AWG/proxy/rule-set file managers, generates MikroTik terminal commands
 - 🔐 **DPI bypass** via [ByeDPI](https://github.com/hufrea/byedpi), [Zapret/nfqws](https://github.com/bol-van/zapret), [Zapret2/nfqws2](https://github.com/bol-van/zapret2) (nfqws/nfqws2 — amd64/arm64 only)
 - 🧩 **Flexible routing** by domain / IP / GeoSite / GeoIP / ASN, all controlled via ENV
@@ -84,7 +85,7 @@ It **does not modify** the running container directly. Instead it:
 
 What's also in there:
 
-- **Proxy YAML editor** with templates for VLESS, VMess, Trojan, Shadowsocks, SSR, Snell, AnyTLS, Mieru, WireGuard / AmneziaWG, Hysteria, Hysteria2, TUIC, MASQUE, Tailscale, ZeroTier, TrustTunnel, OpenVPN and SSH — *"Load template"* fills the textarea
+- **Proxy YAML editor** with templates for VLESS, VMess, Trojan, Shadowsocks, SSR, Snell, AnyTLS, Mieru, WireGuard / AmneziaWG, Hysteria, Hysteria2, TUIC, MASQUE, Tailscale, ZeroTier, TrustTunnel, OpenVPN and SSH — *"Load template"* fills the textarea. Tailscale only works in the `-gvisor` image
 - **Live `mihomo -t` validation** of proxy YAMLs before save, plus uniqueness check of `name:` field across all providers
 - **AWG editor** with full `[Interface]/[Peer]/[Mihomo]` template covering every key the parser understands
 - **DPI files manager** — upload `.bin` fakes to `/zapret-fakebin/`, edit text lists in `/zapret-lists/`, with filter

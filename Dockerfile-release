@@ -7,7 +7,11 @@ ARG TAG
 ARG GO_VERSION
 ARG MIHOMO_CUSTOM_PATCHES=1
 ARG VERSION_OVERRIDE=""
-ARG WITH_GVISOR=1
+# Без gVisor бинарник на ~9 МиБ меньше (arm64, 1.19.31). Контейнер gVisor не
+# использует: TUN на mipstack, WireGuard/AWG/OpenVPN/MASQUE/ZeroTier тоже.
+# Нужен он только исходящему Tailscale — для него CI отдельно собирает
+# вариант с WITH_GVISOR=1 и публикует образы с суффиксом -gvisor.
+ARG WITH_GVISOR=0
 ARG BUILDTIME
 RUN apk add --no-cache curl jq gzip tar unzip git make python3
 
