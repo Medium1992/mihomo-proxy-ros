@@ -666,11 +666,14 @@ jobs:
 
           mkdir -p telegram-images
 
+          # $4 — суффикс варианта: пусто для обычного образа, "-gvisor" для сборки
+          # с gVisor. Суффикс идёт после версии, как в тегах образов.
           export_image() {
             local name="$1"
             local platform="$2"
             local image="$3"
-            local file="telegram-images/mihomo-proxy-ros-${name}-${mihomo}.tar.gz"
+            local suffix="${4:-}"
+            local file="telegram-images/mihomo-proxy-ros-${name}-${mihomo}${suffix}.tar.gz"
 
             retry docker pull --platform "${platform}" "${image}"
             docker save "${image}" | gzip -9 > "${file}"
@@ -685,17 +688,32 @@ jobs:
           export_image "armv7" "linux/arm/v7" "${IMAGE_REPO}:${mihomo}"
           export_image "armv5" "linux/arm/v5" "${IMAGE_REPO}:${mihomo}"
 
+          # Те же образы с ядром, собранным с gVisor, — нужны только для Tailscale.
+          export_image "amd64-v1" "linux/amd64" "${IMAGE_REPO}:amd64v1-${mihomo}-gvisor" "-gvisor"
+          export_image "amd64-v2" "linux/amd64" "${IMAGE_REPO}:amd64v2-${mihomo}-gvisor" "-gvisor"
+          export_image "amd64-v3" "linux/amd64" "${IMAGE_REPO}:${mihomo}-gvisor" "-gvisor"
+          export_image "amd64-v4" "linux/amd64" "${IMAGE_REPO}:amd64v4-${mihomo}-gvisor" "-gvisor"
+          export_image "arm64" "linux/arm64" "${IMAGE_REPO}:${mihomo}-gvisor" "-gvisor"
+          export_image "armv7" "linux/arm/v7" "${IMAGE_REPO}:${mihomo}-gvisor" "-gvisor"
+          export_image "armv5" "linux/arm/v5" "${IMAGE_REPO}:${mihomo}-gvisor" "-gvisor"
+
           sha256sum telegram-images/*.tar.gz > telegram-images/sha256sums.txt
 
-          files_list=$(find telegram-images -maxdepth 1 -name '*.tar.gz' -type f -printf '%f\n' | sort)
-          message=$(printf 'Mihomo Proxy ROS container images\n\nmihomo: %s\nhev-socks5-tunnel: %s\nbyedpi: %s\nzapret: %s\nzapret2: %s\n\nDocker Hub: https://hub.docker.com/r/%s\n\nFiles:\n%s\n\nChecksums: sha256sums.txt' \
+          # Сначала обычные архивы, потом -gvisor: по алфавиту "-gvisor" и версия
+          # перемешались бы попарно внутри каждой архитектуры.
+          plain_files=$(find telegram-images -maxdepth 1 -name '*.tar.gz' ! -name '*-gvisor.tar.gz' -type f | sort)
+          gvisor_files=$(find telegram-images -maxdepth 1 -name '*-gvisor.tar.gz' -type f | sort)
+          plain_list=$(printf '%s\n' "${plain_files}" | xargs -n1 basename)
+          gvisor_list=$(printf '%s\n' "${gvisor_files}" | xargs -n1 basename)
+          message=$(printf 'Mihomo Proxy ROS container images\n\nmihomo: %s\nhev-socks5-tunnel: %s\nbyedpi: %s\nzapret: %s\nzapret2: %s\n\nDocker Hub: https://hub.docker.com/r/%s\n\nFiles:\n%s\n\nWith gVisor (only needed for Tailscale):\n%s\n\nChecksums: sha256sums.txt' \
             "${mihomo}" \
             "${hev_socks5_tunnel}" \
             "${byedpi}" \
             "${zapret}" \
             "${zapret2}" \
             "${IMAGE_REPO}" \
-            "${files_list}")
+            "${plain_list}" \
+            "${gvisor_list}")
 
           telegram_api sendMessage \
             -d "chat_id=${TELEGRAM_CHAT_ID}" \
@@ -703,12 +721,13 @@ jobs:
             --data-urlencode "text=${message}"
 
           while IFS= read -r file; do
+            [ -n "${file}" ] || continue
             telegram_api sendDocument \
               -F "chat_id=${TELEGRAM_CHAT_ID}" \
               "${thread_form_args[@]}" \
               -F "document=@${file}" \
               -F "caption=$(basename "$file")"
-          done < <(find telegram-images -maxdepth 1 -name '*.tar.gz' -type f | sort)
+          done < <(printf '%s\n' "${plain_files}" "${gvisor_files}")
 
           telegram_api sendDocument \
             -F "chat_id=${TELEGRAM_CHAT_ID}" \
