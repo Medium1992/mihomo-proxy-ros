@@ -134,41 +134,94 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # plain — обычная сборка без gVisor, gvisor — вариант под Tailscale.
+        # Комбинации перечислены явно: ось flavor рядом с include GitHub
+        # не перемножает, а каждый следующий include перезаписал бы поля
+        # предыдущего, и собралась бы одна последняя архитектура.
         include:
           - arch: amd64
             variant: ""
             amd64: v1
             name: amd64-v1
+            flavor: plain
 
           - arch: amd64
             variant: ""
             amd64: v2
             name: amd64-v2
+            flavor: plain
 
           - arch: amd64
             variant: ""
             amd64: v3
             name: amd64-v3
+            flavor: plain
 
           - arch: amd64
             variant: ""
             amd64: v4
             name: amd64-v4
+            flavor: plain
 
           - arch: arm64
             variant: ""
             amd64: ""
             name: arm64
+            flavor: plain
 
           - arch: arm
             variant: v7
             amd64: ""
             name: armv7
+            flavor: plain
 
           - arch: arm
             variant: v5
             amd64: ""
             name: armv5
+            flavor: plain
+
+          - arch: amd64
+            variant: ""
+            amd64: v1
+            name: amd64-v1
+            flavor: gvisor
+
+          - arch: amd64
+            variant: ""
+            amd64: v2
+            name: amd64-v2
+            flavor: gvisor
+
+          - arch: amd64
+            variant: ""
+            amd64: v3
+            name: amd64-v3
+            flavor: gvisor
+
+          - arch: amd64
+            variant: ""
+            amd64: v4
+            name: amd64-v4
+            flavor: gvisor
+
+          - arch: arm64
+            variant: ""
+            amd64: ""
+            name: arm64
+            flavor: gvisor
+
+          - arch: arm
+            variant: v7
+            amd64: ""
+            name: armv7
+            flavor: gvisor
+
+          - arch: arm
+            variant: v5
+            amd64: ""
+            name: armv5
+            flavor: gvisor
 
     steps:
       - uses: actions/checkout@v6
@@ -185,6 +238,7 @@ jobs:
             --build-arg VERSION_OVERRIDE=${{ needs.alpha-check.outputs.version_tag }} \
             --build-arg GO_VERSION=${{ needs.alpha-check.outputs.go_version }} \
             --build-arg AMD64VERSION=${{ matrix.amd64 }} \
+            --build-arg WITH_GVISOR=${{ matrix.flavor == 'gvisor' && '1' || '0' }} \
             --build-arg MIHOMO_CUSTOM_PATCHES=${{ env.MIHOMO_CUSTOM_PATCHES }} \
             --build-arg BUILDTIME="$(date)" \
             --output type=local,dest=out \
@@ -195,7 +249,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: buildlog-alpha-${{ matrix.name }}
+          name: buildlog-alpha-${{ matrix.flavor }}-${{ matrix.name }}
           path: build.log
           if-no-files-found: ignore
 
@@ -203,7 +257,11 @@ jobs:
         run: |
           mkdir -p dist
           VERSION_TAG="${{ needs.alpha-check.outputs.version_tag }}"
-          BASENAME="mihomo-linux-${{ matrix.name }}"
+          # gvisor-вариант под отдельным префиксом, чтобы глоб выбора в Dockerfile
+          # не цеплял его вместе с обычным бинарником.
+          PREFIX="mihomo-linux"
+          if [ "${{ matrix.flavor }}" = "gvisor" ]; then PREFIX="mihomo-gvisor-linux"; fi
+          BASENAME="${PREFIX}-${{ matrix.name }}"
           ARCHIVE="${BASENAME}-${VERSION_TAG}.gz"
 
           cp out/mihomo "dist/${BASENAME}"
@@ -214,7 +272,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: alpha-${{ matrix.name }}
+          name: alpha-${{ matrix.flavor }}-${{ matrix.name }}
           path: dist/*
 
   alpha-release:
@@ -507,6 +565,120 @@ jobs:
             medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}
             medium1992/mihomo-proxy-ros:${{ env.mihomo }}
             medium1992/mihomo-proxy-ros:alpha
+
+      # Те же образы, но с ядром, собранным с gVisor. Нужны только исходящему
+      # Tailscale; теги получают суффикс -gvisor (latest-gvisor, alpha-gvisor…).
+      - name: Build and push amd64v1 (gvisor)
+        if: steps.check_versions.outputs.build_needed == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            AMD64VERSION=v1
+            MIHOMO_RELEASE_TAG=alpha
+            MIHOMO_FLAVOR=gvisor
+          secrets: |
+            gh_token=${{ secrets.GITHUB_TOKEN }}
+          secret-files: |
+            awg=${{ runner.temp }}/awg
+            happ1=${{ runner.temp }}/happ1
+            happ2=${{ runner.temp }}/happ2
+            happ3=${{ runner.temp }}/happ3
+            happ4=${{ runner.temp }}/happ4
+          tags: |
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}-gvisor
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-gvisor
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v1-alpha-gvisor
+            medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}-gvisor
+            medium1992/mihomo-proxy-ros:amd64v1-${{ env.mihomo }}-gvisor
+            medium1992/mihomo-proxy-ros:amd64v1-alpha-gvisor
+
+      - name: Build and push amd64v2 (gvisor)
+        if: steps.check_versions.outputs.build_needed == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            AMD64VERSION=v2
+            MIHOMO_RELEASE_TAG=alpha
+            MIHOMO_FLAVOR=gvisor
+          secrets: |
+            gh_token=${{ secrets.GITHUB_TOKEN }}
+          secret-files: |
+            awg=${{ runner.temp }}/awg
+            happ1=${{ runner.temp }}/happ1
+            happ2=${{ runner.temp }}/happ2
+            happ3=${{ runner.temp }}/happ3
+            happ4=${{ runner.temp }}/happ4
+          tags: |
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}-gvisor
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-gvisor
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v2-alpha-gvisor
+            medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}-gvisor
+            medium1992/mihomo-proxy-ros:amd64v2-${{ env.mihomo }}-gvisor
+            medium1992/mihomo-proxy-ros:amd64v2-alpha-gvisor
+
+      - name: Build and push amd64v4 (gvisor)
+        if: steps.check_versions.outputs.build_needed == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            AMD64VERSION=v4
+            MIHOMO_RELEASE_TAG=alpha
+            MIHOMO_FLAVOR=gvisor
+          secrets: |
+            gh_token=${{ secrets.GITHUB_TOKEN }}
+          secret-files: |
+            awg=${{ runner.temp }}/awg
+            happ1=${{ runner.temp }}/happ1
+            happ2=${{ runner.temp }}/happ2
+            happ3=${{ runner.temp }}/happ3
+            happ4=${{ runner.temp }}/happ4
+          tags: |
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}-gvisor
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}-gvisor
+            ghcr.io/medium1992/mihomo-proxy-ros:amd64v4-alpha-gvisor
+            medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}-gvisor
+            medium1992/mihomo-proxy-ros:amd64v4-${{ env.mihomo }}-gvisor
+            medium1992/mihomo-proxy-ros:amd64v4-alpha-gvisor
+
+      - name: Build and push multi-arch (gvisor)
+        if: steps.check_versions.outputs.build_needed == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v5
+          push: true
+          build-args: |
+            AMD64VERSION=v3
+            MIHOMO_RELEASE_TAG=alpha
+            MIHOMO_FLAVOR=gvisor
+          secrets: |
+            gh_token=${{ secrets.GITHUB_TOKEN }}
+          secret-files: |
+            awg=${{ runner.temp }}/awg
+            happ1=${{ runner.temp }}/happ1
+            happ2=${{ runner.temp }}/happ2
+            happ3=${{ runner.temp }}/happ3
+            happ4=${{ runner.temp }}/happ4
+          tags: |
+            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}-gvisor
+            ghcr.io/medium1992/mihomo-proxy-ros:${{ env.mihomo }}-gvisor
+            ghcr.io/medium1992/mihomo-proxy-ros:alpha-gvisor
+            medium1992/mihomo-proxy-ros:${{ env.mihomo }}-${{ env.hev_socks5_tunnel }}-${{ env.byedpi }}-${{ env.zapret }}-${{ env.zapret2 }}-gvisor
+            medium1992/mihomo-proxy-ros:${{ env.mihomo }}-gvisor
+            medium1992/mihomo-proxy-ros:alpha-gvisor
 
       - name: Commit and push VERSIONS_ALPHA
         if: steps.check_versions.outputs.build_needed == 'true'

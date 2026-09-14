@@ -1142,7 +1142,7 @@ EOF
             <option value="hysteria2">Hysteria2</option>
             <option value="tuic">TUIC</option>
             <option value="masque">MASQUE</option>
-            <option value="tailscale">Tailscale</option>
+            <option value="tailscale">Tailscale — только образ -gvisor</option>
             <option value="zerotier">ZeroTier</option>
             <option value="trusttunnel">TrustTunnel</option>
             <option value="openvpn">OpenVPN</option>

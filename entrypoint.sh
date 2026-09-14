@@ -3275,6 +3275,15 @@ watch_external_ui_config() {
   ) &
 }
 
+# Знает ли ядро такой стек TUN. mihomo -t только разбирает конфиг: устройство
+# не создаётся (NewTun лишь собирает объект листенера), а неизвестный stack
+# отбивается ещё при декодировании опций — "invalid tun stack". Конфиг
+# передаём строкой, чтобы ничего не писать на диск.
+tun_stack_supported() {
+  _tss_cfg=$(printf 'listeners:\n  - name: probe\n    type: tun\n    stack: %s\n' "$1" | base64 | tr -d '\n')
+  mihomo -t -d "$RUNTIME_DIR" -config "$_tss_cfg" >/dev/null 2>&1
+}
+
 # ------------------- CONFIG -------------------
 config_file_mihomo() {
   echo "Generating $CONFIG_YAML"
@@ -3326,15 +3335,32 @@ EOF
     udp: true
 EOF
   else
-    cat >> "$CONFIG_YAML" <<EOF
-  - name: tun-in
-    type: tun
-    stack: system
-    inet4-address:
-      - 100.64.0.1/30
-    udp-timeout: 30
-    mtu: 1500
-EOF
+    # mipstack — userspace-стек MetaCubeX на чистом Go (mihomo >= 1.19.31). В TUN
+    # у нас приходит только UDP, TCP забирает redir-in, так что и system-стек
+    # этот UDP разбирал в userspace — выигрыша ядра тут не было, а mipstack
+    # сейчас активно оптимизируют по памяти, и от gVisor он не зависит.
+    # udp-timeout нужен только system-стеку: mipstack отдаёт каждый пакет
+    # обработчику, и сессии живут по NAT-таймауту туннеля mihomo (60 с).
+    #
+    # Образ и ядро собираются вместе, но старое ядро на "mips" отвечает
+    # фатальным "invalid tun stack" — а это отказ старта у всех без TPROXY.
+    # Поэтому спрашиваем само ядро и при необходимости откатываемся на system.
+    tun_stack=mips
+    if ! tun_stack_supported mips; then
+      log "TUN: this mihomo does not know stack: mips, falling back to system"
+      tun_stack=system
+    fi
+    {
+      echo "  - name: tun-in"
+      echo "    type: tun"
+      echo "    stack: $tun_stack"
+      echo "    inet4-address:"
+      echo "      - 100.64.0.1/30"
+      if [ "$tun_stack" = "system" ]; then
+        echo "    udp-timeout: 30"
+      fi
+      echo "    mtu: 1500"
+    } >> "$CONFIG_YAML"
   fi
 
   cat >> "$CONFIG_YAML" <<EOF

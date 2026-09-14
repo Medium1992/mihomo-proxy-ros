@@ -1,3 +1,6 @@
+# Tailscale работает только в образе с суффиксом -gvisor: latest-gvisor,
+# alpha-gvisor, <версия>-gvisor. В обычном образе ядро собрано без gVisor,
+# и прокси type: tailscale там недоступен.
 proxies:
   - name: tailscale-example
     type: tailscale

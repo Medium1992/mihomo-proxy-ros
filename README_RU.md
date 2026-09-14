@@ -14,6 +14,7 @@
 ## ✨ Возможности
 
 - 🌍 **Мультиархитектура**: ARM, ARM64, AMD64v1/v2/v3 (тег `latest` собирает ARM, ARM64, AMD64v3 — для v1/v2 запулите отдельный тег)
+- 🪶 **Два варианта образа**: обычный (`latest`, `alpha`, `<версия>`) собран без gVisor и легче примерно на 9 МиБ; вариант с суффиксом `-gvisor` (`latest-gvisor`, `alpha-gvisor`, `amd64v1-gvisor`, `<версия>-gvisor` …) нужен только для исходящего Tailscale
 - 🖥 **Встроенная веб-панель** на порту `80` — визуальный редактор ENV, валидатор YAML, менеджеры файлов AWG/прокси/rule-set, генератор команд для MikroTik
 - 🔐 **Обход DPI** через [ByeDPI](https://github.com/hufrea/byedpi), [Zapret/nfqws](https://github.com/bol-van/zapret), [Zapret2/nfqws2](https://github.com/bol-van/zapret2) (nfqws/nfqws2 — только amd64/arm64)
 - 🧩 **Гибкая маршрутизация** по доменам, IP, GeoSite, GeoIP, ASN — всё через ENV
@@ -84,7 +85,7 @@
 
 Что ещё внутри:
 
-- **Редактор proxy YAML** с шаблонами VLESS, VMess, Trojan, Shadowsocks, SSR, Snell, AnyTLS, Mieru, WireGuard / AmneziaWG, Hysteria, Hysteria2, TUIC, MASQUE, Tailscale, ZeroTier, TrustTunnel, OpenVPN и SSH — кнопка *"Загрузить шаблон"* подставляет содержимое в textarea
+- **Редактор proxy YAML** с шаблонами VLESS, VMess, Trojan, Shadowsocks, SSR, Snell, AnyTLS, Mieru, WireGuard / AmneziaWG, Hysteria, Hysteria2, TUIC, MASQUE, Tailscale, ZeroTier, TrustTunnel, OpenVPN и SSH — кнопка *"Загрузить шаблон"* подставляет содержимое в textarea. Tailscale работает только в образе с суффиксом `-gvisor`
 - **Живая валидация `mihomo -t`** перед сохранением, плюс проверка уникальности `name:` по всем провайдерам
 - **Редактор AWG** с полным шаблоном `[Interface]/[Peer]/[Mihomo]` со всеми ключами, которые понимает парсер
 - **Менеджер DPI-файлов** — загрузка `.bin` фейков в `/zapret-fakebin/`, редактирование текстовых списков в `/zapret-lists/`, фильтр по имени
