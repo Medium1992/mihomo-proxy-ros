@@ -605,11 +605,13 @@ add interval=10s name=route_UP comment="route_UP" on-event="/system/script/run r
 :put "Webpanel UI http://192.168.255.2:9090/ui/"
 :put "For donate:"
 :put "- USDT(TRC20):TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ"
+:put "- USDT(Polygon PoS):0xa4f2d9035e8bacf4cdff27904f03ecc5479f7e17"
 :put "Invite link Telegram-group https://t.me/+96HVPF3Ww6o3YTNi"
 :log warning "script complete, enjoy!"
 :log warning "For use WG,AWG pls push conf files on Mikrotik to path /awg_conf/"
 :log warning "Webpanel UI http://192.168.255.2:9090/ui/"
 :log warning "For donate:"
 :log warning "- USDT(TRC20):TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ"
+:log warning "- USDT(Polygon PoS):0xa4f2d9035e8bacf4cdff27904f03ecc5479f7e17"
 :log warning "Invite link Telegram-group https://t.me/+96HVPF3Ww6o3YTNi"
 }
