@@ -430,4 +430,5 @@ Report sensitive issues per [SECURITY.md](./SECURITY.md).
 If this saved you time configuring MikroTik and its scripts:
 
 - **USDT (TRC20):** `TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ`
+- **USDT (Polygon PoS):** `0xa4f2d9035e8bacf4cdff27904f03ecc5479f7e17`
 
