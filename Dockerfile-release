@@ -118,6 +118,35 @@ RUN if [ -n "$UTLS_OVERRIDE_BRANCH" ]; then set -eu; \
       echo "Using utls from go.mod as is"; \
     fi
 
+# Скретч-буфер записи HTTP/2 в форке github.com/metacubex/http: min(SETTINGS
+# пира, 512 КиБ) на каждый аплинк-стрим. XHTTP с REALITY (auto -> stream-one /
+# stream-up) и gun держат тело запроса открытым всю жизнь соединения, так что
+# буфер приколочен на всё это время. Размер диктует пир (сервер или edge CDN),
+# поэтому лечится только на клиенте. Upstream proposal golang/go#79831 предлагает
+# ровно 32 КиБ. Пустое значение = собирать как у апстрима.
+ARG H2_SCRATCH_KB=32
+RUN set -eu; \
+    if [ -z "$H2_SCRATCH_KB" ]; then \
+      echo "HTTP/2 scratch buffer left at upstream defaults"; \
+      exit 0; \
+    fi; \
+    printf '%s' "$H2_SCRATCH_KB" | grep -Eq '^[1-9][0-9]*$' \
+      || { echo "H2_SCRATCH_KB is not a positive number: $H2_SCRATCH_KB" >&2; exit 1; }; \
+    go mod download github.com/metacubex/http; \
+    SRC=$(go list -m -f '{{.Dir}}' github.com/metacubex/http); \
+    cp -r "$SRC" /mhttp; \
+    chmod -R u+w /mhttp; \
+    FILES=$(grep -rlF 'const max = 512 << 10' /mhttp || true); \
+    [ -n "$FILES" ] \
+      || { echo "frameScratchBufferLen no longer has the shape this patch expects" >&2; exit 1; }; \
+    for f in $FILES; do sed -i "s|const max = 512 << 10|const max = ${H2_SCRATCH_KB} << 10|" "$f"; done; \
+    ! grep -rqF 'const max = 512 << 10' /mhttp \
+      || { echo "h2 scratch patch did not apply" >&2; exit 1; }; \
+    go mod edit -replace github.com/metacubex/http=/mhttp; \
+    go list -m github.com/metacubex/http | grep -Fq '=> /mhttp' \
+      || { echo "metacubex/http override did not apply" >&2; exit 1; }; \
+    echo "HTTP/2 uplink scratch buffer capped at ${H2_SCRATCH_KB} KiB in:" $FILES
+
 RUN VERSION_FOR_BUILD="${TAG}" && \
     if [ -n "${VERSION_OVERRIDE}" ]; then VERSION_FOR_BUILD="${VERSION_OVERRIDE}"; fi && \
     if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ]; then \
