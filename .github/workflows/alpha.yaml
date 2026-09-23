@@ -132,7 +132,9 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
-      fail-fast: false
+      # Упала одна архитектура — гасим остальные: релиз без части бинарников
+      # всё равно не опубликуется, а ждать доборку остальных незачем.
+      fail-fast: true
       matrix:
         # plain — обычная сборка без gVisor, gvisor — вариант под Tailscale.
         # Комбинации перечислены явно: ось flavor рядом с include GitHub
@@ -321,7 +323,9 @@ jobs:
 
   check-and-build:
     needs: [alpha-check, alpha-build, alpha-release]
-    if: ${{ always() && needs.alpha-check.result == 'success' && (needs.alpha-build.result == 'success' || needs.alpha-build.result == 'skipped') && (needs.alpha-release.result == 'success' || needs.alpha-release.result == 'skipped') }}
+    # !cancelled(), а не always(): отменённый прогон не должен доходить до
+    # сборки образов ни при каком раскладе.
+    if: ${{ !cancelled() && needs.alpha-check.result == 'success' && (needs.alpha-build.result == 'success' || needs.alpha-build.result == 'skipped') && (needs.alpha-release.result == 'success' || needs.alpha-release.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
