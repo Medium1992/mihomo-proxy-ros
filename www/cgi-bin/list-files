@@ -45,6 +45,9 @@ for f in "$TARGET_DIR"/*; do
   [ -f "$f" ] || continue
   base=$(basename "$f")
   size=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
+  # cksum есть и в Alpine, и в rootfs для armv5 (stat там нет): по сумме панель
+  # отличает файл, изменённый после старта контейнера, от загруженного ядром.
+  sum=$(cksum < "$f" 2>/dev/null | awk '{print $1}')
   name=""
   if [ "$dir_type" = "proxy" ]; then
     # All `name:` values found in the file, comma-separated
@@ -64,7 +67,7 @@ for f in "$TARGET_DIR"/*; do
   first=0
   ebase=$(printf '%s' "$base" | json_escape)
   ename=$(printf '%s' "$name" | json_escape)
-  printf '{"file":"%s","size":%s,"name":"%s"}' "$ebase" "${size:-0}" "$ename"
+  printf '{"file":"%s","size":%s,"sum":"%s","name":"%s"}' "$ebase" "${size:-0}" "${sum:-0}" "$ename"
 done
 
 printf ']}\n'

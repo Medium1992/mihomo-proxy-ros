@@ -52,6 +52,10 @@
 > `BASIC_AUTH_HASH`. Locked out? Remove the `BASIC_AUTH_HASH` env and restart the container
 > to fall back to `admin`.
 
+**How the panel is laid out.** The menu follows the order in which the container is set up: where traffic leaves (proxy providers, DPI bypass), what goes where (groups, rules and sites, rule sets), core and port settings, and a final YAML check. The **Overview** shows three steps from an empty container to working routing, plus an "Add a site" card: paste a site, an IP or a subnet, pick a group, a provider or `DIRECT`/`REJECT`, and the panel writes the right variable for you. Every edit is a draft: the number of unsent changes is shown on the **"MikroTik commands"** button, and its screen first lists in plain words what will change on the router (secrets hidden) and only then the terminal commands.
+
+**Files and variables behave differently.** The container reads variables once at start, so every edit in the panel stays a draft until the commands are pasted and the container restarts. Files — rule sets, AWG, proxies_mount, TrustTunnel, OpenVPN, `/zapret-fakebin`, `/zapret-lists` — are written to disk immediately, and the panel shows them as they are on disk. The core, zapret and nfqws still read them only at start, though: a file added, changed or deleted after start is marked "after restart", and the commands screen reminds you a restart is needed even when no variable changed. Name rule sets in Latin characters: the entrypoint keeps only `A–Z a–z 0–9 _ -` in the name and skips a set whose name ends up empty — the panel warns about this before saving.
+
 ENV values are not stored in browser localStorage — draft edits live on the server
 (`/dev/shm/mihomo-ui/draft.json`, tmpfs), so a fresh browser with no cache and no cookies opens the
 panel in its current state and no secrets are left on disk.
@@ -310,6 +314,8 @@ Special characters in the name (space, comma, colon, quotes, slashes) are replac
 
 ### Proxy providers
 
+In the web panel a provider row shows only the link itself: for a subscription the other twelve variables (interval, filters, name prefixes, converter, headers) live under "configure subscription", and the collapsed header says how many of them are set. `LINKxx_AMNEZIA_COUNTRY` appears only for `vpn://` links. The `SOCKS*` tab shows up only when such variables already exist — new SOCKS proxies are written as a `socks5://` link in `LINKxx`.
+
 | ENV | Default | Description |
 |---|---|---|
 | `LINK0`, `LINK1`, … | — | Single proxy URL: `vless://`, `vmess://`, `ss://`, `trojan://`, `vpn://`. Each creates a [proxy-provider](https://wiki.metacubex.one/en/config/proxy-providers). |
@@ -337,6 +343,8 @@ The `support-x25519mlkem768` flag used to be forced by a core patch applied at i
 `GROUP` declares the set of named groups. For each group `XXX` (uppercased), prefix-ENV variants below are honored.
 
 > 💡 In addition to user-defined groups, three "system" groups are hardwired in entrypoint: `GROUP_*` (defaults for every group), `GLOBAL_*` (the special GLOBAL group) and `DNS_*` (a dedicated group for DNS resolution). All three accept the same prefix ENVs as the table below.
+
+In the web panel each group is split by meaning instead of one long list of fields: **group members** (providers and other groups are picked from ready-made names, no typing), **how the channel is chosen** (only the fields the core actually reads for the selected `TYPE` are shown), a collapsed **what to route into this group** section — which feeds the `rules` section rather than the group itself — and **extras**. Collapsed sections open by themselves when something inside is set and show how many variables are set. The "add group" button asks for a name and a scenario first.
 
 | ENV | Default | Description |
 |---|---|---|
