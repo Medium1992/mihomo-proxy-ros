@@ -711,7 +711,7 @@ EOF
   section_start "Карта env" "Как entrypoint превращает переменные в mihomo-конфиг."
   cat <<'EOF'
 <div class="map">
-  <article><b>Ядро</b><span>LOG_LEVEL, UI_SECRET, TPROXY, SNIFFER, DNS_MODE, FAKE_IP_*</span></article>
+  <article><b>Ядро</b><span>LOG_LEVEL, UI_SECRET, TPROXY, SNIFFER*, DNS_MODE, FAKE_IP_*</span></article>
   <article><b>Прокси-провайдеры</b><span>LINK*, SUB_LINK*, SOCKS*, mounted AWG и proxies_mount</span></article>
   <article><b>DPI</b><span>BYEDPI_CMD*, ZAPRET_CMD*, ZAPRET2_CMD*, packets и WireGuard dst</span></article>
   <article><b>Прокси-группы</b><span>GLOBAL_*, DNS_*, GROUP и переменные вида NAME_GEOSITE/USE/TYPE</span></article>
@@ -722,10 +722,37 @@ EOF
   section_end
 }
 
+# Вкладка «Сниффер»: общий выключатель, override-destination и три списка
+# исключений. Списки рисуются тем же редактором, что и DNS-серверы.
+sniffer_tab() {
+  section_start_tab sniffer "Сниффер" "Определение домена по рукопожатию и исключения из него."
+  echo '<div class="grid">'
+  toggle_field SNIFFER "Sniffer" "Включает <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/sniff/\" target=\"_blank\" rel=\"noopener\">sniffer</a>: ядро достаёт домен из TLS/QUIC/HTTP-рукопожатия, чтобы правила по доменам работали даже для клиентов, которые резолвят мимо контейнера." true
+  toggle_field SNIFFER_OVERRIDE_DESTINATION "override-destination" "Подменять адрес назначения найденным доменом и переподключаться уже по нему. Нужно, когда клиент пришёл с чужим IP, но ломает случаи, где SNI не совпадает с реальным получателем — такие адреса вынесите в списки ниже." true
+  echo '</div>'
+  cat <<'EOF'
+<div class="notice">
+  <b>Что можно писать в списках</b>
+  <span>Значения через запятую. Адресные списки принимают CIDR (<code>192.168.88.0/24</code>), <code>geoip:private</code> и <code>rule-set:ИМЯ</code> — набор должен быть с behavior <code>ipcidr</code>. Список доменов принимает шаблоны (<code>+.example.com</code>, <code>*.example.com</code>), <code>geosite:ИМЯ</code> и <code>rule-set:ИМЯ</code> с behavior <code>domain</code> или <code>classical</code>. Имя набора берётся из <code>rule-providers</code> готового конфига — его видно на странице YAML; с несуществующим именем ядро не стартует, а <code>geoip:</code> и <code>geosite:</code> заставят контейнер скачать geo-базы.</span>
+  <a class="doc-link" href="https://wiki.metacubex.one/ru/config/sniff/" target="_blank" rel="noopener">Документация sniffer</a>
+</div>
+EOF
+  echo '<div class="dns-list-grid">'
+  dns_list_editor SNIFFER_SKIP_SRC_ADDRESS "skip-src-address" "skip-src-address" "192.168.88.10/32" \
+    "Клиенты, трафик которых не сниффится: для них адрес назначения остаётся тем, что они запросили."
+  dns_list_editor SNIFFER_SKIP_DST_ADDRESS "skip-dst-address" "skip-dst-address" "203.0.113.0/24" \
+    "Адреса назначения, которые не сниффятся. Сюда попадают сервисы, где SNI не совпадает с реальным получателем."
+  dns_list_editor SNIFFER_SKIP_DOMAIN "skip-domain" "skip-domain" "*.apple.com" \
+    "Домены, найденные в рукопожатии, которые нужно игнорировать: соединение уйдёт по исходному адресу."
+  echo '</div>'
+  section_end
+}
+
 core_page() {
   page_tabs_nav \
-    core "Ядро" \
-    dns  "DNS"
+    core    "Ядро" \
+    sniffer "Сниффер" \
+    dns     "DNS"
   section_start_tab core "Ядро mihomo" "Базовые настройки контроллера, UI, inbound-режима и sniffing."
   echo '<div class="grid">'
   select_field LOG_LEVEL "Логи" "Уровень <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/#log-level\" target=\"_blank\" rel=\"noopener\">log-level</a> mihomo." error "silent error warning info debug"
@@ -734,9 +761,10 @@ core_page() {
   field UI_SECRET "UI secret" "Пароль <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/#secret\" target=\"_blank\" rel=\"noopener\">secret</a> external-controller. Оставьте пустым только в закрытой сети." "" password ""
   field AMNEZIA_PREMIUM_PUBLIC_KEY_FILE "Amnezia public key file" "Файл публичного ключа gateway для vpn:// Amnezia Premium." "/awg" text "/awg"
   toggle_field TPROXY "TPROXY" "true: tproxy TCP/UDP, false: redirect TCP + tun UDP." true
-  toggle_field SNIFFER "Sniffer" "В entrypoint хардкод: <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/sniff/\" target=\"_blank\" rel=\"noopener\">sniffer</a> включается только для роутинга по доменам, без override-destination." true
   echo '</div>'
   section_end
+
+  sniffer_tab
 
   section_start_tab dns "DNS и fake-ip" "Параметры, которые попадают в блок dns и fake-ip-filter."
   echo '<div class="grid">'
@@ -755,7 +783,7 @@ EOF
     cat <<EOF
 <div class="env-row env-row-stack fake-filter-row" data-index="$idx">
   <label class="env-index"><span>#</span><input type="number" min="1" step="1" value="$idx" aria-label="FAKE_IP_FILTER number"></label>
-  <label><span>$name</span><input name="$name" value="$val" placeholder="DOMAIN,www.youtube.com,real-ip"></label>
+  <label><span>$name</span><input name="$name" value="$val" placeholder="DOMAIN,www.youtube.com,real-ip или SRC-IP-CIDR,192.168.88.10/32,real-ip"></label>
   <button type="button" onclick="removeEnvRow(this)">Удалить</button>
 </div>
 EOF
@@ -767,6 +795,10 @@ EOF
   <span>В контейнере этот режим сейчас задан хардкодом, а последним правилом entrypoint всегда добавляет <code>MATCH,fake-ip</code>. Строки выше идут по номеру env: <code>FAKE_IP_FILTER1</code>, <code>FAKE_IP_FILTER2</code> и так далее.</span>
   <a class="doc-link" href="https://wiki.metacubex.one/ru/config/dns/#fake-ip-filter-mode" target="_blank" rel="noopener">Документация fake-ip-filter-mode</a>
   <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">Документация rules</a>
+</div>
+<div class="notice">
+  <b>Настоящие IP отдельным клиентам</b>
+  <span>Правило <code>SRC-IP-CIDR,192.168.88.10/32,real-ip</code> отдаёт указанному клиенту локальной сети обычные адреса вместо fake-ip: ему достаточно прописать DNS контейнера, отдельный чистый DNS не нужен. Это возможность нашей сборки ядра — апстрим её не принял, — поэтому на официальном mihomo такой конфиг не запустится. Правило действует только на запросы, пришедшие в DNS контейнера извне; внутренние (перехват TUN, резолв самих прокси) идут как раньше.</span>
 </div>
 <div class="notice">
   <b>DNS-серверы</b>

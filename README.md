@@ -155,10 +155,27 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 | `TPROXY` | `true` | On RoS ≥ 7.21 with `arm64`/`amd64`, the container uses **NFTables**. `true` → TProxy in (TCP+UDP); `false` → Redirect (TCP) + TUN (UDP). |
 | `DNS_MODE` | `fake-ip` | DNS [enhanced-mode](https://wiki.metacubex.one/en/config/dns/#enhanced-mode). |
 | `NAMESERVER_POLICY` | — | Per-domain DNS resolver routing. Format: `domain1#dns1,domain2#dns2`. [Docs](https://wiki.metacubex.one/en/config/dns/#nameserver-policy). |
-| `SNIFFER` | `true` | [Domain sniffer](https://wiki.metacubex.one/en/config/sniff) for domain-based rules when not resolved by mihomo. |
+| `SNIFFER` | `true` | [Domain sniffer](https://wiki.metacubex.one/en/config/sniff) for domain-based rules when not resolved by mihomo. Exclusions live in the [Sniffer](#sniffer) section. |
 | `FAKE_IP_RANGE` | `198.18.0.0/15` | [fake-ip pool](https://wiki.metacubex.one/en/config/dns/#fake-ip-range). |
 | `FAKE_IP_TTL` | `1` | [fake-ip cache TTL](https://wiki.metacubex.one/en/config/dns/#fake-ip-ttl) (seconds). |
-| `FAKE_IP_FILTERxx` | — | Rules list for DNS server in `rule` mode. |
+| `FAKE_IP_FILTERxx` | — | Rules list for DNS server in `rule` mode. Besides domain rules it accepts `SRC-IP-CIDR` — see [Real IPs for selected clients](#real-ips-for-selected-clients). |
+
+### Real IPs for selected clients
+
+In `fake-ip` mode the container normally hands every client an address from `FAKE_IP_RANGE`. Sometimes that gets in the way: a device on the LAN needs real IPs, and the usual workaround is a second container running a clean DNS. This build of the core solves it with a single rule — `FAKE_IP_FILTERxx` accepts the `SRC-IP-CIDR` type:
+
+```
+FAKE_IP_FILTER1=SRC-IP-CIDR,192.168.88.10/32,real-ip
+FAKE_IP_FILTER2=SRC-IP-CIDR,10.10.0.0/16,real-ip
+```
+
+Such a client only needs the container's address as its DNS: names are still resolved through mihomo with every `NAMESERVER_POLICY` rule applied, but the answers carry real addresses. Rules are matched top to bottom and the container always appends `MATCH,fake-ip` last, so every other client behaves as before.
+
+What to expect:
+
+- the rule applies only to queries that reach the container's DNS from outside; internal ones (TUN hijack, resolving the proxies' own domains) take the old path and keep fake-ip;
+- routing for that client then relies on IP rules, while domain rules still match thanks to the sniffer — it is on by default together with `SNIFFER_OVERRIDE_DESTINATION`;
+- this is a patch in our build: upstream [rejected](https://github.com/MetaCubeX/mihomo/pull/2894) the feature, so a config with `SRC-IP-CIDR` in `fake-ip-filter` will not start on official mihomo. The patch lives in [`core_patches/fakeip_src`](core_patches/fakeip_src) and is switched off with the build arg `FAKEIP_SRC_RULES=0`.
 
 ### DNS servers
 
@@ -171,6 +188,26 @@ Three server lists inside the `dns` block are configurable, items separated by c
 | `DNS_PROXY_SERVER_NAMESERVER` | the same three DoH + `common.dot.dns.yandex.net` | [proxy-server-nameserver](https://wiki.metacubex.one/en/config/dns/#proxy-server-nameserver): resolves the proxy servers’ own domains. |
 
 `DNS_DEFAULT_NAMESERVER` and `DNS_NAMESERVER` also build `DNS_ruleset` — the rule set that sends traffic aimed at DNS servers into the `DNS` group. Domains land there as `DOMAIN,...`, literal addresses as `IP-CIDR,.../32,no-resolve`; the scheme, port and everything after `#` are stripped, and `system`, `dhcp://` and `rcode://` are skipped. `DNS_PROXY_SERVER_NAMESERVER` is not included: mihomo handles those queries outside the routing rules.
+
+### Sniffer
+
+The sniffer extracts the domain from the TLS/QUIC/HTTP handshake, so domain rules also apply to clients that resolve names outside the container. `SNIFFER_OVERRIDE_DESTINATION` is on by default: the core replaces the destination address with the sniffed domain and reconnects using it. That fixes routing, but breaks cases where the SNI does not match the real destination — put those addresses and domains into the three exclusion lists. Items are comma-separated; an empty variable means "no exclusions". In the web panel this is the **Core & DNS → Sniffer** tab.
+
+| ENV | Default | Description |
+|---|---|---|
+| `SNIFFER_OVERRIDE_DESTINATION` | `true` | [override-destination](https://wiki.metacubex.one/en/config/sniff/#override-destination): replace the destination with the sniffed domain. One value shared by QUIC, TLS and HTTP. |
+| `SNIFFER_SKIP_SRC_ADDRESS` | — | [skip-src-address](https://wiki.metacubex.one/en/config/sniff/#skip-src-address): clients whose traffic is not sniffed. |
+| `SNIFFER_SKIP_DST_ADDRESS` | — | [skip-dst-address](https://wiki.metacubex.one/en/config/sniff/#skip-dst-address): destination addresses that are not sniffed. |
+| `SNIFFER_SKIP_DOMAIN` | — | [skip-domain](https://wiki.metacubex.one/en/config/sniff/#skip-domain): sniffed domains to ignore. |
+
+What the lists accept:
+
+- address lists (`SNIFFER_SKIP_SRC_ADDRESS`, `SNIFFER_SKIP_DST_ADDRESS`) — CIDR (`192.168.88.10/32`, `10.0.0.0/8`), `geoip:CODE` and `rule-set:NAME`;
+- the domain list (`SNIFFER_SKIP_DOMAIN`) — domains with wildcards (`+.example.com`, `*.example.com`), `geosite:NAME` and `rule-set:NAME`.
+
+A rule-set name is a provider name from `rule-providers` of the generated config, visible on the **YAML** page of the web panel. Address lists need a set with behavior `ipcidr` (`domain` fails at startup, `classical` contributes only its ip rules); the domain list needs `domain` or `classical`. An unknown name prevents the core from starting, and `geoip:`/`geosite:` make the container download geo databases — noticeable on the router's 128 MB flash.
+
+Example: `SNIFFER_SKIP_SRC_ADDRESS=192.168.88.10/32,10.10.0.0/16` and `SNIFFER_SKIP_DOMAIN=*.apple.com,+.icloud.com`.
 
 ### Logs & UI
 

@@ -155,10 +155,27 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 | `TPROXY` | `true` | На RoS ≥ 7.21 (`arm64`/`amd64`) контейнер использует **NFTables**. `true` → TProxy inbound (TCP+UDP); `false` → Redirect (TCP) + TUN (UDP). |
 | `DNS_MODE` | `fake-ip` | Режим DNS [enhanced-mode](https://wiki.metacubex.one/ru/config/dns/#enhanced-mode). |
 | `NAMESERVER_POLICY` | — | Какие домены через какой DNS резолвить. Формат: `domain1#dns1,domain2#dns2`. [Docs](https://wiki.metacubex.one/ru/config/dns/#nameserver-policy). |
-| `SNIFFER` | `true` | [Сниффер доменов](https://wiki.metacubex.one/ru/config/sniff) для роутинга по доменам, если домен резолвил не mihomo. |
+| `SNIFFER` | `true` | [Сниффер доменов](https://wiki.metacubex.one/ru/config/sniff) для роутинга по доменам, если домен резолвил не mihomo. Исключения — в разделе [Сниффер](#сниффер). |
 | `FAKE_IP_RANGE` | `198.18.0.0/15` | [Диапазон fake-ip пула](https://wiki.metacubex.one/ru/config/dns/#fake-ip-range). |
 | `FAKE_IP_TTL` | `1` | [TTL записи fake-ip в DNS-кеше](https://wiki.metacubex.one/ru/config/dns/#fake-ip-ttl) (сек). |
-| `FAKE_IP_FILTERxx` | — | Список правил для DNS-сервера в режиме `rule`. |
+| `FAKE_IP_FILTERxx` | — | Список правил для DNS-сервера в режиме `rule`. Кроме доменных правил принимает `SRC-IP-CIDR` — см. [Настоящие IP отдельным клиентам](#настоящие-ip-отдельным-клиентам). |
+
+### Настоящие IP отдельным клиентам
+
+Обычно в режиме `fake-ip` контейнер отдаёт всем клиентам адреса из `FAKE_IP_RANGE`. Иногда это мешает: устройству в локальной сети нужны настоящие IP, и ради этого приходится поднимать рядом отдельный контейнер с чистым DNS. Наша сборка ядра умеет решать это одним правилом — в `FAKE_IP_FILTERxx` разрешён тип `SRC-IP-CIDR`:
+
+```
+FAKE_IP_FILTER1=SRC-IP-CIDR,192.168.88.10/32,real-ip
+FAKE_IP_FILTER2=SRC-IP-CIDR,10.10.0.0/16,real-ip
+```
+
+Такому клиенту достаточно прописать в качестве DNS адрес контейнера: домены он будет резолвить через mihomo со всеми политиками из `NAMESERVER_POLICY`, но получать настоящие адреса. Правила проверяются сверху вниз, последним контейнер всегда дописывает `MATCH,fake-ip`, поэтому все остальные клиенты работают как раньше.
+
+Чего ожидать:
+
+- правило срабатывает только для запросов, пришедших в DNS контейнера снаружи; внутренние (перехват TUN, резолв доменов самих прокси) идут прежним путём и fake-ip не теряют;
+- маршрутизация такого клиента идёт по IP-правилам, а домен в правилах появится благодаря снифферу — он включён по умолчанию вместе с `SNIFFER_OVERRIDE_DESTINATION`;
+- это патч нашей сборки: апстрим [отклонил](https://github.com/MetaCubeX/mihomo/pull/2894) такую возможность, так что конфиг с `SRC-IP-CIDR` в `fake-ip-filter` не запустится на официальном mihomo. Патч лежит в [`core_patches/fakeip_src`](core_patches/fakeip_src) и гасится сборочным аргументом `FAKEIP_SRC_RULES=0`.
 
 ### DNS-серверы
 
@@ -171,6 +188,26 @@ LAN_SOCKS_SRCIPCIDR: "192.168.88.0/24"
 | `DNS_PROXY_SERVER_NAMESERVER` | те же три DoH + `common.dot.dns.yandex.net` | [proxy-server-nameserver](https://wiki.metacubex.one/ru/config/dns/#proxy-server-nameserver): резолв доменов самих прокси-серверов. |
 
 Из `DNS_DEFAULT_NAMESERVER` и `DNS_NAMESERVER` контейнер собирает `DNS_ruleset` — набор правил, по которому трафик к DNS-серверам уходит в группу `DNS`. Домены попадают туда как `DOMAIN,...`, литеральные адреса — как `IP-CIDR,.../32,no-resolve`; схема, порт и параметры после `#` отбрасываются, а `system`, `dhcp://` и `rcode://` пропускаются. `DNS_PROXY_SERVER_NAMESERVER` в набор не входит: mihomo обрабатывает эти запросы в обход правил маршрутизации.
+
+### Сниффер
+
+Сниффер достаёт домен из TLS/QUIC/HTTP-рукопожатия, поэтому правила по доменам работают и для клиентов, которые резолвят мимо контейнера. `SNIFFER_OVERRIDE_DESTINATION` включён по умолчанию: ядро подменяет адрес назначения найденным доменом и переподключается уже по нему. Это чинит маршрутизацию, но ломает случаи, где SNI не совпадает с реальным получателем, — такие адреса и домены выносятся в три списка исключений. Элементы перечисляются через запятую, пустая переменная означает «исключений нет». В веб-панели это вкладка **Ядро и DNS → Сниффер**.
+
+| ENV | По умолчанию | Описание |
+|---|---|---|
+| `SNIFFER_OVERRIDE_DESTINATION` | `true` | [override-destination](https://wiki.metacubex.one/ru/config/sniff/#override-destination): подменять адрес назначения доменом из рукопожатия. Значение общее для QUIC, TLS и HTTP. |
+| `SNIFFER_SKIP_SRC_ADDRESS` | — | [skip-src-address](https://wiki.metacubex.one/ru/config/sniff/#skip-src-address): клиенты, трафик которых не сниффится. |
+| `SNIFFER_SKIP_DST_ADDRESS` | — | [skip-dst-address](https://wiki.metacubex.one/ru/config/sniff/#skip-dst-address): адреса назначения, которые не сниффятся. |
+| `SNIFFER_SKIP_DOMAIN` | — | [skip-domain](https://wiki.metacubex.one/ru/config/sniff/#skip-domain): домены, найденные в рукопожатии, которые игнорируются. |
+
+Что принимают эти списки:
+
+- адресные (`SNIFFER_SKIP_SRC_ADDRESS`, `SNIFFER_SKIP_DST_ADDRESS`) — CIDR (`192.168.88.10/32`, `10.0.0.0/8`), `geoip:КОД` и `rule-set:ИМЯ`;
+- доменный (`SNIFFER_SKIP_DOMAIN`) — домены с шаблонами (`+.example.com`, `*.example.com`), `geosite:ИМЯ` и `rule-set:ИМЯ`.
+
+Имя набора — это имя провайдера из `rule-providers` готового конфига, его видно на странице **YAML** в веб-панели. Для адресных списков набор должен быть с behavior `ipcidr` (`domain` — ошибка старта, у `classical` учтутся только ip-правила), для доменного — `domain` или `classical`. Несуществующее имя не даст ядру стартовать, а `geoip:`/`geosite:` заставят контейнер скачать geo-базы — на 128 МБ флешке роутера это заметно.
+
+Пример: `SNIFFER_SKIP_SRC_ADDRESS=192.168.88.10/32,10.10.0.0/16` и `SNIFFER_SKIP_DOMAIN=*.apple.com,+.icloud.com`.
 
 ### Логи и UI
 
