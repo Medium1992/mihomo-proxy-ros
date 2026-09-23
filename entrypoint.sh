@@ -96,6 +96,24 @@ DNS_PROXY_SERVER_NAMESERVER_FALLBACK="https://8.8.8.8/dns-query#disable-qtype-65
 DNS_DEFAULT_NAMESERVER="${DNS_DEFAULT_NAMESERVER:-$DNS_DEFAULT_NAMESERVER_FALLBACK}"
 DNS_NAMESERVER="${DNS_NAMESERVER:-$DNS_NAMESERVER_FALLBACK}"
 DNS_PROXY_SERVER_NAMESERVER="${DNS_PROXY_SERVER_NAMESERVER:-$DNS_PROXY_SERVER_NAMESERVER_FALLBACK}"
+# --- Сниффер ---
+# override-destination: ядро подменяет адрес назначения на домен, вынутый из
+# рукопожатия, и переподключается уже по нему. Это чинит маршрутизацию по
+# доменам для клиентов, которые резолвят мимо нас, но ломает случаи, где SNI
+# не совпадает с реальным получателем. Поэтому он включён, а исключения
+# задаются тремя списками ниже — через запятую.
+#
+# skip-src-address / skip-dst-address принимают CIDR, geoip:xx и
+# rule-set:<имя> (набор с behavior ipcidr; classical сработает только своими
+# ip-правилами, domain — ошибка старта).
+# skip-domain принимает домены с шаблонами (+.example.com, *.example.com),
+# geosite:xx и rule-set:<имя> (behavior domain или classical).
+# Имя rule-set — это имя провайдера из сгенерированного конфига, его видно на
+# странице YAML; несуществующее имя не даст ядру стартовать.
+SNIFFER_OVERRIDE_DESTINATION="${SNIFFER_OVERRIDE_DESTINATION:-true}"
+SNIFFER_SKIP_SRC_ADDRESS="${SNIFFER_SKIP_SRC_ADDRESS:-}"
+SNIFFER_SKIP_DST_ADDRESS="${SNIFFER_SKIP_DST_ADDRESS:-}"
+SNIFFER_SKIP_DOMAIN="${SNIFFER_SKIP_DOMAIN:-}"
 ZAPRET_PACKETS="${ZAPRET_PACKETS:-12}"
 ZAPRET2_PACKETS="${ZAPRET2_PACKETS:-12}"
 HEALTHCHECK_INTERVAL="${HEALTHCHECK_INTERVAL:-120}"
@@ -170,6 +188,10 @@ export FAKE_IP_TTL
 export DNS_DEFAULT_NAMESERVER
 export DNS_NAMESERVER
 export DNS_PROXY_SERVER_NAMESERVER
+export SNIFFER_OVERRIDE_DESTINATION
+export SNIFFER_SKIP_SRC_ADDRESS
+export SNIFFER_SKIP_DST_ADDRESS
+export SNIFFER_SKIP_DOMAIN
 export ZAPRET_PACKETS
 export ZAPRET2_PACKETS
 export HEALTHCHECK_INTERVAL
@@ -2812,6 +2834,26 @@ dns_list_lines() {
     sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | sed 's/^/    - /'
 }
 
+# --- Списки исключений сниффера ---
+# В отличие от DNS-серверов эти значения приходится закавычивать: домен вида
+# *.example.com начинается с '*', а это в YAML признак алиаса, и без кавычек
+# ядро на такой строке падает. Одинарная кавычка внутри удваивается.
+sniffer_skip_section() {
+  [ -n "$(printf '%s' "$2" | tr -d ' ,')" ] || return 0
+  echo "  $1:"
+  printf '%s\n' "$2" | tr ',' '\n' \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' \
+    | while IFS= read -r _sss_item; do
+        printf "    - '%s'\n" "$(printf '%s' "$_sss_item" | sed "s/'/''/g")"
+      done
+}
+
+generate_sniffer_skips() {
+  sniffer_skip_section "skip-src-address" "$SNIFFER_SKIP_SRC_ADDRESS"
+  sniffer_skip_section "skip-dst-address" "$SNIFFER_SKIP_DST_ADDRESS"
+  sniffer_skip_section "skip-domain" "$SNIFFER_SKIP_DOMAIN"
+}
+
 # Хост DNS-сервера из строки любого поддерживаемого вида: 1.1.1.1,
 # tls://1.1.1.1:853, https://dns.google/dns-query#params, [2606:4700::1111]:853.
 # Псевдо-серверы (system, dhcp://, rcode://) адреса не имеют и пропускаются.
@@ -4539,7 +4581,7 @@ hosts:
 
 sniffer:
   enable: ${SNIFFER:-true}
-  override-destination: false
+  override-destination: ${SNIFFER_OVERRIDE_DESTINATION}
   sniff:
     QUIC:
       ports: [443, 8443]
@@ -4547,8 +4589,10 @@ sniffer:
       ports: [443, 8443]
     HTTP:
       ports: [80, 8080-8880]
-      override-destination: false
 EOF
+  # HTTP больше не выключает override-destination отдельно: теперь все три
+  # сниффера следуют общему значению из env.
+  generate_sniffer_skips >> "$CONFIG_YAML"
 }
 
 # ------------------- NFT -------------------
