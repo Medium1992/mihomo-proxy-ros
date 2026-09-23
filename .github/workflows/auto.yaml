@@ -90,7 +90,9 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
-      fail-fast: false
+      # Упала одна архитектура — гасим остальные: релиз без части бинарников
+      # всё равно не опубликуется, а ждать доборку остальных незачем.
+      fail-fast: true
       matrix:
         # plain — обычная сборка без gVisor, gvisor — вариант под Tailscale.
         # Комбинации перечислены явно: ось flavor рядом с include GitHub
@@ -262,7 +264,11 @@ jobs:
 
   check-and-build:
     needs: [release-check, release-build, release-publish]
-    if: ${{ always() }}
+    # Раньше здесь стояло always(): задача запускалась при любом исходе — и
+    # после падения сборки, и после отмены прогона, поэтому отмена «не
+    # срабатывала». !cancelled() уважает отмену, а проверки ниже пускают
+    # дальше только при успешной (или пропущенной за ненадобностью) сборке.
+    if: ${{ !cancelled() && needs.release-check.result == 'success' && (needs.release-build.result == 'success' || needs.release-build.result == 'skipped') && (needs.release-publish.result == 'success' || needs.release-publish.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
