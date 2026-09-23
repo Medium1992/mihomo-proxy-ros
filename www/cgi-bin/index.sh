@@ -539,6 +539,67 @@ section_end() {
   printf '</section>\n'
 }
 
+# --- Слепок файлов на момент рендера ---
+# Страницы панели рендерятся один раз, при старте контейнера (render_static.sh),
+# а файлы на диске меняются в любой момент. Слепок фиксирует, какие файлы видел
+# контейнер при запуске, — с ним JS сравнивает живой список из list-files и
+# помечает, что добавлено, изменено или удалено уже после старта и вступит в
+# силу только после перезапуска. Для env то же самое делает сравнение черновика
+# с отрендеренными значениями.
+json_str() {
+  # JSON-строка без кавычек по краям; «<» экранируется, чтобы имя файла не
+  # могло закрыть <script> раньше времени.
+  printf '%s' "$1" | awk '
+    BEGIN { for (i = 1; i < 32; i++) ctrl[sprintf("%c", i)] = sprintf("\\u%04x", i) }
+    {
+      gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/</, "\\u003c")
+      for (c in ctrl) gsub(c, ctrl[c])
+      if (NR > 1) printf "\\n"
+      printf "%s", $0
+    }'
+}
+
+startup_files_json() {
+  printf '{'
+  _sf_first_type=1
+  for _sf_pair in "ruleset:$RULE_SET_DIR" "awg:$AWG_DIR" "proxy:$PROXIES_DIR" \
+                  "trusttunnel:$TRUSTTUNNEL_DIR" "openvpn:$OPENVPN_DIR" \
+                  "fakebin:/zapret-fakebin" "zlist:/zapret-lists"; do
+    _sf_type="${_sf_pair%%:*}"
+    _sf_dir="${_sf_pair#*:}"
+    [ "$_sf_first_type" -eq 1 ] || printf ','
+    _sf_first_type=0
+    printf '"%s":' "$_sf_type"
+    if [ ! -d "$_sf_dir" ]; then
+      # каталог не смонтирован — это не «пусто», а «нечего сравнивать»
+      printf 'null'
+      continue
+    fi
+    printf '{'
+    _sf_first=1
+    for _sf_f in "$_sf_dir"/*; do
+      [ -f "$_sf_f" ] || continue
+      _sf_sum="$(cksum < "$_sf_f" 2>/dev/null | awk '{print $1}')"
+      [ "$_sf_first" -eq 1 ] || printf ','
+      _sf_first=0
+      printf '"%s":"%s"' "$(json_str "$(basename "$_sf_f")")" "${_sf_sum:-0}"
+    done
+    printf '}'
+  done
+  printf '}'
+}
+
+startup_files_script() {
+  printf '<script id="startup-files" type="application/json">'
+  startup_files_json
+  printf '</script>\n'
+}
+
+nav_group() {
+  printf '<div class="nav-group">%s</div>
+' "$1"
+}
+
 nav_item() {
   id="$1"; title="$2"; icon="$3"
   class=""
@@ -578,6 +639,9 @@ header() {
   <title>Mihomo Proxy ROS</title>
 </head>
 <body data-page="$page">
+EOF
+  startup_files_script
+  cat <<EOF
 <div class="app">
   <aside class="side">
     <a class="brand" href="$(page_url overview)">
@@ -587,21 +651,28 @@ header() {
     </a>
     <nav>
 EOF
+  # Порядок — это путь настройки: откуда брать прокси, как их собрать в
+  # группы и что куда направить; ядро и порты трогают реже, проверка — в конце.
+  # Идентификаторы страниц прежние: на них завязан статический рендер.
   nav_item overview "Обзор" "⌁"
-  nav_item core "Ядро и DNS" "⚙"
+  nav_group "Откуда выходить"
   nav_item providers "Прокси-провайдеры" "+"
-  nav_item listeners "Входящие порты" "⇥"
-  nav_item dpi "DPI" "◇"
+  nav_item dpi "Обход DPI" "◇"
+  nav_group "Куда что направлять"
   nav_item groups "Прокси-группы" "☷"
-  nav_item rules "Правила маршрутизации" "≡"
+  nav_item rules "Правила и сайты" "≡"
   nav_item rulesets "Наборы правил" "▣"
-  nav_item yaml "YAML" "{}"
+  nav_group "Настройки"
+  nav_item core "Ядро и DNS" "⚙"
+  nav_item listeners "Входящие подключения" "⇥"
+  nav_group "Проверка"
+  nav_item yaml "Итоговый YAML" "{}"
   nav_item tools "Инструменты" "↯"
   cat <<EOF
     </nav>
     <div class="side-note">
-      <b>sh-only</b>
-      <span>Страницы генерируются shell-скриптом из env. Команды собираются локально в браузере.</span>
+      <b>Как это работает</b>
+      <span>Правки в панели — черновик. Кнопка «Команды MikroTik» превращает его в команды RouterOS: их вставляют в терминал роутера, и контейнер перезапускается с новыми настройками.</span>
     </div>
   </aside>
   <main class="main">
@@ -616,9 +687,8 @@ EOF
           <b id="themeLabel">Темная</b>
         </button>
         <button class="panel-open" type="button" onclick="openMihomoPanel(this)" data-ui-url="$(env_attr EXTERNAL_UI_URL "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip")" title="Открыть панель mihomo: адрес контейнера, порт 9090, secret подставляется автоматически"><span aria-hidden="true">◫</span>Панель Mihomo</button>
-        <a class="ghost" href="$(page_url yaml)">Смотреть YAML</a>
-        <button class="ghost" type="button" onclick="resetCurrentPageDraft()">Сбросить страницу</button>
-        <button class="ghost" type="button" onclick="resetUiDraft()">Сбросить черновик</button>
+        <button class="ghost reset-btn" type="button" onclick="resetCurrentPageDraft()" title="Вернуть поля этой страницы к значениям с роутера">Сбросить страницу</button>
+        <button class="ghost reset-btn" type="button" onclick="resetUiDraft()" title="Стереть все несохранённые правки на всех страницах">Сбросить всё</button>
         <button class="primary command-trigger" type="button" onclick="generateCommands()">Команды MikroTik</button>
       </div>
     </header>
@@ -635,26 +705,29 @@ footer() {
     <section id="commands" class="command-panel" hidden>
       <button type="button" class="command-close" onclick="hideCommands()" title="Закрыть">&#10005;</button>
       <div>
-        <h2>Команды для MikroTik</h2>
-        <p>Генератор сравнивает исходное значение env с тем, что сейчас в форме: новое добавляет, измененное правит, очищенное или удаленное удаляет.</p>
+        <h2>Что изменится на роутере</h2>
+        <p>Ниже — всё, чем черновик отличается от того, что сейчас стоит в контейнере. Проверьте список, затем скопируйте команды и вставьте их в терминал роутера (Winbox → New Terminal или SSH): контейнер остановится, получит новые переменные и запустится снова.</p>
       </div>
-      <label class="command-list-field">
-        <span>ENV list</span>
-        <input id="commandEnvList" value="MihomoProxyRoS" spellcheck="false">
-      </label>
-      <div class="command-grid">
+      <div id="commandsChanges" class="changes-box"></div>
+      <div class="command-main">
+        <div class="command-main-head">
+          <b>Команды для терминала</b>
+          <button class="primary" type="button" onclick="copyCommands()">Скопировать команды</button>
+        </div>
+        <textarea id="commandsAllText" readonly spellcheck="false" aria-label="Команды RouterOS по всем изменениям"></textarea>
+      </div>
+      <details class="command-more">
+        <summary>Дополнительно</summary>
+        <label class="command-list-field">
+          <span>Имя env list на роутере</span>
+          <input id="commandEnvList" value="MihomoProxyRoS" spellcheck="false">
+          <small>Список переменных, к которому подключён контейнер. Меняйте, только если при установке задавали своё имя.</small>
+        </label>
         <label>
-          <span>Текущая страница</span>
+          <span>Только изменения этой страницы</span>
           <textarea id="commandsText" readonly spellcheck="false"></textarea>
         </label>
-        <label>
-          <span>Суммарно по всем измененным env</span>
-          <textarea id="commandsAllText" readonly spellcheck="false"></textarea>
-        </label>
-      </div>
-      <div class="command-actions">
-        <button class="ghost" type="button" onclick="copyCommands()">Скопировать суммарные</button>
-      </div>
+      </details>
     </section>
   </main>
 </div>
@@ -663,7 +736,7 @@ footer() {
   <div class="modal-content">
     <header><b>&#1056;&#1077;&#1076;&#1072;&#1082;&#1090;&#1086;&#1088; rule-set</b><button type="button" onclick="closeRuleSetModal()">&#10005;</button></header>
     <div class="modal-body">
-      <label><span>&#1048;&#1084;&#1103; rule-set</span><input id="ruleSetModalName" placeholder="custom"></label>
+      <label><span>&#1048;&#1084;&#1103; rule-set</span><input id="ruleSetModalName" placeholder="custom" autocomplete="off"><small class="name-hint" id="ruleSetModalNameHint" aria-live="polite"></small></label>
       <label><span>&#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1072; (plain-text)</span><textarea id="ruleSetModalPlain" rows="10" placeholder="DOMAIN,example.com&#10;DOMAIN-SUFFIX,example.org"></textarea></label>
       <div class="rule-set-preview"><b>Preview base64</b><code id="ruleSetModalPreview"></code></div>
     </div>
@@ -685,41 +758,89 @@ overview_page() {
   group_count="$(env_default GROUP '' | tr ',' '\n' | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
   dpi_count="$(printenv | grep -E '^(BYEDPI_CMD|ZAPRET_CMD|ZAPRET2_CMD)' | wc -l | tr -d ' ')"
   yaml_count="$(active_yaml_files | sort -u | wc -l | tr -d ' ')"
+  awg_count=0
+  if [ -d "$AWG_DIR" ]; then
+    for f in "$AWG_DIR"/*.conf; do [ -f "$f" ] && awg_count=$((awg_count + 1)); done
+  fi
+  mount_count=0
+  if [ -d "$PROXIES_DIR" ]; then
+    for f in "$PROXIES_DIR"/*.yaml "$PROXIES_DIR"/*.yml; do [ -f "$f" ] && mount_count=$((mount_count + 1)); done
+  fi
+  source_count=$((link_count + sub_count + socks_count + dpi_count + awg_count + mount_count))
+  route_count="$(count_env '^([A-Z0-9_]+_(GEOSITE|GEOIP|AS|DOMAIN|SUFFIX|KEYWORD|IPCIDR|SRCIPCIDR|DSCP)|RULES[0-9]+|RULE_SET[0-9]+_BASE64)=')"
+
+  # Шаг выполнен — галочка; нет — подсказка, что сделать и где.
+  step() {
+    _done="$1"; _title="$2"; _text="$3"; _href="$4"; _action="$5"
+    if [ "$_done" = "1" ]; then _cls="step done"; _mark="✓"; else _cls="step"; _mark="○"; fi
+    printf '<li class="%s"><span class="step-mark">%s</span><div><b>%s</b><span>%s</span></div>' "$_cls" "$_mark" "$_title" "$_text"
+    [ -n "$_href" ] && printf '<a class="step-action" href="%s">%s</a>' "$_href" "$_action"
+    printf '</li>\n'
+  }
+
   cat <<EOF
 <section class="overview-head">
   <div>
     <p class="eyebrow">состояние контейнера</p>
-    <h2>Обзор конфигурации</h2>
-    <p>Текущие env сгруппированы так же, как entrypoint собирает mihomo: ядро, источники прокси, DPI-обходы, группы, правила и YAML-файлы.</p>
+    <h2>Обзор</h2>
+    <p>Панель собирает переменные окружения контейнера. Путь настройки простой: добавить прокси, решить, какой трафик через что пускать, и отправить изменения на роутер.</p>
   </div>
   <div class="config-card">
-    <span>основной файл</span>
+    <span>итоговый конфиг</span>
     <b>config.yaml</b>
     <code>$CONFIG_DIR/config.yaml</code>
     <a href="$(page_url yaml)">Открыть YAML</a>
   </div>
 </section>
-<section class="stats">
-  <a href="$(page_url providers)"><b>$link_count</b><span>LINK</span></a>
-  <a href="$(page_url providers)"><b>$sub_count</b><span>SUB_LINK</span></a>
-  <a href="$(page_url providers)"><b>$socks_count</b><span>SOCKS</span></a>
-  <a href="$(page_url dpi)"><b>$dpi_count</b><span>DPI env</span></a>
-  <a href="$(page_url groups)"><b>$group_count</b><span>групп</span></a>
-  <a href="$(page_url yaml)"><b>$yaml_count</b><span>YAML</span></a>
-</section>
 EOF
-  section_start "Карта env" "Как entrypoint превращает переменные в mihomo-конфиг."
+  section_start "С чего начать" "Три шага от пустого контейнера до работающей маршрутизации."
+  echo '<ol class="steps">'
+  if [ "$source_count" -gt 0 ]; then
+    step 1 "Прокси добавлены" "Источников: $source_count. Ссылки, подписки, SOCKS, DPI-обходы и смонтированные конфиги." "$(page_url providers)" "Открыть"
+  else
+    step 0 "Добавьте прокси" "Пока контейнеру некуда отправлять трафик. Вставьте ссылку vless:// или адрес подписки." "$(page_url providers)" "Добавить"
+  fi
+  if [ "$route_count" -gt 0 ]; then
+    step 1 "Маршрутизация настроена" "Правил и списков сайтов: $route_count. Остальной трафик идёт через группу GLOBAL." "$(page_url rules)" "Правила"
+  else
+    step 0 "Решите, что пускать через прокси" "Сейчас весь трафик идёт через GLOBAL. Чтобы через прокси шли только нужные сайты, добавьте их ниже или на странице групп." "$(page_url groups)" "Группы"
+  fi
   cat <<'EOF'
-<div class="map">
-  <article><b>Ядро</b><span>LOG_LEVEL, UI_SECRET, TPROXY, SNIFFER*, DNS_MODE, FAKE_IP_*</span></article>
-  <article><b>Прокси-провайдеры</b><span>LINK*, SUB_LINK*, SOCKS*, mounted AWG и proxies_mount</span></article>
-  <article><b>DPI</b><span>BYEDPI_CMD*, ZAPRET_CMD*, ZAPRET2_CMD*, packets и WireGuard dst</span></article>
-  <article><b>Прокси-группы</b><span>GLOBAL_*, DNS_*, GROUP и переменные вида NAME_GEOSITE/USE/TYPE</span></article>
-  <article><b>Правила</b><span>RULES*, RULE_SET*_BASE64 и файлы rule_set_list</span></article>
-  <article><b>YAML</b><span>config.yaml плюс все file providers и payload-файлы в CONFIG_DIR</span></article>
-</div>
+<li class="step" data-pending-step>
+  <span class="step-mark">○</span>
+  <div><b>Отправьте изменения на роутер</b><span data-pending-text>Черновик пуст — на роутере то же, что в панели.</span></div>
+  <button class="step-action primary" type="button" onclick="generateCommands()" data-pending-button hidden>Команды MikroTik</button>
+</li>
+</ol>
 EOF
   section_end
+
+  known_providers_seed
+  section_start "Добавить сайт" "Самый частый сценарий — пустить один сайт через нужный прокси."
+  quick_site_card
+  section_end
+
+  cat <<EOF
+<section class="stats">
+  <a href="$(page_url providers)"><b>$link_count</b><span>ссылок</span></a>
+  <a href="$(page_url providers)"><b>$sub_count</b><span>подписок</span></a>
+  <a href="$(page_url dpi)"><b>$dpi_count</b><span>DPI-обходов</span></a>
+  <a href="$(page_url groups)"><b>$group_count</b><span>своих групп</span></a>
+  <a href="$(page_url rules)"><b>$route_count</b><span>правил</span></a>
+  <a href="$(page_url yaml)"><b>$yaml_count</b><span>YAML-файлов</span></a>
+</section>
+<details class="overview-map">
+  <summary>Как переменные превращаются в конфиг</summary>
+  <div class="map">
+    <article><b>Ядро</b><span>LOG_LEVEL, UI_SECRET, TPROXY, SNIFFER*, DNS_MODE, FAKE_IP_*</span></article>
+    <article><b>Прокси-провайдеры</b><span>LINK*, SUB_LINK*, SOCKS*, mounted AWG и proxies_mount</span></article>
+    <article><b>DPI</b><span>BYEDPI_CMD*, ZAPRET_CMD*, ZAPRET2_CMD*, packets и WireGuard dst</span></article>
+    <article><b>Прокси-группы</b><span>GLOBAL_*, DNS_*, GROUP и переменные вида NAME_GEOSITE/USE/TYPE</span></article>
+    <article><b>Правила</b><span>RULES*, RULE_SET*_BASE64 и файлы rule_set_list</span></article>
+    <article><b>YAML</b><span>config.yaml плюс все file providers и payload-файлы в CONFIG_DIR</span></article>
+  </div>
+</details>
+EOF
 }
 
 # Вкладка «Сниффер»: общий выключатель, override-destination и три списка
@@ -753,15 +874,37 @@ core_page() {
     core    "Ядро" \
     sniffer "Сниффер" \
     dns     "DNS"
-  section_start_tab core "Ядро mihomo" "Базовые настройки контроллера, UI, inbound-режима и sniffing."
-  echo '<div class="grid">'
-  select_field LOG_LEVEL "Логи" "Уровень <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/#log-level\" target=\"_blank\" rel=\"noopener\">log-level</a> mihomo." error "silent error warning info debug"
+  section_start_tab core "Ядро mihomo" "Как контейнер перехватывает трафик, панель mihomo и логи."
+  cat <<'EOF'
+  <section class="group-sec">
+    <div class="group-sec-head"><b>Перехват трафика</b></div>
+    <p class="group-sec-note">Как трафик локальной сети попадает в mihomo. Менять стоит, только если роутер не поддерживает режим по умолчанию.</p>
+    <div class="grid">
+EOF
+  toggle_field TPROXY "TPROXY" "Включено — TProxy для TCP и UDP (RouterOS 7.21+ на arm64/amd64, через NFTables). Выключено — redirect для TCP и TUN для UDP: для более старых RouterOS и armv7." true
+  cat <<'EOF'
+    </div>
+  </section>
+  <section class="group-sec">
+    <div class="group-sec-head"><b>Панель mihomo</b></div>
+    <p class="group-sec-note">Веб-панель самого ядра на порту 9090: в ней видно соединения и переключаются группы. Открывается кнопкой «Панель Mihomo» вверху.</p>
+    <div class="grid">
+EOF
   external_ui_preset_field
   field EXTERNAL_UI_URL "External UI" "Zip-архив панели для <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/#external-ui-url\" target=\"_blank\" rel=\"noopener\">external-ui-url</a>." "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip" text "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip"
-  field UI_SECRET "UI secret" "Пароль <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/#secret\" target=\"_blank\" rel=\"noopener\">secret</a> external-controller. Оставьте пустым только в закрытой сети." "" password ""
-  field AMNEZIA_PREMIUM_PUBLIC_KEY_FILE "Amnezia public key file" "Файл публичного ключа gateway для vpn:// Amnezia Premium." "/awg" text "/awg"
-  toggle_field TPROXY "TPROXY" "true: tproxy TCP/UDP, false: redirect TCP + tun UDP." true
-  echo '</div>'
+  field UI_SECRET "UI secret" "Пароль <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/#secret\" target=\"_blank\" rel=\"noopener\">secret</a> к панели и API на порту 9090. Оставьте пустым только в закрытой сети." "" password ""
+  cat <<'EOF'
+    </div>
+  </section>
+  <section class="group-sec">
+    <div class="group-sec-head"><b>Логи</b></div>
+    <div class="grid">
+EOF
+  select_field LOG_LEVEL "Уровень логов" "Уровень <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/#log-level\" target=\"_blank\" rel=\"noopener\">log-level</a> mihomo. <code>debug</code> пишет много — включайте только на время разбора проблемы." error "silent error warning info debug"
+  cat <<'EOF'
+    </div>
+  </section>
+EOF
   section_end
 
   sniffer_tab
@@ -819,14 +962,98 @@ EOF
   section_end
 }
 
+# --- Строки провайдеров ---
+# Содержимое строки без обёртки <div class="env-row">: сервер оборачивает её
+# сам, а JS кладёт то же самое в innerHTML новой строки. Одна разметка на оба
+# пути — как у панелей прокси-групп.
+#
+# На виду остаётся только ссылка: у подписки было 13 полей в строке, хотя
+# почти всем нужен один URL. Остальное уезжает под «Настроить подписку», и
+# заголовок показывает, сколько переменных там реально задано.
+
+link_row_inner() {
+  _n="$1"; _d="${2:-$1}"
+  if env_masked "$_n"; then _lp="$(secret_attrs "$_n")"; else _lp=' placeholder="vless:// vmess:// ss:// trojan:// socks5:// vpn://"'; fi
+  cat <<EOF
+  <div class="row-main">
+    <label class="row-url"><span>$_d</span><input name="$_n" value="$(env_attr_masked "$_n" "")"$_lp data-link-url>$(secret_btn "$_n" "inline")</label>
+    <button type="button" class="row-remove" onclick="removeEnvRow(this)">Удалить</button>
+  </div>
+  <details class="row-extras"$(group_sec_open "${_n}_DIALER_PROXY" "${_n}_AMNEZIA_COUNTRY")>
+    <summary>Дополнительно$(group_sec_count "${_n}_DIALER_PROXY" "${_n}_AMNEZIA_COUNTRY")</summary>
+    <div class="row-extras-grid">
+      <label class="field-validated" data-validate="proxy_name"><span>${_d}_DIALER_PROXY</span><input name="${_n}_DIALER_PROXY" value="$(env_attr "${_n}_DIALER_PROXY" "")" placeholder="GLOBAL"><small>Через какой прокси выходит этот узел.</small></label>
+      <label data-when-link="vpn"><span>${_d}_AMNEZIA_COUNTRY</span><input name="${_n}_AMNEZIA_COUNTRY" value="$(env_attr "${_n}_AMNEZIA_COUNTRY" "")" placeholder="nl"><small>Только для ссылок <code>vpn://</code> Amnezia Premium.</small></label>
+    </div>
+  </details>
+EOF
+}
+
+sub_link_row_inner() {
+  _n="$1"; _d="${2:-$1}"
+  if env_masked "$_n"; then _sp="$(secret_attrs "$_n")"; else _sp=' placeholder="https://subscription или happ://crypt5/..."'; fi
+  _extras="${_n}_INTERVAL ${_n}_PROXY ${_n}_DIALER_PROXY ${_n}_FILTER ${_n}_EXCLUDE_FILTER ${_n}_EXCLUDE_TYPE ${_n}_ADDITIONAL_PREFIX ${_n}_ADDITIONAL_SUFFIX ${_n}_CONVERT ${_n}_MLKEM ${_n}_OVERRIDE_EXPR ${_n}_HEADERS"
+  cat <<EOF
+  <div class="row-main">
+    <label class="row-url"><span>$_d</span><input name="$_n" value="$(env_attr_masked "$_n" "")"$_sp>$(secret_btn "$_n" "inline")</label>
+    <button type="button" class="row-remove" onclick="removeEnvRow(this)">Удалить</button>
+  </div>
+  <details class="row-extras"$(group_sec_open $_extras)>
+    <summary>Настроить подписку$(group_sec_count $_extras)</summary>
+    <div class="row-extras-grid">
+      <label><span>${_d}_INTERVAL</span><input type="number" name="${_n}_INTERVAL" value="$(env_attr "${_n}_INTERVAL" "")" placeholder="3600"><small>Как часто обновлять. Пусто → общий <code>SUB_LINK_INTERVAL</code>.</small></label>
+      <label><span>${_d}_PROXY</span><input name="${_n}_PROXY" value="$(env_attr "${_n}_PROXY" "")" placeholder="DIRECT"><small>Через что скачивать саму подписку.</small></label>
+      <label class="field-validated" data-validate="proxy_name"><span>${_d}_DIALER_PROXY</span><input name="${_n}_DIALER_PROXY" value="$(env_attr "${_n}_DIALER_PROXY" "")" placeholder="GLOBAL"><small>Через что ходят узлы из этой подписки.</small></label>
+      <label><span>${_d}_FILTER</span><input name="${_n}_FILTER" value="$(env_attr "${_n}_FILTER" "")" placeholder="(?i)hk|hongkong"><small>Оставить только узлы, чьи имена подходят.</small></label>
+      <label><span>${_d}_EXCLUDE_FILTER</span><input name="${_n}_EXCLUDE_FILTER" value="$(env_attr "${_n}_EXCLUDE_FILTER" "")" placeholder="(?i)test"><small>Выкинуть узлы по имени.</small></label>
+      <label class="field-validated" data-validate="exclude_type"><span>${_d}_EXCLUDE_TYPE</span><input name="${_n}_EXCLUDE_TYPE" value="$(env_attr "${_n}_EXCLUDE_TYPE" "")" placeholder="vmess|direct"><small>Выкинуть узлы по протоколу, разделитель <code>|</code>.</small></label>
+      <label><span>${_d}_ADDITIONAL_PREFIX</span><input name="${_n}_ADDITIONAL_PREFIX" value="$(env_attr "${_n}_ADDITIONAL_PREFIX" "")" placeholder="${_d} | "><small>Приписка перед именем каждого узла.</small></label>
+      <label><span>${_d}_ADDITIONAL_SUFFIX</span><input name="${_n}_ADDITIONAL_SUFFIX" value="$(env_attr "${_n}_ADDITIONAL_SUFFIX" "")" placeholder=" | ${_d}"><small>Приписка после имени каждого узла.</small></label>
+      <label><span>${_d}_CONVERT</span><select name="${_n}_CONVERT"><option value=""$(selected "${_n}_CONVERT" "" "")>auto</option><option value="xray2mihomo"$(selected "${_n}_CONVERT" "xray2mihomo" "")>xray2mihomo</option><option value="none"$(selected "${_n}_CONVERT" "none" "")>none</option></select><small><code>auto</code>: happ-ссылки идут через конвертер, обычные напрямую.</small></label>
+      <label><span>${_d}_MLKEM</span><select name="${_n}_MLKEM"><option value=""$(selected "${_n}_MLKEM" "" "")>как REALITY_MLKEM</option><option value="auto"$(selected "${_n}_MLKEM" "auto" "")>auto</option><option value="true"$(selected "${_n}_MLKEM" "true" "")>true</option><option value="false"$(selected "${_n}_MLKEM" "false" "")>false</option><option value="off"$(selected "${_n}_MLKEM" "off" "")>off</option></select><small>Post-quantum REALITY для узлов этой подписки.</small></label>
+      <label class="row-extras-wide"><span>${_d}_OVERRIDE_EXPR</span><input name="${_n}_OVERRIDE_EXPR" value="$(env_attr "${_n}_OVERRIDE_EXPR" "")" placeholder=".udp = true # .name |= upcase"><small>Выражения override для каждого узла, несколько через <code>#</code>.</small></label>
+    </div>
+    <div class="headers-editor">
+      <span>${_d}_HEADERS $(secret_btn "${_n}_HEADERS" "inline")</span>
+      <input type="hidden" class="sub-link-headers-value" name="${_n}_HEADERS" value="$(env_attr_masked "${_n}_HEADERS" "")"$(secret_attrs "${_n}_HEADERS")>
+      <div class="headers-rows"></div>
+      <button type="button" class="headers-add">Добавить header</button>
+    </div>
+  </details>
+EOF
+}
+
+# Шаблоны для строк, которые создаёт JS: та же разметка, что у серверных.
+provider_row_templates() {
+  printf '<template id="linkRowTemplate">'
+  link_row_inner "__NAME__" "__DISPLAY__"
+  printf '</template>'
+  printf '<template id="subLinkRowTemplate">'
+  sub_link_row_inner "__NAME__" "__DISPLAY__"
+  printf '</template>\n'
+}
+
 providers_page() {
-  page_tabs_nav \
-    health    "Health-check" \
-    link      "LINK*" \
-    sub-link  "SUB_LINK*" \
-    socks     "SOCKS*" \
-    veth      "Интерфейсы" \
-    mounted   "Mounted"
+  # Вкладка SOCKS* — наследие: те же прокси задаются ссылкой socks5:// в LINK*.
+  # Пока ни одной такой env нет, она только занимает место в навигации.
+  socks_tab_count="$(count_env '^SOCKS[0-9]+=')"
+  if [ "$socks_tab_count" -gt 0 ]; then
+    page_tabs_nav \
+      health    "Health-check" \
+      link      "LINK*" \
+      sub-link  "SUB_LINK*" \
+      socks     "SOCKS* (устар.)" \
+      veth      "Интерфейсы" \
+      mounted   "Mounted"
+  else
+    page_tabs_nav \
+      health    "Health-check" \
+      link      "LINK*" \
+      sub-link  "SUB_LINK*" \
+      veth      "Интерфейсы" \
+      mounted   "Mounted"
+  fi
+  provider_row_templates
   section_start_tab health "Health-check" "Общие настройки проверки доступности для file/http proxy-providers или proxy-groups."
   cat <<'EOF'
 <div class="notice">
@@ -851,61 +1078,47 @@ EOF
   echo '</div>'
   section_end
 
-  section_start_tab link "LINK*" "Одиночные ссылки: vless/vmess/ss/trojan/base64/vpn://. Для каждого можно задать DIALER_PROXY."
+  section_start_tab link "LINK*" "Одиночные ссылки: vless, vmess, ss, trojan, socks5, base64 и vpn:// Amnezia Premium."
   echo '<div class="subhead"><b>LINK</b><button type="button" onclick="addRow('\''links'\'', '\''LINK'\'', false)">Добавить LINK</button></div><div id="links" class="rows">'
   for name in $(env_names '^LINK[0-9]*='); do
-    val="$(env_attr_masked "$name" "")"; idx="$(printf '%s' "$name" | sed 's/LINK//')"; [ -z "$idx" ] && idx=0
-    if env_masked "$name"; then link_ph="$(secret_attrs "$name")"; else link_ph=' placeholder="vless://..."'; fi
-    cat <<EOF
-<div class="env-row env-row-stack link-row" data-index="$idx">
-  <label><span>$name</span><input name="$name" value="$val"$link_ph>$(secret_btn "$name" "inline")</label>
-  <label class="field-validated" data-validate="proxy_name"><span>${name}_DIALER_PROXY</span><input name="${name}_DIALER_PROXY" value="$(env_attr "${name}_DIALER_PROXY" "")" placeholder="GLOBAL"></label>
-  <label><span>${name}_AMNEZIA_COUNTRY</span><input name="${name}_AMNEZIA_COUNTRY" value="$(env_attr "${name}_AMNEZIA_COUNTRY" "")" placeholder="nl"></label>
-  <button type="button" onclick="removeEnvRow(this)">Удалить</button>
-</div>
-EOF
+    idx="$(printf '%s' "$name" | sed 's/LINK//')"; [ -z "$idx" ] && idx=0
+    printf '<div class="env-row env-row-stack link-row" data-index="%s">
+' "$idx"
+    link_row_inner "$name" "LINK$idx"
+    printf '</div>
+'
   done
   cat <<'EOF'
 </div>
 <div class="note-list">
-  <div><b>SOCKSxx</b><span>ENV остается в контейнере, но в этой панели не редактируется: SOCKS удобнее задавать ссылкой вида <code>socks5://</code> прямо в LINKxx.</span></div>
+  <div><b>SOCKS-прокси</b><span>Задаются ссылкой вида <code>socks5://user:pass@host:port</code> прямо в <code>LINKxx</code> — формат универсальнее. Отдельные <code>SOCKSxx</code> оставлены для совместимости: вкладка с ними появляется сама, если хотя бы одна такая переменная задана. <button type="button" class="link-button" onclick="revealSocksTab()">Показать вкладку SOCKS*</button></span></div>
   <div><b>LINKxx_DIALER_PROXY</b><span>Задает <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxies/#dialer-proxy" target="_blank" rel="noopener">dialer-proxy</a> для конкретного proxy.</span></div>
   <div><b>LINKxx_AMNEZIA_COUNTRY</b><span>Используется для ссылок <code>vpn://</code> Amnezia Premium: укажите страну, например <code>nl</code>.</span></div>
 </div>
 EOF
+  # Общий для всех vpn://-ссылок параметр: раньше жил на странице ядра, хотя
+  # к ядру отношения не имеет.
+  cat <<'EOF'
+<details class="row-extras">
+  <summary>Amnezia Premium: ключ gateway</summary>
+  <div class="grid">
+EOF
+  field AMNEZIA_PREMIUM_PUBLIC_KEY_FILE "Amnezia public key file" "Файл публичного ключа gateway, общий для всех ссылок <code>vpn://</code>. Менять нужно, только если ключ смонтирован в другое место." "/awg" text "/awg"
+  echo '  </div>'
+  echo '</details>'
+
   section_end
 
   section_start_tab sub-link "SUB_LINK*" "HTTP subscriptions: URL, interval, proxy, headers и dialer-proxy."
   field SUB_LINK_INTERVAL "Default interval" "Дефолт для SUB_LINK*_INTERVAL." "3600" number "3600"
   echo '<div class="subhead"><b>SUB_LINK</b><button type="button" onclick="addRow('\''subs'\'', '\''SUB_LINK'\'', false)">Добавить SUB_LINK</button></div><div id="subs" class="rows">'
   for name in $(env_names '^SUB_LINK[0-9]+='); do
-    val="$(env_attr_masked "$name" "")"; idx="$(printf '%s' "$name" | sed 's/SUB_LINK//')"
-    if env_masked "$name"; then sub_ph="$(secret_attrs "$name")"; else sub_ph=' placeholder="https://subscription или happ://crypt5/..."'; fi
-    cat <<EOF
-<div class="env-row env-row-stack sub-link-row" data-index="$idx">
-  <label><span>$name</span><input name="$name" value="$val"$sub_ph>$(secret_btn "$name" "inline")</label>
-  <label><span>${name}_INTERVAL</span><input type="number" name="${name}_INTERVAL" value="$(env_attr "${name}_INTERVAL" "")" placeholder="3600"></label>
-  <label><span>${name}_PROXY</span><input name="${name}_PROXY" value="$(env_attr "${name}_PROXY" "")" placeholder="DIRECT"></label>
-  <label class="field-validated" data-validate="proxy_name"><span>${name}_DIALER_PROXY</span><input name="${name}_DIALER_PROXY" value="$(env_attr "${name}_DIALER_PROXY" "")" placeholder="GLOBAL"></label>
-  <div class="sub-link-extras">
-    <label><span>${name}_FILTER</span><input name="${name}_FILTER" value="$(env_attr "${name}_FILTER" "")" placeholder="(?i)hk|hongkong"></label>
-    <label><span>${name}_EXCLUDE_FILTER</span><input name="${name}_EXCLUDE_FILTER" value="$(env_attr "${name}_EXCLUDE_FILTER" "")" placeholder="(?i)test"></label>
-    <label class="field-validated" data-validate="exclude_type"><span>${name}_EXCLUDE_TYPE</span><input name="${name}_EXCLUDE_TYPE" value="$(env_attr "${name}_EXCLUDE_TYPE" "")" placeholder="vmess|direct"></label>
-    <label><span>${name}_ADDITIONAL_PREFIX</span><input name="${name}_ADDITIONAL_PREFIX" value="$(env_attr "${name}_ADDITIONAL_PREFIX" "")" placeholder="${name} | "></label>
-    <label><span>${name}_ADDITIONAL_SUFFIX</span><input name="${name}_ADDITIONAL_SUFFIX" value="$(env_attr "${name}_ADDITIONAL_SUFFIX" "")" placeholder=" | ${name}"></label>
-    <label><span>${name}_CONVERT</span><select name="${name}_CONVERT"><option value=""$(selected "${name}_CONVERT" "" "")>auto</option><option value="xray2mihomo"$(selected "${name}_CONVERT" "xray2mihomo" "")>xray2mihomo</option><option value="none"$(selected "${name}_CONVERT" "none" "")>none</option></select></label>
-    <label><span>${name}_MLKEM</span><select name="${name}_MLKEM"><option value=""$(selected "${name}_MLKEM" "" "")>как REALITY_MLKEM</option><option value="auto"$(selected "${name}_MLKEM" "auto" "")>auto</option><option value="true"$(selected "${name}_MLKEM" "true" "")>true</option><option value="false"$(selected "${name}_MLKEM" "false" "")>false</option><option value="off"$(selected "${name}_MLKEM" "off" "")>off</option></select></label>
-    <label><span>${name}_OVERRIDE_EXPR</span><input name="${name}_OVERRIDE_EXPR" value="$(env_attr "${name}_OVERRIDE_EXPR" "")" placeholder=".udp = true # .name |= upcase"></label>
-  </div>
-  <div class="headers-editor">
-    <span>${name}_HEADERS $(secret_btn "${name}_HEADERS" "inline")</span>
-    <input type="hidden" class="sub-link-headers-value" name="${name}_HEADERS" value="$(env_attr_masked "${name}_HEADERS" "")"$(secret_attrs "${name}_HEADERS")>
-    <div class="headers-rows"></div>
-    <button type="button" class="headers-add">Добавить header</button>
-  </div>
-  <button type="button" onclick="removeEnvRow(this)">Удалить</button>
-</div>
-EOF
+    idx="$(printf '%s' "$name" | sed 's/SUB_LINK//')"
+    printf '<div class="env-row env-row-stack sub-link-row" data-index="%s">
+' "$idx"
+    sub_link_row_inner "$name" "$name"
+    printf '</div>
+'
   done
   cat <<'EOF'
 </div>
@@ -1790,33 +2003,90 @@ default_group_block() {
   <div class="group-pane-head">
     <div class="notice">
       <b>DEFAULT</b>
-      <span>Эти значения используются для GLOBAL и пользовательских групп, если у них нет собственного env. ENV <code>GROUP</code> скрыт и собирается автоматически из списка групп слева, кроме DEFAULT, GLOBAL и DNS.</span>
+      <span>Эти значения подставляются в GLOBAL и пользовательские группы, у которых нет собственного env. ENV <code>GROUP</code> скрыт и собирается автоматически из списка групп слева, кроме DEFAULT, GLOBAL и DNS.</span>
     </div>
   </div>
-  <div class="grid">
 EOF
   printf '<input type="hidden" name="GROUP" value="%s" data-default="">\n' "$(env_attr GROUP "")"
-  # Same layout as user groups: proxies | use, type | interval, url | url_status,
-  # strategy | tolerance, filter | exclude.
+  cat <<EOF
+  <section class="group-sec" data-sec="members">
+    <div class="group-sec-head"><b>Состав группы по умолчанию</b>$(group_sec_count GROUP_PROXIES GROUP_USE GROUP_FILTER GROUP_EXCLUDE)</div>
+    <p class="group-sec-note">Что попадает в группу, если у неё не задан свой состав. Пустой <code>Use</code> означает «все провайдеры контейнера».</p>
+    <div class="grid">
+EOF
   printf '<label class="field field-validated" data-env="GROUP_PROXIES" data-validate="proxies"><span><b>Proxies</b><em>GROUP_PROXIES</em></span><input type="text" name="GROUP_PROXIES" value="%s" placeholder="DIRECT,REJECT" data-default=""><small>Явные <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> по умолчанию: имена прокси-групп (регистрозависимо) либо служебные <code>DIRECT</code>, <code>REJECT</code>, <code>REJECT-DROP</code>, <code>PASS</code>.</small><i>%s</i></label>\n' "$(env_attr GROUP_PROXIES "")" "$(is_set GROUP_PROXIES)"
   printf '<label class="field field-validated" data-env="GROUP_USE" data-validate="use"><span><b>Use</b><em>GROUP_USE</em></span><input type="text" name="GROUP_USE" value="%s" placeholder="LINK1,SUB_LINK1,BYEDPI" data-default=""><small>Providers по умолчанию (регистрозависимо), параметр <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">use</a>, или <code>none</code>.</small><i>%s</i></label>\n' "$(env_attr GROUP_USE "")" "$(is_set GROUP_USE)"
-  select_field GROUP_TYPE "Type" "Тип <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#type\" target=\"_blank\" rel=\"noopener\">proxy-groups type</a> по умолчанию." select "select url-test load-balance fallback"
-  field GROUP_DEFAULT_SELECTED "Default selected" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#default-selected\" target=\"_blank\" rel=\"noopener\">default-selected</a> по умолчанию для type select: имя прокси или группы, которую выбрать при первом старте." "" text ""
-  field GROUP_INTERVAL "Interval" "Интервал <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#interval\" target=\"_blank\" rel=\"noopener\">health-check</a>." "60" number "60"
-  field GROUP_URL "URL" "URL <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#url\" target=\"_blank\" rel=\"noopener\">health-check</a>, если HEALTHCHECK_PROVIDER=false." "https://www.gstatic.com/generate_204" text "https://www.gstatic.com/generate_204"
-  field GROUP_URL_STATUS "URL status" "Ожидаемый <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status\" target=\"_blank\" rel=\"noopener\">expected-status</a>." "204" number "204"
-  select_field GROUP_STRATEGY "Strategy" "Стратегия <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#strategy\" target=\"_blank\" rel=\"noopener\">load-balance</a>: round-robin, consistent-hashing или sticky-sessions." "consistent-hashing" "round-robin consistent-hashing sticky-sessions"
-  field GROUP_TOLERANCE "Tolerance" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#tolerance\" target=\"_blank\" rel=\"noopener\">Tolerance</a> для url-test." "20" number "20"
   field GROUP_FILTER "Filter" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#filter\" target=\"_blank\" rel=\"noopener\">filter</a> по умолчанию." "" text ""
   field GROUP_EXCLUDE "Exclude" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter\" target=\"_blank\" rel=\"noopener\">exclude-filter</a> по умолчанию." "" text ""
+  echo '    </div>'
+  echo '  </section>'
+  cat <<EOF
+  <section class="group-sec" data-sec="pick">
+    <div class="group-sec-head"><b>Как выбирается канал по умолчанию</b></div>
+    <p class="group-sec-note">Здесь показаны все параметры сразу: значения достаются тем группам, которые их не переопределили, а какие из них сработают — зависит от типа каждой группы.</p>
+    <div class="grid">
+EOF
+  select_field GROUP_TYPE "Type" "Тип <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#type\" target=\"_blank\" rel=\"noopener\">proxy-groups type</a> по умолчанию." select "select url-test load-balance fallback"
+  field GROUP_DEFAULT_SELECTED "Default selected" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#default-selected\" target=\"_blank\" rel=\"noopener\">default-selected</a> по умолчанию для type select: имя прокси или группы, которую выбрать при первом старте." "" text ""
+  field GROUP_TOLERANCE "Tolerance" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#tolerance\" target=\"_blank\" rel=\"noopener\">Tolerance</a> для url-test." "20" number "20"
+  select_field GROUP_STRATEGY "Strategy" "Стратегия <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#strategy\" target=\"_blank\" rel=\"noopener\">load-balance</a>: round-robin, consistent-hashing или sticky-sessions." "consistent-hashing" "round-robin consistent-hashing sticky-sessions"
+  echo '    </div>'
+  hc_provider="$(env_default HEALTHCHECK_PROVIDER true)"
+  hc_open=""
+  [ "$hc_provider" = "false" ] && hc_open=" open"
+  cat <<EOF
+    <details class="group-sub"$hc_open>
+      <summary>Проверка доступности$(group_sec_count GROUP_URL GROUP_URL_STATUS GROUP_INTERVAL)</summary>
+      <p class="group-sec-note">Сейчас <code>HEALTHCHECK_PROVIDER=$(printf '%s' "$hc_provider" | h)</code>. $( [ "$hc_provider" = "false" ] && printf 'Значения ниже попадают в конфиг групп.' || printf 'Проверка настраивается в прокси-провайдерах, и эти три поля в конфиг групп не пишутся.' )</p>
+      <div class="grid">
+EOF
+  field GROUP_URL "URL" "URL <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#url\" target=\"_blank\" rel=\"noopener\">health-check</a>, если HEALTHCHECK_PROVIDER=false." "https://www.gstatic.com/generate_204" text "https://www.gstatic.com/generate_204"
+  field GROUP_URL_STATUS "URL status" "Ожидаемый <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status\" target=\"_blank\" rel=\"noopener\">expected-status</a>." "204" number "204"
+  field GROUP_INTERVAL "Interval" "Интервал <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#interval\" target=\"_blank\" rel=\"noopener\">health-check</a>." "60" number "60"
+  echo '      </div>'
+  echo '    </details>'
+  echo '  </section>'
+  cat <<EOF
+  <details class="group-sec" data-sec="extra"$(group_sec_open GROUP_EXCLUDE_TYPE)>
+    <summary><b>Дополнительно</b>$(group_sec_count GROUP_EXCLUDE_TYPE)</summary>
+    <div class="grid">
+EOF
   printf '<label class="field field-validated" data-env="GROUP_EXCLUDE_TYPE" data-validate="exclude_type"><span><b>Exclude type</b><em>GROUP_EXCLUDE_TYPE</em></span><input type="text" name="GROUP_EXCLUDE_TYPE" value="%s" placeholder="vmess|direct" data-default=""><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type" target="_blank" rel="noopener">exclude-type</a> по умолчанию через <code>|</code>. <a class="doc-link" href="https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45" target="_blank" rel="noopener">Adapter Type</a>, регистр не важен. Пример: <code>vmess|direct</code>.</small><i>%s</i></label>\n' "$(env_attr GROUP_EXCLUDE_TYPE "")" "$(is_set GROUP_EXCLUDE_TYPE)"
-  echo '</div></article>'
+  echo '    </div>'
+  echo '  </details>'
+  echo '</article>'
+}
+
+# Сколько env секции реально заданы — число едет в заголовок, чтобы свёрнутая
+# секция не прятала настройки молча.
+group_sec_count() {
+  _gsc=0
+  for _n in "$@"; do env_exists "$_n" && _gsc=$((_gsc + 1)); done
+  [ "$_gsc" -gt 0 ] && printf '<span class="sec-count">%s</span>' "$_gsc"
+  return 0
+}
+
+# Секция раскрывается сама, если внутри что-то задано: иначе пользователь
+# рискует не найти собственные настройки.
+group_sec_open() {
+  for _n in "$@"; do env_exists "$_n" && { printf ' open'; return 0; }; done
+  return 0
+}
+
+# Поля, которые ядро читает только при определённом type (см. entrypoint.sh,
+# блок proxy-groups): default-selected — только select, tolerance — url-test,
+# strategy — load-balance. Остальное прячем, чтобы не спрашивать зря.
+group_type_field() {
+  printf '<div class="type-dep" data-when-type="%s">' "$1"
+  shift
+  "$@"
+  printf '</div>'
 }
 
 group_block() {
   prefix="$1"; title="$2"; source="${3:-group}"; source_kind="${4:-}"; source_ref="${5:-}"
   readonly=""
-  delete_button='<button class="group-delete" type="button" onclick="removeGroupPane(this.parentElement.parentElement.dataset.group)">Удалить группу</button>'
+  delete_button='<button class="group-delete" type="button" onclick="removeGroupPane(this.closest(&quot;.group-pane&quot;).dataset.group)">Удалить группу</button>'
   source_note="Имя группы и prefix env. GLOBAL и DNS фиксированы entrypoint."
   source_attrs='data-source="group"'
   case "$title" in GLOBAL|DNS) readonly=" readonly"; delete_button="" ;; esac
@@ -1838,56 +2108,109 @@ group_block() {
       <i>$prefix</i>
     </label>
   </div>
-  <div class="grid">
 EOF
-  # Field layout (2-column grid):
-  #   row 1: PROXIES | USE
-  #   row 2: TYPE    | INTERVAL
-  #   row 3: URL     | URL_STATUS
-  #   row 4: STRATEGY| TOLERANCE
-  #   row 5: FILTER  | EXCLUDE
-  #   row 6: GEOSITE | GEOIP
-  #   row 7: AS      | PRIORITY
-  #   rest: DOMAIN, SUFFIX, KEYWORD, IPCIDR, SRCIPCIDR, DSCP, DNS
+
+  # --- 1. Состав группы ---
+  cat <<EOF
+  <section class="group-sec" data-sec="members">
+    <div class="group-sec-head"><b>Состав группы</b>$(group_sec_count "${prefix}_PROXIES" "${prefix}_USE" "${prefix}_FILTER" "${prefix}_EXCLUDE")</div>
+    <p class="group-sec-note">Что оказывается внутри группы. Нажмите на имя, чтобы добавить или убрать его; панель сама разложит выбранное по <code>proxies</code> и <code>use</code>.</p>
+    <div class="chip-picker" data-picker="members" data-proxies="${prefix}_PROXIES" data-use="${prefix}_USE"></div>
+    <div class="grid">
+EOF
   printf '<label class="field field-validated" data-env="%s_PROXIES" data-validate="proxies"><span><b>Proxies</b><em>%s_PROXIES</em></span><input type="text" name="%s_PROXIES" value="%s" placeholder="DIRECT,REJECT,YOUTUBE" data-default=""><small>Явные <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> через запятую: имена других прокси-групп (регистрозависимо) либо служебные <code>DIRECT</code>, <code>REJECT</code>, <code>REJECT-DROP</code>, <code>PASS</code>.</small><i>%s</i></label>\n' "$prefix" "$prefix" "$prefix" "$(env_attr "${prefix}_PROXIES" "")" "$(is_set "${prefix}_PROXIES")"
   printf '<label class="field field-validated" data-env="%s_USE" data-validate="use"><span><b>Use</b><em>%s_USE</em></span><input type="text" name="%s_USE" value="%s" placeholder="LINK1,SUB_LINK1,BYEDPI" data-default=""><small>Список <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">providers</a> через запятую или <code>none</code>. Регистрозависимо. Имена берутся из LINK*/SUB_LINK*/SOCKS*/BYEDPI*/ZAPRET*/AWG-конфигов/proxies_mount.</small><i>%s</i></label>\n' "$prefix" "$prefix" "$prefix" "$(env_attr "${prefix}_USE" "")" "$(is_set "${prefix}_USE")"
-  select_field "${prefix}_TYPE" "Type" "Тип <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#type\" target=\"_blank\" rel=\"noopener\">proxy-groups type</a>." "$( [ "$prefix" = DNS ] && echo select || echo "$(env_default GROUP_TYPE select)" )" "select url-test load-balance fallback"
-  field "${prefix}_DEFAULT_SELECTED" "Default selected" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#default-selected\" target=\"_blank\" rel=\"noopener\">default-selected</a> для type select. Пусто → наследует <code>GROUP_DEFAULT_SELECTED</code>." "" text ""
-  field "${prefix}_INTERVAL" "Interval" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#interval\" target=\"_blank\" rel=\"noopener\">Интервал</a> проверки в секундах. Пусто → наследует <code>GROUP_INTERVAL</code>." "" number ""
-  field "${prefix}_URL" "URL" "URL <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#url\" target=\"_blank\" rel=\"noopener\">health-check</a> для этой группы. Используется при HEALTHCHECK_PROVIDER=false и TYPE url-test/fallback/load-balance. Пусто → наследует <code>GROUP_URL</code>." "" text ""
-  field "${prefix}_URL_STATUS" "URL status" "Ожидаемый <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status\" target=\"_blank\" rel=\"noopener\">expected-status</a>. Пусто → наследует <code>GROUP_URL_STATUS</code>." "" number ""
-  printf '<label class="field" data-env="%s_STRATEGY"><span><b>Strategy</b><em>%s_STRATEGY</em></span><select name="%s_STRATEGY" data-default=""><option value="" %s>— inherit GROUP_STRATEGY —</option><option value="round-robin" %s>round-robin</option><option value="consistent-hashing" %s>consistent-hashing</option><option value="sticky-sessions" %s>sticky-sessions</option></select><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/load-balance/#strategy" target="_blank" rel="noopener">Стратегия</a> для load-balance. Пусто → наследует <code>GROUP_STRATEGY</code>.</small><i>%s</i></label>\n' "$prefix" "$prefix" "$prefix" \
+  field "${prefix}_FILTER" "Filter" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#filter\" target=\"_blank\" rel=\"noopener\">filter</a> по именам прокси: оставить в группе только подходящие." "" text ""
+  field "${prefix}_EXCLUDE" "Exclude" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter\" target=\"_blank\" rel=\"noopener\">exclude-filter</a>: выкинуть подходящие по имени." "" text ""
+  echo '    </div>'
+  echo '  </section>'
+
+  # --- 2. Как выбирается канал ---
+  group_type_default="$( [ "$prefix" = DNS ] && echo select || env_default GROUP_TYPE select )"
+  group_type_now="$(env_default "${prefix}_TYPE" "$group_type_default")"
+  cat <<EOF
+  <section class="group-sec" data-sec="pick" data-type="$(printf '%s' "$group_type_now" | h)">
+    <div class="group-sec-head"><b>Как выбирается канал</b></div>
+    <div class="grid">
+EOF
+  printf '<label class="field group-type-field" data-env="%s_TYPE"><span><b>Type</b><em>%s_TYPE</em></span><select name="%s_TYPE" data-default="%s" data-group-type><option value="select" %s>select — выбирать вручную</option><option value="url-test" %s>url-test — самый быстрый автоматически</option><option value="fallback" %s>fallback — резерв, пока первый жив</option><option value="load-balance" %s>load-balance — распределять нагрузку</option></select><small>Тип <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#type" target="_blank" rel="noopener">proxy-groups type</a>. Поля ниже зависят от него.</small><i>%s</i></label>\n' \
+    "$prefix" "$prefix" "$prefix" "$(printf '%s' "$group_type_default" | h)" \
+    "$( [ "$group_type_now" = "select" ] && echo selected )" \
+    "$( [ "$group_type_now" = "url-test" ] && echo selected )" \
+    "$( [ "$group_type_now" = "fallback" ] && echo selected )" \
+    "$( [ "$group_type_now" = "load-balance" ] && echo selected )" \
+    "$(is_set "${prefix}_TYPE")"
+  group_type_field select field "${prefix}_DEFAULT_SELECTED" "Default selected" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#default-selected\" target=\"_blank\" rel=\"noopener\">default-selected</a>: что выбрано при первом старте. Пусто → наследует <code>GROUP_DEFAULT_SELECTED</code>." "" text ""
+  group_type_field url-test field "${prefix}_TOLERANCE" "Tolerance" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/url-test/#tolerance\" target=\"_blank\" rel=\"noopener\">Tolerance</a> в мс: насколько новый канал должен быть быстрее, чтобы группа переключилась. Пусто → наследует <code>GROUP_TOLERANCE</code>." "" number ""
+  printf '<div class="type-dep" data-when-type="load-balance">'
+  printf '<label class="field" data-env="%s_STRATEGY"><span><b>Strategy</b><em>%s_STRATEGY</em></span><select name="%s_STRATEGY" data-default=""><option value="" %s>— inherit GROUP_STRATEGY —</option><option value="round-robin" %s>round-robin</option><option value="consistent-hashing" %s>consistent-hashing</option><option value="sticky-sessions" %s>sticky-sessions</option></select><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/load-balance/#strategy" target="_blank" rel="noopener">Стратегия</a> распределения. Пусто → наследует <code>GROUP_STRATEGY</code>.</small><i>%s</i></label>' "$prefix" "$prefix" "$prefix" \
     "$( [ -z "$(env_default "${prefix}_STRATEGY" "")" ] && echo selected )" \
     "$( [ "$(env_default "${prefix}_STRATEGY" "")" = "round-robin" ] && echo selected )" \
     "$( [ "$(env_default "${prefix}_STRATEGY" "")" = "consistent-hashing" ] && echo selected )" \
     "$( [ "$(env_default "${prefix}_STRATEGY" "")" = "sticky-sessions" ] && echo selected )" \
     "$(is_set "${prefix}_STRATEGY")"
-  field "${prefix}_TOLERANCE" "Tolerance" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/url-test/#tolerance\" target=\"_blank\" rel=\"noopener\">Tolerance</a> для url-test в мс. Пусто → наследует <code>GROUP_TOLERANCE</code>." "" number ""
-  field "${prefix}_FILTER" "Filter" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#filter\" target=\"_blank\" rel=\"noopener\">filter</a> по именам прокси." "" text ""
-  field "${prefix}_EXCLUDE" "Exclude" "Regex <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter\" target=\"_blank\" rel=\"noopener\">exclude-filter</a>." "" text ""
-  printf '<label class="field field-validated" data-env="%s_EXCLUDE_TYPE" data-validate="exclude_type"><span><b>Exclude type</b><em>%s_EXCLUDE_TYPE</em></span><input type="text" name="%s_EXCLUDE_TYPE" value="%s" placeholder="vmess|direct" data-default=""><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type" target="_blank" rel="noopener">exclude-type</a> — исключить прокси указанных типов, разделитель <code>|</code>. <a class="doc-link" href="https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45" target="_blank" rel="noopener">Adapter Type</a>, регистр не важен. Пример: <code>vmess|direct</code>.</small><i>%s</i></label>\n' "$prefix" "$prefix" "$prefix" "$(env_attr "${prefix}_EXCLUDE_TYPE" "")" "$(is_set "${prefix}_EXCLUDE_TYPE")"
-  field "${prefix}_ICON" "Icon" "URL <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#icon\" target=\"_blank\" rel=\"noopener\">иконки</a> группы." "" text ""
-  printf '<label class="field" data-env="%s_HIDDEN"><span><b>Hidden</b><em>%s_HIDDEN</em></span><select name="%s_HIDDEN" data-default=""><option value="" %s>— показать (default) —</option><option value="true" %s>true (скрыть из веб-панели)</option><option value="false" %s>false (показать)</option></select><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#hidden" target="_blank" rel="noopener">hidden</a> — скрыть/показать группу в веб-панели mihomo.</small><i>%s</i></label>\n' "$prefix" "$prefix" "$prefix" \
-    "$( [ -z "$(env_default "${prefix}_HIDDEN" "")" ] && echo selected )" \
-    "$( [ "$(env_default "${prefix}_HIDDEN" "")" = "true" ] && echo selected )" \
-    "$( [ "$(env_default "${prefix}_HIDDEN" "")" = "false" ] && echo selected )" \
-    "$(is_set "${prefix}_HIDDEN")"
+  printf '</div>\n'
+  echo '    </div>'
+  # Проверка доступности живёт в провайдерах, пока HEALTHCHECK_PROVIDER=true —
+  # тогда url/expected-status/interval группы в конфиг не попадают вообще.
+  hc_provider="$(env_default HEALTHCHECK_PROVIDER true)"
+  hc_open="$(group_sec_open "${prefix}_URL" "${prefix}_URL_STATUS" "${prefix}_INTERVAL")"
+  [ "$hc_provider" = "false" ] && hc_open=" open"
+  cat <<EOF
+    <details class="group-sub"$hc_open>
+      <summary>Своя проверка доступности$(group_sec_count "${prefix}_URL" "${prefix}_URL_STATUS" "${prefix}_INTERVAL")</summary>
+      <p class="group-sec-note">Сейчас <code>HEALTHCHECK_PROVIDER=$(printf '%s' "$hc_provider" | h)</code>. $( [ "$hc_provider" = "false" ] && printf 'Значения ниже попадают в конфиг группы.' || printf 'Проверка настраивается в прокси-провайдерах, и эти три поля в конфиг не пишутся — заполняйте их, только если переключите HEALTHCHECK_PROVIDER в false.' )</p>
+      <div class="grid">
+EOF
+  field "${prefix}_URL" "URL" "URL <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#url\" target=\"_blank\" rel=\"noopener\">health-check</a> для этой группы. Пусто → наследует <code>GROUP_URL</code>." "" text ""
+  field "${prefix}_URL_STATUS" "URL status" "Ожидаемый <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status\" target=\"_blank\" rel=\"noopener\">expected-status</a>. Пусто → наследует <code>GROUP_URL_STATUS</code>." "" number ""
+  field "${prefix}_INTERVAL" "Interval" "<a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#interval\" target=\"_blank\" rel=\"noopener\">Интервал</a> проверки в секундах. Пусто → наследует <code>GROUP_INTERVAL</code>." "" number ""
+  echo '      </div>'
+  echo '    </details>'
+  echo '  </section>'
+
+  # --- 3. Маршрутизация (это секция rules, а не proxy-groups) ---
+  rules_envs="${prefix}_GEOSITE ${prefix}_GEOIP ${prefix}_AS ${prefix}_DOMAIN ${prefix}_SUFFIX ${prefix}_KEYWORD ${prefix}_IPCIDR ${prefix}_SRCIPCIDR ${prefix}_DSCP ${prefix}_PRIORITY ${prefix}_DNS"
+  cat <<EOF
+  <details class="group-sec" data-sec="rules"$(group_sec_open $rules_envs)>
+    <summary><b>Что направлять в эту группу</b>$(group_sec_count $rules_envs)</summary>
+    <p class="group-sec-note">Это не настройки самой группы: из полей ниже контейнер собирает правила в секции <code>rules</code> и наборы <code>rule-providers</code>. Пусто — группа существует, но трафик в неё попадает только по правилам с других страниц.</p>
+    <div class="grid">
+EOF
   field "${prefix}_GEOSITE" "Geosite" "Имена GEOSITE через запятую. URL <code>.mrs</code> создаёт domain rule-set; <code>.yaml</code>/<code>.yml</code> — classical rule-set." "youtube,category-ru,https://example.com/domains.mrs" text ""
   field "${prefix}_GEOIP" "Geoip" "Имена GEOIP через запятую. URL <code>.mrs</code> создаёт ipcidr rule-set; <code>.yaml</code>/<code>.yml</code> — classical rule-set." "telegram,discord,https://example.com/ips.mrs" text ""
   field "${prefix}_AS" "ASN" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">IP-ASN</a>: AS123,AS456." "AS15169" text ""
-  field "${prefix}_PRIORITY" "Priority" "Чем меньше, тем выше в rules." "" number ""
   field "${prefix}_DOMAIN" "Domain" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">DOMAIN</a> через запятую." "example.com" text ""
   field "${prefix}_SUFFIX" "Suffix" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">DOMAIN-SUFFIX</a> через запятую." "example.com" text ""
   field "${prefix}_KEYWORD" "Keyword" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">DOMAIN-KEYWORD</a> через запятую." "google" text ""
   field "${prefix}_IPCIDR" "IP CIDR" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">IP-CIDR</a> через запятую." "1.1.1.0/24" text ""
-  field "${prefix}_SRCIPCIDR" "Source CIDR" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">SRC-IP-CIDR</a> через запятую." "192.168.88.0/24" text ""
+  field "${prefix}_SRCIPCIDR" "Source CIDR" "Правила <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">SRC-IP-CIDR</a> через запятую: направлять в группу по адресу клиента." "192.168.88.0/24" text ""
   field "${prefix}_DSCP" "DSCP" "Правило <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/rules/\" target=\"_blank\" rel=\"noopener\">DSCP</a> для отдельного входа." "" number ""
+  field "${prefix}_PRIORITY" "Priority" "Порядок в секции rules: чем меньше число, тем выше правила этой группы." "" number ""
   field "${prefix}_DNS" "DNS policy" "DNS resolver для rule-set этой группы." "https://dns.google/dns-query" text ""
-  echo '</div></article>'
+  echo '    </div>'
+  echo '  </details>'
+
+  # --- 4. Дополнительно ---
+  extra_envs="${prefix}_EXCLUDE_TYPE ${prefix}_ICON ${prefix}_HIDDEN"
+  cat <<EOF
+  <details class="group-sec" data-sec="extra"$(group_sec_open $extra_envs)>
+    <summary><b>Дополнительно</b>$(group_sec_count $extra_envs)</summary>
+    <div class="grid">
+EOF
+  printf '<label class="field field-validated" data-env="%s_EXCLUDE_TYPE" data-validate="exclude_type"><span><b>Exclude type</b><em>%s_EXCLUDE_TYPE</em></span><input type="text" name="%s_EXCLUDE_TYPE" value="%s" placeholder="vmess|direct" data-default=""><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type" target="_blank" rel="noopener">exclude-type</a> — исключить прокси указанных типов, разделитель <code>|</code>. <a class="doc-link" href="https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45" target="_blank" rel="noopener">Adapter Type</a>, регистр не важен. Пример: <code>vmess|direct</code>.</small><i>%s</i></label>\n' "$prefix" "$prefix" "$prefix" "$(env_attr "${prefix}_EXCLUDE_TYPE" "")" "$(is_set "${prefix}_EXCLUDE_TYPE")"
+  field "${prefix}_ICON" "Icon" "URL <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-groups/#icon\" target=\"_blank\" rel=\"noopener\">иконки</a> группы." "" text ""
+  printf '<label class="field" data-env="%s_HIDDEN"><span><b>Hidden</b><em>%s_HIDDEN</em></span><select name="%s_HIDDEN" data-default=""><option value="" %s>— показать (default) —</option><option value="true" %s>true (скрыть из веб-панели)</option><option value="false" %s>false (показать)</option></select><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#hidden" target="_blank" rel="noopener">hidden</a> — скрыть или показать группу в веб-панели mihomo.</small><i>%s</i></label>\n' "$prefix" "$prefix" "$prefix" \
+    "$( [ -z "$(env_default "${prefix}_HIDDEN" "")" ] && echo selected )" \
+    "$( [ "$(env_default "${prefix}_HIDDEN" "")" = "true" ] && echo selected )" \
+    "$( [ "$(env_default "${prefix}_HIDDEN" "")" = "false" ] && echo selected )" \
+    "$(is_set "${prefix}_HIDDEN")"
+  echo '    </div>'
+  echo '  </details>'
+  echo '</article>'
 }
 
-groups_page() {
-  section_start "Прокси-группы" "Выберите группу слева, чтобы редактировать только ее параметры."
+known_providers_seed() {
   # Seed для JS-валидатора _USE / _PROXIES. Раньше сюда попадали только
   # серверные имена (AWG / proxies_mount), а LINK*/SUB_LINK*/SOCKS*/DPI имена
   # JS пытался достать из localStorage — но черновики этих ENV появляются
@@ -1934,6 +2257,11 @@ groups_page() {
   done
   printf '<script id="known-providers-seed" type="application/json">{"awg":[%s],"mounted":[%s],"envs":[%s]}</script>\n' \
     "${seed_awg%,}" "${seed_mounted%,}" "${seed_envs%,}"
+}
+
+groups_page() {
+  section_start "Прокси-группы" "Группа слева, её настройки справа: состав, способ выбора канала и отдельно — что в неё направлять."
+  known_providers_seed
   echo '<div class="groups-browser"><aside id="groupList" class="group-list">'
   echo '<button type="button" data-group="DEFAULT" onclick="switchGroupPane(this.dataset.group)"><b>DEFAULT</b><small>GROUP_*</small></button>'
   echo '<button type="button" data-group="GLOBAL" onclick="switchGroupPane(this.dataset.group)"><b>GLOBAL</b><small>GLOBAL_*</small></button>'
@@ -1954,7 +2282,7 @@ groups_page() {
     envp="$(group_env_prefix "$clean")"
     printf '<button type="button" data-group="%s" data-source="ruleset" onclick="switchGroupPane(this.dataset.group)"><b>%s</b><small>rule-set · %s_*</small></button>\n' "$(printf '%s' "$clean" | h)" "$(printf '%s' "$clean" | h)" "$envp"
   done
-  echo '<button class="add-group-btn" type="button" onclick="addGroupPane()">Добавить группу</button>'
+  echo '<button class="add-group-btn" type="button" onclick="openNewGroupModal()">Добавить группу</button>'
   echo '</aside><div id="groupPanes" class="group-panes">'
   default_group_block
   group_block GLOBAL "GLOBAL"
@@ -1976,11 +2304,80 @@ groups_page() {
     group_block "$envp" "$clean" ruleset "$kind" "$ref"
   done
   echo '</div></div>'
+  # Единственный источник разметки панели группы: JS создаёт новые группы,
+  # клонируя этот шаблон, поэтому созданная на лету панель не может разойтись
+  # с той, что отрисовал сервер. Раньше та же разметка лежала второй копией в
+  # ui.js и расходилась при каждой правке.
+  printf '<template id="groupPaneTemplate">'
+  group_block "__PREFIX__" "__NAME__"
+  printf '</template>
+'
+  # Мастер: пустая панель на два десятка полей ничего не подсказывает, поэтому
+  # у новой группы сначала спрашиваем имя и сценарий. Ни один элемент внутри не
+  # имеет name — иначе он уехал бы в сохраняемые env наравне с полями формы.
+  cat <<'EOF'
+<div class="modal" id="newGroupModal" hidden>
+  <div class="modal-backdrop" onclick="closeNewGroupModal()"></div>
+  <div class="modal-content">
+    <header><b>Новая прокси-группа</b><button type="button" onclick="closeNewGroupModal()">Закрыть</button></header>
+    <div class="modal-body">
+      <label><span>Имя группы</span><input id="newGroupName" placeholder="YOUTUBE" autocomplete="off"></label>
+      <p class="group-sec-note">Имя становится префиксом переменных: группа <code>YOUTUBE</code> настраивается через <code>YOUTUBE_USE</code>, <code>YOUTUBE_TYPE</code> и так далее.</p>
+      <div class="group-kind-cards">
+        <button type="button" class="group-kind-card on" data-type="select" aria-pressed="true" onclick="selectNewGroupKind(this)">
+          <b>Выбирать вручную</b><span>Канал переключает человек в панели mihomo. Обычный выбор для основной группы.</span><em>select</em>
+        </button>
+        <button type="button" class="group-kind-card" data-type="url-test" aria-pressed="false" onclick="selectNewGroupKind(this)">
+          <b>Самый быстрый</b><span>Группа сама проверяет каналы и берёт самый быстрый.</span><em>url-test</em>
+        </button>
+        <button type="button" class="group-kind-card" data-type="fallback" aria-pressed="false" onclick="selectNewGroupKind(this)">
+          <b>Резерв при отказе</b><span>Работает первый живой канал по порядку списка.</span><em>fallback</em>
+        </button>
+        <button type="button" class="group-kind-card" data-type="load-balance" aria-pressed="false" onclick="selectNewGroupKind(this)">
+          <b>Распределять нагрузку</b><span>Соединения раскидываются по каналам группы.</span><em>load-balance</em>
+        </button>
+      </div>
+      <p class="modal-error" id="newGroupError"></p>
+    </div>
+    <footer class="modal-footer">
+      <button type="button" onclick="closeNewGroupModal()">Отмена</button>
+      <button type="button" class="primary" onclick="confirmNewGroup()">Создать группу</button>
+    </footer>
+  </div>
+</div>
+EOF
   section_end
 }
 
+# Карточка «Добавить сайт»: адрес, куда его пустить, кнопка. Стоит и на
+# обзоре, и на странице правил. Ни одно поле карточки не имеет name —
+# значения уезжают в env через черновик, а не через форму.
+quick_site_card() {
+  cat <<'EOF'
+<div class="quick-site">
+  <div class="quick-site-head">
+    <b>Добавить сайт</b>
+    <span>Вставьте адрес, выберите, через что его пускать, и нажмите «Добавить». Панель сама решит, в какую переменную это записать, и покажет решение заранее.</span>
+  </div>
+  <label class="quick-site-url"><span>Сайт или IP</span><input id="quickSiteUrl" placeholder="https://youtube.com, сайт.рф или 1.2.3.4" autocomplete="off" spellcheck="false"></label>
+  <div class="chip-picker" id="quickSiteTargets"></div>
+  <p class="quick-site-preview" id="quickSitePreview"></p>
+  <div class="quick-site-actions">
+    <button type="button" class="primary" id="quickSiteAdd" onclick="quickSiteAdd()" disabled>Добавить</button>
+    <span class="quick-site-hint">Это черновик, как и любые правки в панели: на роутер он попадёт командами из «Команды MikroTik».</span>
+  </div>
+  <div class="quick-site-done" id="quickSiteDone"></div>
+</div>
+EOF
+}
+
 rules_page() {
-  section_start "Правила маршрутизации" "Общий динамический список по логике entrypoint: generated-правила read-only, RULESxx редактируются прямо внутри списка."
+  known_providers_seed
+  section_start "Правила и сайты" "Сверху — быстрое добавление сайта или IP. Ниже итоговый порядок правил: собранные из групп только показываются, свои строки RULESxx правятся прямо в списке."
+  # Частый сценарий «пустить один сайт через такой-то прокси» раньше требовал
+  # знать, в какую env писать и каким типом правила. Ни одно поле карточки не
+  # имеет name: значения уезжают в env через черновики, а не через форму.
+  quick_site_card
   echo '<textarea id="rulesPreviewEnv" hidden>'
   for name in $(env_names '^(GROUP|RULES[0-9]+|RULE_SET[0-9]+_BASE64|[A-Z0-9_]+_(PRIORITY|GEOSITE|GEOIP|AS|DOMAIN|SUFFIX|IPCIDR|KEYWORD|SRCIPCIDR|DSCP|USE))='); do
     printf '%s=%s\n' "$name" "$(env_raw "$name" | h)"
@@ -2010,14 +2407,57 @@ EOF
   section_end
 }
 
+# Строка набора правил: на виду имя набора и кнопка «Изменить», а base64 —
+# под спойлером. Раньше основным полем была сама base64-строка, которую руками
+# всё равно никто не пишет.
+rule_set_row_inner() {
+  _rn="$1"
+  _rv="$(env_raw "$_rn")"
+  case "$_rv" in
+    *"#"*) _rt="${_rv##*#}" ;;
+    *) _rt="" ;;
+  esac
+  # В конфиг уходит имя, очищенное так же, как в entrypoint.
+  _rt_eff="$(sanitize_rule_group_name "$_rt")"
+  _rt_note=""
+  if [ -n "$_rt" ] && [ "$_rt_eff" != "$_rt" ]; then
+    _rt_note=" · в env: «$(printf '%s' "$_rt" | h)»"
+    [ -n "$_rt_eff" ] || _rt_note="$_rt_note — будет пропущен"
+  fi
+  _rt="$_rt_eff"
+  [ -n "$_rt" ] || _rt="без имени"
+  _rs="$(printf '%s' "${_rv%%#*}" | wc -c | tr -d ' ')"
+  cat <<EOF
+  <div class="row-main">
+    <div class="row-title"><b data-ruleset-title>$(printf '%s' "$_rt" | h)</b><small>$_rn · $_rs символов base64$_rt_note</small></div>
+    <div class="row-buttons">
+      <button type="button" onclick="openRuleSetModal(this)">Изменить</button>
+      <button type="button" class="row-remove" onclick="removeEnvRow(this)">Удалить</button>
+    </div>
+  </div>
+  <details class="row-extras">
+    <summary>Значение переменной</summary>
+    <div class="row-extras-grid">
+      <label class="row-extras-wide"><span>$_rn</span><input name="$_rn" value="$(env_attr "$_rn" "")" placeholder="BASE64#name"><small>Содержимое набора в base64 и его имя после <code>#</code>. Обычно это поле не нужно: нажмите «Изменить» и правьте правила текстом.</small></label>
+    </div>
+  </details>
+EOF
+}
+
 rulesets_page() {
+  printf '<template id="ruleSetRowTemplate">'
+  rule_set_row_inner "__NAME__"
+  printf '</template>
+'
   section_start "Наборы правил" "RULE_SET*: глобальные rule-set env и файлы из каталога rule_set_list."
   echo '<div class="subhead"><b>RULE_SET*_BASE64</b><button type="button" onclick="addRow('\''rulesets'\'', '\''RULE_SET'\'', true)">Добавить RULE_SET</button></div><div id="rulesets" class="rows">'
   for name in $(env_names '^RULE_SET[0-9]+_BASE64='); do
     idx="$(printf '%s' "$name" | sed 's/RULE_SET//; s/_BASE64//')"
-    cat <<EOF
-<div class="env-row rule-row" data-index="$idx"><label><span>$name</span><input name="$name" value="$(env_attr "$name" "")" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Редактировать">&#10002;</button><button type="button" onclick="removeEnvRow(this)">Удалить</button></div>
-EOF
+    printf '<div class="env-row rule-row ruleset-row" data-index="%s">
+' "$idx"
+    rule_set_row_inner "$name"
+    printf '</div>
+'
   done
   echo '</div><div class="note-list"><div><b>RULE_SETxx_BASE64</b><span>Base64 rule-provider: значение декодируется entrypoint в rule-set файл. Используется вместе с <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rule-providers/" target="_blank" rel="noopener">rule-providers</a> и <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">RULE-SET</a> правилами.</span></div></div><div class="mounts" style="margin-top:24px; grid-template-columns:1fr"><article><b>RULE-SET Mounts</b><div class="mount-links rule-set-grid">'
   if [ -d "$RULE_SET_DIR" ]; then
@@ -2042,7 +2482,7 @@ EOF
   <div class="modal-content">
     <header><b id="fileEditTitle">Файл</b><button type="button" onclick="closeFileEditModal()">&#10005;</button></header>
     <div class="modal-body">
-      <label><span>Имя файла</span><input id="fileEditName" placeholder="new-rules"></label>
+      <label><span>Имя файла</span><input id="fileEditName" placeholder="new-rules" autocomplete="off"><small class="name-hint" id="fileEditNameHint" aria-live="polite"></small></label>
       <label><span>Содержимое</span><textarea id="fileEditPlain" rows="12" placeholder="DOMAIN,example.com&#10;DOMAIN-SUFFIX,example.org"></textarea></label>
     </div>
     <footer class="modal-footer">
@@ -2094,13 +2534,19 @@ EOF
 }
 
 listeners_page() {
-  section_start "Входящие порты" "Настройки входящих listeners mihomo. Сейчас здесь настраиваются пользователи для mixed-in: сам listener слушает TCP/UDP порт 1080 контейнера."
+  section_start "Входящие подключения" "Через какие порты контейнер принимает трафик и кто может пользоваться прокси по логину."
   cat <<'EOF'
-<div class="notice notice-warn"><b>mixed-in users</b><span>Если задан хотя бы один <code>MIXED_IN_USER*</code>, entrypoint добавит в listener <code>mixed-in</code> секцию <code>users</code>. В env хранится строка <code>username#password</code>, а здесь она редактируется двумя отдельными полями.</span></div>
-<div class="subhead"><b>MIXED_IN_USER*</b><button type="button" onclick="addRow('mixedUsers', 'MIXED_IN_USER', false)">Добавить</button></div>
-<div id="mixedUsers" class="rows mixed-users">
+<div class="note-list">
+  <div><b>1080 · mixed</b><span>Обычный прокси для приложений: HTTP и SOCKS5 на одном порту. Именно к нему относятся логины ниже.</span></div>
+  <div><b>12345 · redirect</b><span>Прозрачный перехват TCP. Сюда правила роутера заворачивают трафик локальной сети.</span></div>
+  <div><b>12346 · tproxy</b><span>Прозрачный перехват TCP и UDP, используется при <code>TPROXY=true</code>.</span></div>
+  <div><b>tun</b><span>Поднимается, когда <code>TPROXY=false</code>: UDP уходит через TUN-интерфейс.</span></div>
+</div>
+<div class="notice"><b>Порты фиксированы</b><span>Их задаёт entrypoint, переменных для них нет — менять нужно правила на самом роутере. На этой странице настраивается только доступ по логину к порту 1080.</span></div>
+<div class="subhead"><b>Логины для порта 1080</b><button type="button" onclick="addRow('mixedUsers', 'MIXED_IN_USER', false)">Добавить пользователя</button></div>
 EOF
   mixed_found=0
+  echo '<div id="mixedUsers" class="rows mixed-users">'
   for name in $(env_names '^MIXED_IN_USER[0-9]*='); do
     value="$(env_raw "$name")"
     username=""
@@ -2117,12 +2563,21 @@ EOF
 EOF
     mixed_found=1
   done
+  echo '</div>'
+  # Раньше здесь всегда рисовалась пустая пара логин/пароль, и выглядело это
+  # так, будто её обязательно надо заполнить. Теперь пустое состояние честно
+  # говорит, что происходит без пользователей.
   if [ "$mixed_found" -eq 0 ]; then
     cat <<'EOF'
-<div class="env-row env-row-stack mixed-user-row" data-index="0" data-prefix="MIXED_IN_USER" data-max-index="99"><div class="mixed-user-fields"><label><span>Логин</span><input class="mixed-user-name" placeholder="username"></label><label><span>Пароль</span><input class="mixed-user-pass" type="password" placeholder="password"></label></div><input type="hidden" name="MIXED_IN_USER0" value="" data-mixed-user-value><button type="button" onclick="removeEnvRow(this)">Удалить</button></div>
+<div class="empty-state">
+  <b>Логинов нет — вход свободный</b>
+  <span>Любой в локальной сети может пользоваться портом 1080 без пароля. Это нормально для домашней сети за роутером; добавьте пользователя, если порт доступен кому-то ещё.</span>
+</div>
 EOF
   fi
   cat <<'EOF'
+<div class="note-list">
+  <div><b>MIXED_IN_USERxx</b><span>Каждый пользователь хранится одной переменной в виде <code>логин#пароль</code>; здесь она разложена на два поля. Как только задан хотя бы один, entrypoint добавляет в listener <code>mixed-in</code> секцию <code>users</code>, и вход без пароля перестаёт работать.</span></div>
 </div>
 EOF
   section_end

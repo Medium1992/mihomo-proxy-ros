@@ -665,6 +665,78 @@ function updateCommandVisibility() {
   if (allowed && panel && panel.hidden) restoreLastCommands();
 }
 
+// ===== Экран команд: что изменится на роутере =====
+// Раньше человек видел только сырые команды RouterOS и вставлял в терминал то,
+// чего толком не прочитал. Список сверху говорит то же самое по-человечески.
+
+// Та же граница секретов, что is_secret_env в cgi-bin/index.sh: ссылки,
+// подписки, логины и заголовки в списке не показываем открытым текстом.
+function isSecretEnvName(name) {
+  if (name === "UI_SECRET" || /_HEADERS$/.test(name)) return true;
+  return /^(SUB_LINK|MIXED_IN_USER|SOCKS|LINK)\d*$/.test(name);
+}
+
+function describeEnvValue(name, value) {
+  if (value === "") return "пусто";
+  if (isSecretEnvName(name)) return "скрыто, " + value.length + " симв.";
+  return value.length > 90 ? value.slice(0, 87) + "…" : value;
+}
+
+function pendingChanges() {
+  return pendingChangeNames().sort().map((name) => {
+    const value = Store.get(envKey(name)) || "";
+    const original = Store.get(originalKey(name)) || "";
+    const present = originalWasPresent(name);
+    let kind = "set";
+    if (!present) kind = "add";
+    else if (value === "") kind = "remove";
+    return { name, kind, from: present ? original : "", to: value };
+  });
+}
+
+function fileChangesHtml() {
+  const files = typeof LiveFiles !== "undefined" ? LiveFiles.changes() : [];
+  if (!files.length) return "";
+  const kind = { new: "добавлен", changed: "изменён", removed: "удалён" };
+  const rows = files.map((f) =>
+    '<li class="change change-file change-' + (f.kind === "removed" ? "remove" : f.kind === "new" ? "add" : "set") + '">' +
+    '<span class="change-kind">файл ' + kind[f.kind] + "</span>" +
+    '<code class="change-name">' + escapeAttr(f.file) + "</code>" +
+    '<span class="change-value">' + escapeAttr(FILE_TYPE_LABEL[f.type] || f.type) + "</span></li>").join("");
+  return '<p class="changes-summary">Файлы на диске уже изменены, но контейнер прочитает их только при запуске — перезапуск входит в команды ниже.</p>' +
+    '<ul class="changes">' + rows + "</ul>";
+}
+
+function renderChangesList() {
+  const box = document.getElementById("commandsChanges");
+  if (!box) return;
+  const changes = pendingChanges();
+  const filesHtml = fileChangesHtml();
+  if (!changes.length) {
+    box.innerHTML = filesHtml
+      ? '<p class="changes-empty">Переменные не менялись.</p>' + filesHtml
+      : '<p class="changes-empty">Изменений нет — на роутере уже то же самое, что в панели.</p>';
+    return;
+  }
+  const label = { add: "добавится", set: "изменится", remove: "удалится" };
+  const counts = { add: 0, set: 0, remove: 0 };
+  changes.forEach((c) => { counts[c.kind]++; });
+  const summary = ["add", "set", "remove"].filter((k) => counts[k])
+    .map((k) => label[k] + ": " + counts[k]).join(" · ");
+  const rows = changes.map((c) => {
+    const secret = isSecretEnvName(c.name);
+    const from = c.kind === "add" ? "" :
+      '<span class="change-from">' + escapeAttr(describeEnvValue(c.name, c.from)) + "</span> → ";
+    const to = c.kind === "remove" ? '<span class="change-to">удалить</span>' :
+      '<span class="change-to">' + escapeAttr(describeEnvValue(c.name, c.to)) + "</span>";
+    return '<li class="change change-' + c.kind + (secret ? " change-secret" : "") + '">' +
+      '<span class="change-kind">' + label[c.kind] + "</span>" +
+      '<code class="change-name">' + escapeAttr(c.name) + "</code>" +
+      '<span class="change-value">' + from + to + "</span></li>";
+  }).join("");
+  box.innerHTML = '<p class="changes-summary">' + summary + "</p><ul class=\"changes\">" + rows + "</ul>" + filesHtml;
+}
+
 async function generateCommands() {
   if (!commandUiAllowed()) {
     updateCommandVisibility();
@@ -675,15 +747,22 @@ async function generateCommands() {
   syncMixedUsers();
   Store.set("mihomo-command-env-list", getEnvListName());
   await refreshOriginalsFromServer(currentCommandNames());
+  await LiveFiles.loadAll().catch(() => null);
   const pageCommands = collectPageCommands();
   const allCommands = collectAllCommands();
   const pageText = formatCommands("Команды для текущей страницы", pageCommands);
-  const allText = formatCommands("Суммарные команды для всех измененных env", allCommands);
+  // Без правок env команды всё равно нужны, если менялись файлы: их подхватит
+  // только перезапуск, который и так стоит в конце.
+  const allTitle = !allCommands.length && LiveFiles.changes().length
+    ? "Переменные не менялись — перезапуск подхватит изменённые файлы"
+    : "Суммарные команды для всех измененных env";
+  const allText = formatCommands(allTitle, allCommands);
   document.getElementById("commandsText").value = pageText;
   document.getElementById("commandsAllText").value = allText;
   Store.set("mihomo-last-commands-page", pageText);
   Store.set("mihomo-last-commands-all", allText);
   Store.set("mihomo-last-commands-at", new Date().toISOString());
+  renderChangesList();
   document.getElementById("commands").hidden = false;
   document.getElementById("commands").scrollIntoView({behavior: "smooth", block: "start"});
 }
@@ -702,6 +781,7 @@ function restoreLastCommands() {
   if (!pageText && !allText) return;
   pageEl.value = pageText;
   allEl.value = allText;
+  renderChangesList();
   panel.hidden = false;
 }
 
@@ -1787,7 +1867,69 @@ function toggleTheme() {
   applyTheme(cur === "dark" ? "light" : "dark");
 }
 
+// Сколько env реально изменено относительно роутера: ровно те, по которым
+// commandFor выдаст команду, — счётчик не может разойтись со списком команд.
+function pendingChangeNames(scopeNames) {
+  const out = [];
+  for (const key of Store.keys()) {
+    if (!key || !key.startsWith("mihomo-env:")) continue;
+    const name = key.slice("mihomo-env:".length);
+    if (!/^[A-Z0-9_]+$/.test(name)) continue;
+    if (scopeNames && !scopeNames.has(name)) continue;
+    const value = Store.get(key) || "";
+    const original = Store.get(originalKey(name)) || "";
+    if (commandFor(name, original, value, originalWasPresent(name))) out.push(name);
+  }
+  return out;
+}
+
+// Главная кнопка показывает, сколько правок ждёт отправки на роутер, —
+// раньше это было видно только по бейджам в меню.
+function updatePendingCounter() {
+  const n = pendingChangeNames().length;
+  document.querySelectorAll(".command-trigger").forEach((btn) => {
+    let badge = btn.querySelector(".pending-count");
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "pending-count";
+      btn.appendChild(badge);
+    }
+    badge.textContent = n ? String(n) : "";
+    badge.hidden = !n;
+    btn.title = n ? "Изменено переменных: " + n : "Изменений нет";
+  });
+  // Третий шаг на обзоре — «отправьте изменения»: он живой, по черновику.
+  const step = document.querySelector("[data-pending-step]");
+  if (step) {
+    const files = typeof LiveFiles !== "undefined" ? LiveFiles.changes().length : 0;
+    const any = n || files;
+    step.classList.toggle("done", !any);
+    const mark = step.querySelector(".step-mark");
+    if (mark) mark.textContent = any ? "!" : "✓";
+    step.classList.toggle("attention", !!any);
+    const text = step.querySelector("[data-pending-text]");
+    if (text) {
+      const parts = [];
+      if (n) parts.push("в черновике " + n + " изм. переменных");
+      if (files) parts.push("после старта изменено файлов: " + files);
+      text.textContent = any
+        ? parts.join(", ").replace(/^./, (c) => c.toUpperCase()) +
+          " — контейнер увидит это только после перезапуска. Сформируйте команды и вставьте их в терминал."
+        : "Черновик пуст, файлы не менялись — на роутере то же, что в панели.";
+    }
+    const button = step.querySelector("[data-pending-button]");
+    if (button) button.hidden = !any;
+  }
+}
+
 function resetUiDraft() {
+  // Кнопка стоит рядом с главной и стирает правки со всех страниц вместе с
+  // черновиком на сервере. Один промах мышью не должен стоить часа настройки.
+  const n = pendingChangeNames().length;
+  if (n && typeof window.confirm === "function" &&
+      !window.confirm("Сбросить все несохранённые правки на всех страницах (изменено переменных: " + n + ")? Отменить это будет нельзя.")) {
+    return;
+  }
   Store.keys().forEach((key) => {
     if (!key) return;
     if (key.startsWith("mihomo-env:") ||
@@ -1807,6 +1949,11 @@ function resetUiDraft() {
 function resetCurrentPageDraft() {
   const names = new Set([...document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]")].map((el) => el.name));
   const path = location.pathname;
+  const n = pendingChangeNames(names).length;
+  if (n && typeof window.confirm === "function" &&
+      !window.confirm("Сбросить правки на этой странице (изменено переменных: " + n + ")?")) {
+    return;
+  }
   Store.keys().forEach((key) => {
     if (!key) return;
     if (document.querySelector(".tools-browser") && key.startsWith("mihomo-tool:")) {
@@ -1883,6 +2030,102 @@ function relabelIndexedRow(row) {
   if (titleEl && titleEl.textContent === envBase) titleEl.textContent = displayBase;
 }
 
+// ===== Строки провайдеров: ссылка на виду, остальное под спойлером =====
+// Счётчик в заголовке спойлера показывает, сколько переменных внутри задано,
+// иначе свёрнутая настройка прячет её без следа.
+function updateExtrasCount(root) {
+  if (!root) return;
+  const list = root.matches && root.matches(".row-extras") ? [root] : [...root.querySelectorAll(".row-extras")];
+  list.forEach((box) => {
+    const n = [...box.querySelectorAll("input[name], select[name], textarea[name]")]
+      .filter(groupFieldConfigured).length;
+    const summary = box.querySelector(":scope > summary");
+    if (!summary) return;
+    let badge = summary.querySelector(".sec-count");
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "sec-count";
+      summary.appendChild(badge);
+    }
+    badge.textContent = n ? String(n) : "";
+    badge.hidden = !n;
+  });
+}
+
+// AMNEZIA_COUNTRY имеет смысл только для ссылок vpn:// Amnezia Premium —
+// для остальных это лишнее поле, которое непонятно чем заполнять.
+function applyLinkKind(row) {
+  if (!row) return;
+  const url = row.querySelector("input[data-link-url]");
+  const kind = /^\s*vpn:\/\//i.test(url ? url.value : "") ? "vpn" : "other";
+  row.querySelectorAll("[data-when-link]").forEach((box) => {
+    const fits = box.dataset.whenLink === kind;
+    const filled = boxHasValue(box);
+    box.hidden = !fits && !filled;
+    box.classList.toggle("dep-inactive", !fits && filled);
+  });
+}
+
+function initProviderRows() {
+  const form = document.getElementById("envForm");
+  if (!form) return;
+  document.querySelectorAll(".link-row, .sub-link-row").forEach((row) => {
+    applyLinkKind(row);
+    updateExtrasCount(row);
+  });
+  if (form.dataset.providerRowsWired === "true") return;
+  form.dataset.providerRowsWired = "true";
+  const refresh = (e) => {
+    const row = e.target.closest ? e.target.closest(".link-row, .sub-link-row") : null;
+    if (!row) return;
+    applyLinkKind(row);
+    updateExtrasCount(row);
+  };
+  form.addEventListener("input", refresh);
+  form.addEventListener("change", refresh);
+}
+
+// Заголовок строки набора правил — это имя после «#» внутри env. Модальный
+// редактор и ручная правка меняют значение, поэтому заголовок пересчитываем.
+function updateRuleSetRowTitle(row) {
+  if (!row) return;
+  const input = row.querySelector('input[name^="RULE_SET"]');
+  const title = row.querySelector("[data-ruleset-title]");
+  if (!input || !title) return;
+  let name = "";
+  let size = 0;
+  try {
+    const decoded = ruleSetB64Decode(input.value || "");
+    name = decoded.name || "";
+  } catch (e) { name = ""; }
+  const raw = String(input.value || "");
+  size = raw.includes("#") ? raw.slice(0, raw.indexOf("#")).length : raw.length;
+  // Заголовок — имя, под которым набор и группа окажутся в конфиге; если
+  // entrypoint его обрежет, это видно сразу, а не после перезапуска.
+  const eff = sanitizeRuleSetName(name);
+  title.textContent = eff || "без имени";
+  row.classList.toggle("ruleset-name-changed", !!name && eff !== name.trim());
+  const small = row.querySelector(".row-title small");
+  if (small) {
+    small.textContent = input.name + " · " + size + " символов base64" +
+      (name && eff !== name.trim() ? " · в env: «" + name.trim() + "»" + (eff ? "" : " — будет пропущен") : "");
+  }
+}
+
+function initRuleSetRows() {
+  const form = document.getElementById("envForm");
+  if (!form) return;
+  document.querySelectorAll(".ruleset-row").forEach(updateRuleSetRowTitle);
+  if (form.dataset.ruleSetRowsWired === "true") return;
+  form.dataset.ruleSetRowsWired = "true";
+  const refresh = (e) => {
+    const row = e.target.closest ? e.target.closest(".ruleset-row") : null;
+    if (row) updateRuleSetRowTitle(row);
+  };
+  form.addEventListener("input", refresh);
+  form.addEventListener("change", refresh);
+}
+
 function addRow(containerId, prefix, startAtOne) {
   const spec = indexedSpec(prefix);
   // Legacy boolean still honored only if the prefix isn't in the table.
@@ -1898,7 +2141,8 @@ function addRow(containerId, prefix, startAtOne) {
   if (!spec && prefix === "RULE_SET") key = "RULE_SET" + idx + "_BASE64";
   const div = document.createElement("div");
   div.className = "env-row";
-  if (prefix === "RULES" || prefix === "RULE_SET") div.className = "env-row rule-row";
+  if (prefix === "RULES") div.className = "env-row rule-row";
+  if (prefix === "RULE_SET") div.className = "env-row rule-row ruleset-row";
   if (prefix === "BYEDPI_CMD") div.className = "env-row dpi-single-row";
   if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") div.className = "env-row dpi-packet-row";
   if (prefix === "MIXED_IN_USER") div.className = "env-row env-row-stack mixed-user-row";
@@ -1908,7 +2152,13 @@ function addRow(containerId, prefix, startAtOne) {
   div.dataset.prefix = prefix;
   div.dataset.startAtOne = (spec ? spec.minIndex >= 1 : startAtOne) ? "true" : "false";
   if (maxIndex !== null) div.dataset.maxIndex = String(maxIndex);
-  if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") {
+  // LINK и SUB_LINK рисует сервер в <template>: одна разметка на серверные и
+  // добавленные здесь строки, как у панелей прокси-групп.
+  const rowTplId = { LINK: "linkRowTemplate", SUB_LINK: "subLinkRowTemplate", RULE_SET: "ruleSetRowTemplate" }[prefix];
+  const rowTpl = rowTplId ? document.getElementById(rowTplId) : null;
+  if (rowTpl) {
+    div.innerHTML = rowTpl.innerHTML.split("__NAME__").join(key).split("__DISPLAY__").join(displayKey);
+  } else if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") {
     const packets = prefix === "ZAPRET_CMD" ? "ZAPRET_PACKETS" : "ZAPRET2_PACKETS";
     const packetsKey = packets + idx;
     div.innerHTML =
@@ -1916,41 +2166,10 @@ function addRow(containerId, prefix, startAtOne) {
       `<label><span>${packetsKey}</span><input name="${packetsKey}" placeholder="12"></label>` +
       `<label class="dpi-name"><span>Имя прокси</span><input class="dpi-label" placeholder="без имени"></label>` +
       `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-  } else if (prefix === "RULE_SET") {
-    div.innerHTML = `<label><span>${displayKey}</span><input name="${key}" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Редактировать">&#10002;</button><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   } else if (prefix === "RULES") {
     div.innerHTML = `<label><span>${displayKey}</span><input name="${key}" placeholder="DOMAIN,example.com,GLOBAL"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   } else if (prefix === "MIXED_IN_USER") {
     div.innerHTML = `<div class="mixed-user-fields"><label><span>Логин</span><input class="mixed-user-name" placeholder="username"></label><label><span>Пароль</span><input class="mixed-user-pass" type="password" placeholder="password"></label></div><input type="hidden" name="${key}" value="" data-mixed-user-value><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-  } else if (prefix === "LINK") {
-    div.innerHTML =
-      `<label><span>${displayKey}</span><input name="${key}" placeholder="vless:// / vmess:// / ss:// / trojan:// / vpn://"></label>` +
-      `<label class="field-validated" data-validate="proxy_name"><span>${displayKey}_DIALER_PROXY</span><input name="${key}_DIALER_PROXY" placeholder="GLOBAL"></label>` +
-      `<label><span>${displayKey}_AMNEZIA_COUNTRY</span><input name="${key}_AMNEZIA_COUNTRY" placeholder="nl"></label>` +
-      `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-  } else if (prefix === "SUB_LINK") {
-    div.innerHTML =
-      `<label><span>${displayKey}</span><input name="${key}" placeholder="https://subscription или happ://crypt5/..."></label>` +
-      `<label><span>${displayKey}_INTERVAL</span><input type="number" name="${key}_INTERVAL" placeholder="3600"></label>` +
-      `<label><span>${displayKey}_PROXY</span><input name="${key}_PROXY" placeholder="DIRECT"></label>` +
-      `<label class="field-validated" data-validate="proxy_name"><span>${displayKey}_DIALER_PROXY</span><input name="${key}_DIALER_PROXY" placeholder="GLOBAL"></label>` +
-      `<div class="sub-link-extras">` +
-        `<label><span>${displayKey}_FILTER</span><input name="${key}_FILTER" placeholder="(?i)hk|hongkong"></label>` +
-        `<label><span>${displayKey}_EXCLUDE_FILTER</span><input name="${key}_EXCLUDE_FILTER" placeholder="(?i)test"></label>` +
-        `<label class="field-validated" data-validate="exclude_type"><span>${displayKey}_EXCLUDE_TYPE</span><input name="${key}_EXCLUDE_TYPE" placeholder="vmess|direct"></label>` +
-        `<label><span>${displayKey}_ADDITIONAL_PREFIX</span><input name="${key}_ADDITIONAL_PREFIX" placeholder="${displayKey} | "></label>` +
-        `<label><span>${displayKey}_ADDITIONAL_SUFFIX</span><input name="${key}_ADDITIONAL_SUFFIX" placeholder=" | ${displayKey}"></label>` +
-        `<label><span>${displayKey}_CONVERT</span><select name="${key}_CONVERT"><option value="">auto</option><option value="xray2mihomo">xray2mihomo</option><option value="none">none</option></select></label>` +
-        `<label><span>${displayKey}_MLKEM</span><select name="${key}_MLKEM"><option value="">как REALITY_MLKEM</option><option value="auto">auto</option><option value="true">true</option><option value="false">false</option><option value="off">off</option></select></label>` +
-        `<label><span>${displayKey}_OVERRIDE_EXPR</span><input name="${key}_OVERRIDE_EXPR" placeholder=".udp = true # .name |= upcase"></label>` +
-      `</div>` +
-      `<div class="headers-editor">` +
-        `<span>${displayKey}_HEADERS</span>` +
-        `<input type="hidden" class="sub-link-headers-value" name="${key}_HEADERS" value="">` +
-        `<div class="headers-rows"></div>` +
-        `<button type="button" class="headers-add">Добавить header</button>` +
-      `</div>` +
-      `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
   } else if (prefix === "BYEDPI_CMD") {
     div.innerHTML =
       `<label><span>${displayKey}</span><input type="hidden" name="${key}" data-dpi-value data-default=""><input class="dpi-cmd" placeholder="стратегия BYEDPI без --port и --transparent (например --tlsrec 41+s --udp-fake 1 --oob 1 --auto=torst)"></label>` +
@@ -1971,6 +2190,9 @@ function addRow(containerId, prefix, startAtOne) {
   ensureIndexedRowControls(div);
   if (prefix === "SUB_LINK" && typeof initHeadersEditors === "function") initHeadersEditors(div);
   if (typeof wirePaneValidators === "function") wirePaneValidators(div);
+  applyLinkKind(div);
+  updateExtrasCount(div);
+  if (div.classList.contains("ruleset-row")) updateRuleSetRowTitle(div);
   sortIndexedRows(wrap);
   if (typeof refreshAllBadges === "function") refreshAllBadges();
   if (typeof renderRulesPreview === 'function') renderRulesPreview();
@@ -2519,7 +2741,8 @@ function restoreMissingIndexedRows() {
 
     const div = document.createElement("div");
     div.className = "env-row";
-    if (prefix === "RULES" || prefix === "RULE_SET") div.className = "env-row rule-row";
+    if (prefix === "RULES") div.className = "env-row rule-row";
+    else if (prefix === "RULE_SET") div.className = "env-row rule-row ruleset-row";
     else if (prefix === "BYEDPI_CMD") div.className = "env-row dpi-single-row";
     else if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") div.className = "env-row dpi-packet-row";
     else if (prefix === "FAKE_IP_FILTER") div.className = "env-row env-row-stack fake-filter-row";
@@ -2531,41 +2754,19 @@ function restoreMissingIndexedRows() {
     if (Number.isInteger(spec.maxIndex)) div.dataset.maxIndex = String(spec.maxIndex);
 
     if (prefix === "RULE_SET") {
-      div.innerHTML = `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="BASE64#name"></label><button type="button" onclick="openRuleSetModal(this)" title="Редактировать">&#10002;</button><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+      const rsTpl = document.getElementById("ruleSetRowTemplate");
+      if (!rsTpl) return;
+      div.innerHTML = rsTpl.innerHTML.split("__NAME__").join(envName);
     } else if (prefix === "RULES") {
       div.innerHTML = `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="DOMAIN,example.com,GLOBAL"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
     } else if (prefix === "FAKE_IP_FILTER") {
       div.innerHTML = `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="DOMAIN,www.youtube.com,real-ip"></label><button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-    } else if (prefix === "LINK") {
-      div.innerHTML =
-        `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="vless://..."></label>` +
-        `<label class="field-validated" data-validate="proxy_name"><span>${displayName}_DIALER_PROXY</span><input name="${envName}_DIALER_PROXY" value="${escapeAttr(Store.get(envKey(envName + "_DIALER_PROXY")) || "")}" placeholder="GLOBAL"></label>` +
-        `<label><span>${displayName}_AMNEZIA_COUNTRY</span><input name="${envName}_AMNEZIA_COUNTRY" value="${escapeAttr(Store.get(envKey(envName + "_AMNEZIA_COUNTRY")) || "")}" placeholder="nl"></label>` +
-        `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
-    } else if (prefix === "SUB_LINK") {
-      div.innerHTML =
-        `<label><span>${displayName}</span><input name="${envName}" value="${escapeAttr(value)}" placeholder="https://subscription"></label>` +
-        `<label><span>${displayName}_INTERVAL</span><input type="number" name="${envName}_INTERVAL" value="${escapeAttr(Store.get(envKey(envName + "_INTERVAL")) || "")}" placeholder="3600"></label>` +
-        `<label><span>${displayName}_PROXY</span><input name="${envName}_PROXY" value="${escapeAttr(Store.get(envKey(envName + "_PROXY")) || "")}" placeholder="DIRECT"></label>` +
-        `<label class="field-validated" data-validate="proxy_name"><span>${displayName}_DIALER_PROXY</span><input name="${envName}_DIALER_PROXY" value="${escapeAttr(Store.get(envKey(envName + "_DIALER_PROXY")) || "")}" placeholder="GLOBAL"></label>` +
-        `<div class="sub-link-extras">` +
-          `<label><span>${displayName}_FILTER</span><input name="${envName}_FILTER" value="${escapeAttr(Store.get(envKey(envName + "_FILTER")) || "")}" placeholder="(?i)hk|hongkong"></label>` +
-          `<label><span>${displayName}_EXCLUDE_FILTER</span><input name="${envName}_EXCLUDE_FILTER" value="${escapeAttr(Store.get(envKey(envName + "_EXCLUDE_FILTER")) || "")}" placeholder="(?i)test"></label>` +
-          `<label class="field-validated" data-validate="exclude_type"><span>${displayName}_EXCLUDE_TYPE</span><input name="${envName}_EXCLUDE_TYPE" value="${escapeAttr(Store.get(envKey(envName + "_EXCLUDE_TYPE")) || "")}" placeholder="vmess|direct"></label>` +
-          `<label><span>${displayName}_ADDITIONAL_PREFIX</span><input name="${envName}_ADDITIONAL_PREFIX" value="${escapeAttr(Store.get(envKey(envName + "_ADDITIONAL_PREFIX")) || "")}" placeholder="${displayName} | "></label>` +
-          `<label><span>${displayName}_ADDITIONAL_SUFFIX</span><input name="${envName}_ADDITIONAL_SUFFIX" value="${escapeAttr(Store.get(envKey(envName + "_ADDITIONAL_SUFFIX")) || "")}" placeholder=" | ${displayName}"></label>` +
-          `<label><span>${displayName}_MLKEM</span><select name="${envName}_MLKEM">` +
-            ["", "auto", "true", "false", "off"].map((v) => `<option value="${v}"${(Store.get(envKey(envName + "_MLKEM")) || "") === v ? " selected" : ""}>${v || "как REALITY_MLKEM"}</option>`).join("") +
-          `</select></label>` +
-          `<label><span>${displayName}_OVERRIDE_EXPR</span><input name="${envName}_OVERRIDE_EXPR" value="${escapeAttr(Store.get(envKey(envName + "_OVERRIDE_EXPR")) || "")}" placeholder=".udp = true # .name |= upcase"></label>` +
-        `</div>` +
-        `<div class="headers-editor">` +
-          `<span>${displayName}_HEADERS</span>` +
-          `<input type="hidden" class="sub-link-headers-value" name="${envName}_HEADERS" value="${escapeAttr(Store.get(envKey(envName + "_HEADERS")) || "")}">` +
-          `<div class="headers-rows"></div>` +
-          `<button type="button" class="headers-add">Добавить header</button>` +
-        `</div>` +
-        `<button type="button" onclick="removeEnvRow(this)">Удалить</button>`;
+    } else if (prefix === "LINK" || prefix === "SUB_LINK") {
+      // Та же разметка, что у серверных строк; значения черновика подставит
+      // wireFieldEvents ниже — поэтому шаблон вставляется пустым.
+      const rowTpl = document.getElementById(prefix === "LINK" ? "linkRowTemplate" : "subLinkRowTemplate");
+      if (!rowTpl) return;
+      div.innerHTML = rowTpl.innerHTML.split("__NAME__").join(envName).split("__DISPLAY__").join(displayName);
     } else if (prefix === "ZAPRET_CMD" || prefix === "ZAPRET2_CMD") {
       const packets = spec.packets;
       const packetsName = packets + idx; // ZAPRET_PACKETS / ZAPRET2_PACKETS have no zeroPlain
@@ -2867,6 +3068,10 @@ function saveRuleSetModal() {
   const value = ruleSetB64Encode(plainEl.value, nameEl ? nameEl.value : "");
   ruleSetModalTarget.value = value;
   rememberField(ruleSetModalTarget);
+  // Программная правка не порождает input-событие, а на нём висят заголовок
+  // строки, бейджи и предпросмотр правил.
+  ruleSetModalTarget.dispatchEvent(new Event("input", { bubbles: true }));
+  ruleSetModalTarget.dispatchEvent(new Event("change", { bubbles: true }));
   closeRuleSetModal();
 }
 
@@ -2909,6 +3114,8 @@ function createRuleSetFile() {
   if (titleEl) titleEl.textContent = "Новый файл";
   const nameEl = document.getElementById("fileEditName");
   if (nameEl) { nameEl.value = ""; nameEl.readOnly = false; nameEl.focus(); }
+  const hint = document.getElementById("fileEditNameHint");
+  if (hint) hint.textContent = "";
   const plainEl = document.getElementById("fileEditPlain");
   if (plainEl) plainEl.value = "";
   document.getElementById("fileEditModal").hidden = false;
@@ -2927,6 +3134,10 @@ function saveFileEditModal() {
   if (!name) { alert("Укажите имя файла"); return; }
   const fileName = name.endsWith(".txt") ? name : name + ".txt";
   const isNew = !nameEl.readOnly;
+  if (isNew && !effectiveRuleSetName(fileName, true)) {
+    alert(ruleSetNameProblem(fileName, true));
+    return;
+  }
   const b64 = btoa(unescape(encodeURIComponent(plainEl.value)));
   fetch('/cgi-bin/save-file', {
     method: 'POST',
@@ -2937,15 +3148,12 @@ function saveFileEditModal() {
     .then((text) => {
       if (text.trim() === "OK") {
         closeFileEditModal();
-        if (isNew) {
-          const size = new Blob([plainEl.value]).size;
-          addRuleSetFileRow(fileName, size);
-        }
       } else {
         alert('Ошибка сохранения: ' + text);
       }
     })
-    .catch((e) => alert('Ошибка сети: ' + e));
+    .catch((e) => alert('Ошибка сети: ' + e))
+    .finally(() => resyncFileView("ruleset"));
 }
 
 // delete-file принимает только POST (GET удалялся бы обычной <img src>
@@ -2975,7 +3183,8 @@ function deleteRuleSetFile(btn) {
         alert('Ошибка удаления: ' + text);
       }
     })
-    .catch((e) => alert('Ошибка сети: ' + e));
+    .catch((e) => alert('Ошибка сети: ' + e))
+    .finally(() => resyncFileView("ruleset"));
 }
 
 let proxyEditName = "";
@@ -2999,13 +3208,355 @@ function addProxyFileRow(name, size) {
   wrap.appendChild(div);
 }
 
+// ===== Файлы на диске против того, что видел контейнер при старте =====
+// Модель такая же, как у env, но с другой истиной:
+//  • env — это то, что контейнер прочитал при запуске; всё, что правится в
+//    панели, остаётся черновиком до вставки команд и перезапуска;
+//  • файлы на диске меняются сразу, поэтому панель обязана показывать диск,
+//    а не снимок. Но ядро, zapret и nfqws читают их тоже только при запуске —
+//    значит, новый, изменённый или удалённый файл тоже ждёт перезапуска.
+// Страницы рендерятся один раз при старте (render_static.sh), поэтому всё,
+// что сервер напечатал из файлов, — это слепок. Живой список берётся из
+// /cgi-bin/list-files, а отличие от слепка показывается как «после перезапуска».
+
+const FILE_TYPE_LABEL = {
+  ruleset: "наборы правил",
+  awg: "AWG-конфиги",
+  proxy: "proxies_mount",
+  trusttunnel: "TrustTunnel",
+  openvpn: "OpenVPN",
+  fakebin: "/zapret-fakebin",
+  zlist: "/zapret-lists",
+};
+
+const LiveFiles = {
+  startup: undefined,
+  current: {},
+
+  // Слепок на момент рендера: {тип: {файл: cksum} | null}. null — каталог не
+  // был смонтирован, сравнивать не с чем.
+  readStartup() {
+    if (this.startup !== undefined) return this.startup;
+    const el = document.getElementById("startup-files");
+    try { this.startup = el ? JSON.parse(el.textContent || "{}") : null; }
+    catch (e) { this.startup = null; }
+    return this.startup;
+  },
+
+  mounted(type) {
+    const s = this.readStartup();
+    return !!(s && s[type]);
+  },
+
+  remember(type, files) {
+    this.current[type] = files || [];
+    document.dispatchEvent(new CustomEvent("live-files", { detail: { type } }));
+  },
+
+  load(type) {
+    return fetchFileList(type);
+  },
+
+  loadAll() {
+    const types = Object.keys(FILE_TYPE_LABEL).filter((t) => this.mounted(t));
+    return Promise.all(types.map((t) => this.load(t).catch(() => null)));
+  },
+
+  // new — появился после старта; changed — содержимое другое; same — тот же.
+  status(type, file, sum) {
+    const s = this.readStartup();
+    const before = s && s[type];
+    if (!before) return "unknown";
+    if (!Object.prototype.hasOwnProperty.call(before, file)) return "new";
+    return String(before[file]) === String(sum) ? "same" : "changed";
+  },
+
+  removed(type) {
+    const s = this.readStartup();
+    const before = s && s[type];
+    const now = this.current[type];
+    if (!before || !now) return [];
+    const names = new Set(now.map((f) => f.file));
+    return Object.keys(before).filter((f) => !names.has(f));
+  },
+
+  // Все отличия диска от слепка — для экрана команд и обзора.
+  changes() {
+    const out = [];
+    Object.keys(this.current).forEach((type) => {
+      (this.current[type] || []).forEach((f) => {
+        const st = this.status(type, f.file, f.sum);
+        if (st === "new" || st === "changed") out.push({ type, file: f.file, kind: st });
+      });
+      this.removed(type).forEach((file) => out.push({ type, file, kind: "removed" }));
+    });
+    return out;
+  },
+
+  names(type) {
+    return (this.current[type] || []).map((f) => f.file);
+  },
+};
+
+const FILE_STATUS_TEXT = {
+  new: "новый · подключится после перезапуска",
+  changed: "изменён · вступит в силу после перезапуска",
+};
+
+// Метка у строки файла: какие изменения ещё не у контейнера.
+function markFileRows(container, type) {
+  if (!container) return;
+  const byName = new Map((LiveFiles.current[type] || []).map((f) => [f.file, f]));
+  container.querySelectorAll("[data-file]").forEach((row) => {
+    const f = byName.get(row.dataset.file);
+    const st = f ? LiveFiles.status(type, f.file, f.sum) : "unknown";
+    row.dataset.fileStatus = st;
+    // Наборы, которые entrypoint пропустит: пустой файл или имя без латиницы.
+    let skip = "";
+    if (type === "ruleset" && f) {
+      if (!effectiveRuleSetName(f.file, true)) skip = "будет пропущен: в имени нет латиницы или цифр";
+      else if (!f.size) skip = "будет пропущен: файл пустой";
+    }
+    let warn = row.querySelector(".file-skip");
+    if (skip) {
+      if (!warn) {
+        warn = document.createElement("span");
+        warn.className = "file-status file-skip";
+        (row.querySelector(".mount-link-title") || row).appendChild(warn);
+      }
+      warn.textContent = skip;
+    } else if (warn) {
+      warn.remove();
+    }
+    let badge = row.querySelector(".file-status:not(.file-skip)");
+    if (FILE_STATUS_TEXT[st]) {
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "file-status";
+        const title = row.querySelector(".mount-link-title") || row;
+        title.appendChild(badge);
+      }
+      badge.textContent = FILE_STATUS_TEXT[st];
+      badge.dataset.status = st;
+    } else if (badge) {
+      badge.remove();
+    }
+  });
+  renderRemovedFiles(container, type);
+}
+
+// Удалённые после старта файлы: на диске их уже нет, но запущенный контейнер
+// ими пользуется до перезапуска — об этом стоит сказать, а не молчать.
+function renderRemovedFiles(container, type) {
+  const removed = LiveFiles.removed(type);
+  let note = container.previousElementSibling;
+  if (!note || !note.classList || !note.classList.contains("files-removed")) note = null;
+  if (!removed.length) {
+    if (note) note.remove();
+    return;
+  }
+  if (!note) {
+    note = document.createElement("div");
+    note.className = "notice notice-warn files-removed";
+    container.parentNode.insertBefore(note, container);
+  }
+  note.innerHTML = "<b>Удалены после старта контейнера</b><span>" +
+    removed.map((f) => "<code>" + escapeAttr(f) + "</code>").join(", ") +
+    " — запущенный контейнер ещё пользуется ими; после перезапуска их не станет.</span>";
+}
+
+// Перестроить список файлов по диску: строки рисует тот же конструктор, что
+// раньше рисовал новую строку после сохранения.
+function syncFileList(type, container, addRow) {
+  if (!container || !LiveFiles.mounted(type)) return Promise.resolve();
+  return LiveFiles.load(type).then((files) => {
+    container.querySelectorAll("[data-file], .empty").forEach((el) => el.remove());
+    files.forEach((f) => addRow(f.file, f.size));
+    if (!files.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "Файлов нет.";
+      container.appendChild(empty);
+    }
+    markFileRows(container, type);
+  });
+}
+
+// После любой операции с файлом список перечитывается с диска: при ошибке
+// удаления строка, убранная заранее, вернётся, а у изменённого файла
+// появится метка «после перезапуска».
+function resyncFileView(type) {
+  const views = {
+    ruleset: [() => document.querySelector(".mount-links.rule-set-grid"), addRuleSetFileRow],
+    fakebin: [() => document.getElementById("fakebin-list"), addFakebinRow],
+    zlist: [() => document.getElementById("zlist-list"), addZlistRow],
+  };
+  const v = views[type];
+  if (!v) return LiveFiles.load(type).catch(() => {});
+  return syncFileList(type, v[0](), v[1]).catch(() => {});
+}
+
+// ─── Имена наборов правил ───
+// Entrypoint оставляет в имени только [A-Za-z0-9_-]: «мой_набор» превратится
+// в «_», а имя из одной кириллицы — в пустое, и такой набор молча пропустят.
+// У файла entrypoint сначала отрезает расширение (${raw_name%.*}), у имени
+// из RULE_SET*_BASE64 — нет; дальше в обоих случаях sed 's/[^a-zA-Z0-9_-]//g'.
+function sanitizeRuleSetName(raw) {
+  return String(raw || "").trim().replace(/[^A-Za-z0-9_-]/g, "");
+}
+
+function effectiveRuleSetName(raw, isFile) {
+  const s = String(raw || "").trim();
+  return sanitizeRuleSetName(isFile === false ? s : s.replace(/\.[^.]*$/, ""));
+}
+
+function ruleSetNameProblem(raw, isFile) {
+  const s = String(raw || "").trim();
+  const clean = isFile === false ? s : s.replace(/\.[^.]*$/, "");
+  const eff = effectiveRuleSetName(raw, isFile);
+  if (!clean) return "";
+  if (!eff) return "В имени нет ни одной латинской буквы или цифры — entrypoint пропустит такой набор целиком. Назовите его латиницей, например shop.";
+  if (eff !== clean) return "В конфиге набор и его группа будут называться «" + eff + "»: кириллица, пробелы и прочие символы из имени вырезаются.";
+  return "";
+}
+
+// Подсказка под полем имени: во что превратится имя в конфиге.
+function wireRuleSetNameHint(inputId, hintId, isFile) {
+  const input = document.getElementById(inputId);
+  const hint = document.getElementById(hintId);
+  if (!input || !hint || input.dataset.nameHintWired === "true") return;
+  input.dataset.nameHintWired = "true";
+  const update = () => {
+    const msg = input.readOnly ? "" : ruleSetNameProblem(input.value, isFile);
+    hint.textContent = msg;
+    hint.dataset.tone = msg && !effectiveRuleSetName(input.value, isFile) ? "error" : (msg ? "warn" : "");
+  };
+  input.addEventListener("input", update);
+  input.addEventListener("focus", update);
+  update();
+}
+
+// ─── Что зависит от файлов на других страницах ───
+// Провайдеры из AWG-конфигов и proxies_mount: имя провайдера — имя файла.
+function fileProviderNames(type) {
+  const strip = type === "awg" ? /\.conf$/i : /\.(ya?ml)$/i;
+  const keep = type === "awg" ? /\.conf$/i : /\.(ya?ml)$/i;
+  return LiveFiles.names(type).filter((f) => keep.test(f)).map((f) => f.replace(strip, ""));
+}
+
+function startupProviderNames(type) {
+  const s = LiveFiles.readStartup();
+  const before = s && s[type];
+  if (!before) return [];
+  const strip = type === "awg" ? /\.conf$/i : /\.(ya?ml)$/i;
+  return Object.keys(before).filter((f) => strip.test(f)).map((f) => f.replace(strip, ""));
+}
+
+// Группы из файлов rule_set_list: new-файл даёт новую группу, удалённый —
+// убирает её, если у неё нет своих настроек (иначе предупреждаем).
+function syncRuleSetFileGroups() {
+  if (!document.getElementById("groupPanes") || !LiveFiles.current.ruleset) return;
+  const live = (LiveFiles.current.ruleset || []).filter((f) => f.size > 0);
+  const liveNames = new Map(live.map((f) => [effectiveRuleSetName(f.file), f.file]).filter(([n]) => n));
+  // появились после старта
+  liveNames.forEach((file, name) => {
+    if ([...document.querySelectorAll(".group-pane")].some((p) => !p.closest("template") && p.dataset.group === name)) return;
+    addGroupPane(name, "", { source: "ruleset", kind: "mount", ref: file });
+  });
+  // файл удалён
+  document.querySelectorAll('.group-pane[data-source="ruleset"][data-source-kind="mount"]').forEach((pane) => {
+    if (pane.closest("template")) return;
+    if (liveNames.has(pane.dataset.group)) {
+      pane.classList.remove("source-gone");
+      const w = pane.querySelector(":scope > .source-gone-note");
+      if (w) w.remove();
+      return;
+    }
+    if (!groupHasCustomParams(pane)) {
+      const btn = findGroupButton(pane.dataset.group);
+      if (btn) btn.remove();
+      const wasActive = pane.classList.contains("active");
+      pane.remove();
+      if (wasActive) {
+        const next = document.querySelector(".group-list button[data-group]");
+        if (next) switchGroupPane(next.dataset.group);
+      }
+      return;
+    }
+    pane.classList.add("source-gone");
+    if (!pane.querySelector(":scope > .source-gone-note")) {
+      const note = document.createElement("div");
+      note.className = "notice notice-warn source-gone-note";
+      note.innerHTML = "<b>Файл набора удалён</b><span>Группа держится на файле <code>" +
+        escapeAttr(pane.dataset.sourceRef || "") + "</code>, а его на диске уже нет. После перезапуска её не станет; настройки ниже можно очистить.</span>";
+      const head = pane.querySelector(":scope > .group-pane-head");
+      pane.insertBefore(note, head ? head.nextSibling : pane.firstChild);
+    }
+  });
+}
+
+// Всё, что строится из списка известных провайдеров, — перестроить.
+function refreshProviderConsumers() {
+  document.querySelectorAll(".group-pane").forEach((pane) => {
+    if (pane.closest("template")) return;
+    if (typeof buildGroupChips === "function") buildGroupChips(pane);
+  });
+  if (typeof quickSiteRender === "function" && document.getElementById("quickSiteTargets")) quickSiteRender();
+  document.querySelectorAll('.field-validated[data-validate="use"] input').forEach((input) => {
+    if (typeof validateUseInput === "function") validateUseInput(input);
+  });
+  if (typeof refreshAllBadges === "function") refreshAllBadges();
+}
+
+// Список имён наборов для предпросмотра правил на странице «Правила и сайты».
+function syncRulesPreviewMounts() {
+  const ta = document.getElementById("rulesPreviewMounts");
+  if (!ta || !LiveFiles.current.ruleset) return;
+  ta.value = (LiveFiles.current.ruleset || []).filter((f) => f.size > 0)
+    .map((f) => effectiveRuleSetName(f.file)).filter(Boolean).join("\n");
+  if (typeof renderRulesPreview === "function") renderRulesPreview();
+}
+
+function initLiveFiles() {
+  wireRuleSetNameHint("fileEditName", "fileEditNameHint", true);
+  wireRuleSetNameHint("ruleSetModalName", "ruleSetModalNameHint", false);
+  if (!LiveFiles.readStartup()) return;
+  document.addEventListener("live-files", (e) => {
+    const type = e.detail && e.detail.type;
+    if (type === "awg" || type === "proxy") refreshProviderConsumers();
+    if (type === "ruleset") {
+      syncRuleSetFileGroups();
+      syncRulesPreviewMounts();
+    }
+    if (typeof updatePendingCounter === "function") updatePendingCounter();
+  });
+  // Страницы, где файлы показываются списком, перестраиваются по диску.
+  syncFileList("ruleset", document.querySelector(".mount-links.rule-set-grid"), addRuleSetFileRow).catch(() => {});
+  syncFileList("fakebin", document.getElementById("fakebin-list"), addFakebinRow).catch(() => {});
+  syncFileList("zlist", document.getElementById("zlist-list"), addZlistRow).catch(() => {});
+  // Остальным нужен сам список: группы, чипсы, проверки состава, обзор.
+  const need = new Set();
+  if (document.getElementById("groupPanes") || document.getElementById("quickSiteTargets")) {
+    need.add("awg"); need.add("proxy"); need.add("ruleset");
+  }
+  if (document.getElementById("rulesPreviewMounts")) need.add("ruleset");
+  if (document.querySelector("[data-pending-step]")) Object.keys(FILE_TYPE_LABEL).forEach((t) => need.add(t));
+  need.forEach((t) => {
+    if (LiveFiles.mounted(t) && !LiveFiles.current[t]) LiveFiles.load(t).catch(() => {});
+  });
+}
+
 function fetchFileList(type) {
   return fetch('/cgi-bin/list-files?type=' + encodeURIComponent(type), { cache: 'no-store' })
     .then((r) => {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     })
-    .then((data) => (data && data.ok ? (data.files || []) : []));
+    .then((data) => {
+      const files = data && data.ok ? (data.files || []) : [];
+      LiveFiles.remember(type, files);
+      return files;
+    });
 }
 
 function setMountListEmpty(wrap) {
@@ -3022,6 +3573,7 @@ function refreshProxyFileList() {
     wrap.replaceChildren();
     files.forEach((file) => addProxyFileRow(file.file, file.size));
     if (!files.length) setMountListEmpty(wrap);
+    markFileRows(wrap, 'proxy');
   });
 }
 
@@ -3312,6 +3864,7 @@ function refreshAwgFileList() {
     wrap.replaceChildren();
     files.forEach((file) => addAwgFileRow(file.file, file.size));
     if (!files.length) setMountListEmpty(wrap);
+    markFileRows(wrap, 'awg');
   });
 }
 
@@ -3567,6 +4120,7 @@ function refreshMountedConfigList(type) {
     wrap.replaceChildren();
     files.forEach((file) => addMountedConfigRow(type, file.file, file.size));
     if (!files.length) setMountListEmpty(wrap);
+    markFileRows(wrap, type);
   });
 }
 
@@ -3752,17 +4306,13 @@ function uploadFakebin() {
       .then((r) => r.text())
       .then((text) => {
         if (text.trim() === "OK") {
-          // Replace existing row or add new
-          const wrap = document.getElementById("fakebin-list");
-          const existing = wrap && wrap.querySelector('.fakebin-file[data-file="' + file.name.replace(/"/g, '\\"') + '"]');
-          if (existing) existing.remove();
-          addFakebinRow(file.name, file.size);
           input.value = "";
         } else {
           alert('Ошибка загрузки: ' + text);
         }
       })
-      .catch((e) => alert('Ошибка сети: ' + e));
+      .catch((e) => alert('Ошибка сети: ' + e))
+      .finally(() => resyncFileView("fakebin"));
   };
   reader.onerror = function () { alert("Ошибка чтения файла"); };
   reader.readAsDataURL(file);
@@ -3779,7 +4329,8 @@ function deleteFakebin(btn) {
     .then((text) => {
       if (text.trim() !== "OK") alert('Ошибка удаления: ' + text);
     })
-    .catch((e) => alert('Ошибка сети: ' + e));
+    .catch((e) => alert('Ошибка сети: ' + e))
+    .finally(() => resyncFileView("fakebin"));
 }
 
 // ===== /zapret-lists (text list editor) =====
@@ -3863,15 +4414,12 @@ function saveZlistFileModal() {
     .then((text) => {
       if (text.trim() === "OK") {
         closeZlistFileModal();
-        if (isNew) {
-          const size = new Blob([plainEl.value]).size;
-          addZlistRow(name, size);
-        }
       } else {
         alert('Ошибка сохранения: ' + text);
       }
     })
-    .catch((e) => alert(e.message || String(e)));
+    .catch((e) => alert(e.message || String(e)))
+    .finally(() => resyncFileView("zlist"));
 }
 
 function deleteZlistFile(btn) {
@@ -3885,7 +4433,8 @@ function deleteZlistFile(btn) {
     .then((text) => {
       if (text.trim() !== "OK") alert('Ошибка удаления: ' + text);
     })
-    .catch((e) => alert('Ошибка сети: ' + e));
+    .catch((e) => alert('Ошибка сети: ' + e))
+    .finally(() => resyncFileView("zlist"));
 }
 
 function enhanceIndexedRows(root) {
@@ -4008,90 +4557,389 @@ function findGroupButton(name) {
   return [...document.querySelectorAll(".group-list button[data-group]")].find((btn) => btn.dataset.group === name);
 }
 
-function groupFieldMarkup(prefix, suffix, label, hint, placeholder, type, value) {
-  const name = prefix + "_" + suffix;
-  return `<label class="field" data-env="${name}"><span><b>${label}</b><em>${name}</em></span><input type="${type || "text"}" name="${name}" value="${escapeAttr(value)}" placeholder="${escapeAttr(placeholder || "")}" data-default=""><small>${hint || ""}</small><i>new</i></label>`;
+// ===== Панель прокси-группы: секции, поля по типу, состав чипсами =====
+
+// Какие поля ядро вообще читает при каждом type — повторяет блок proxy-groups
+// в entrypoint.sh: default-selected пишется только для select, tolerance для
+// url-test, strategy для load-balance. Остальное прячем, но из DOM не убираем,
+// иначе уже заданное значение молча пропало бы при сохранении.
+function applyGroupType(pane) {
+  if (!pane) return;
+  const sel = pane.querySelector("select[data-group-type]");
+  const type = sel ? sel.value : "select";
+  const sec = pane.querySelector('.group-sec[data-sec="pick"]');
+  if (sec) sec.dataset.type = type;
+  pane.querySelectorAll(".type-dep").forEach((box) => {
+    const fits = box.dataset.whenType === type;
+    // Заполненное поле не прячем, даже если текущий тип его не использует:
+    // иначе заданное значение стало бы невидимым и неправимым, продолжая
+    // при этом лежать в env.
+    const filled = boxHasValue(box);
+    box.hidden = !fits && !filled;
+    box.classList.toggle("dep-inactive", !fits && filled);
+  });
 }
 
-// Validated-вариант (для USE / PROXIES / EXCLUDE_TYPE — типы валидируются JS).
-function groupValidatedFieldMarkup(prefix, suffix, validateKind, label, hint, placeholder) {
-  const name = prefix + "_" + suffix;
-  return `<label class="field field-validated" data-env="${name}" data-validate="${validateKind}"><span><b>${label}</b><em>${name}</em></span><input type="text" name="${name}" value="" placeholder="${escapeAttr(placeholder || "")}" data-default=""><small>${hint || ""}</small><i>new</i></label>`;
+// Есть ли в блоке хоть одно непустое значение.
+function boxHasValue(box) {
+  return [...box.querySelectorAll("input[name], select[name], textarea[name]")]
+    .some((el) => String(fieldValue(el) || "").trim() !== "");
 }
 
-function groupTypeHint() {
-  return `Тип <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#type" target="_blank" rel="noopener">proxy-groups type</a>: select/url-test/load-balance/fallback.`;
+// «Задано» здесь значит то же, что бейдж set у поля: либо env реально стоит на
+// сервере, либо значение отличается от дефолта. Счётчик в заголовке нужен,
+// чтобы свёрнутая секция не прятала настройки без следа.
+function groupFieldConfigured(el) {
+  if (!el.name || el.classList.contains("group-name-input")) return false;
+  const box = el.closest(".field");
+  const state = box?.querySelector(":scope > i, .field-meta i")?.textContent.trim();
+  if (state === "set") return true;
+  const saved = typeof Store !== "undefined" ? Store.get(envKey(el.name)) : null;
+  const value = saved !== null && saved !== undefined ? saved : fieldValue(el);
+  return value !== "" && value !== (el.dataset.default || "");
 }
 
-function addGroupPane(name) {
-  const clean = String(name || window.prompt("Group name", "") || "").trim();
+function updateGroupSectionCounts(pane) {
+  if (!pane) return;
+  pane.querySelectorAll(".group-sec, .group-sub").forEach((sec) => {
+    const n = [...sec.querySelectorAll("input[name], select[name], textarea[name]")]
+      .filter(groupFieldConfigured).length;
+    let badge = sec.querySelector(":scope > .group-sec-head > .sec-count, :scope > summary > .sec-count");
+    const host = sec.querySelector(":scope > .group-sec-head") || sec.querySelector(":scope > summary");
+    if (!host) return;
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "sec-count";
+      host.appendChild(badge);
+    }
+    badge.textContent = n ? String(n) : "";
+    badge.hidden = !n;
+  });
+}
+
+// Состав группы одним списком: пользователю незачем знать, что провайдеры
+// уезжают в use, а группы и DIRECT/REJECT — в proxies. Текстовые поля остаются
+// рядом и продолжают работать для тех, кому удобнее вписать руками.
+function groupChipTargets(pane) {
+  const box = pane.querySelector('.chip-picker[data-picker="members"]');
+  if (!box) return null;
+  const proxies = pane.querySelector('input[name="' + box.dataset.proxies + '"]');
+  const use = pane.querySelector('input[name="' + box.dataset.use + '"]');
+  if (!proxies || !use) return null;
+  return { box, proxies, use };
+}
+
+function listFromInput(input) {
+  return (input.value || "").split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+function writeListToInput(input, items) {
+  input.value = items.join(",");
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function buildGroupChips(pane) {
+  const t = groupChipTargets(pane);
+  if (!t) return;
+  const self = pane.dataset.group;
+  const groups = [...knownGroups()].filter((g) => g !== self && g !== "DEFAULT").sort();
+  const providers = [...knownProviders()].sort();
+  const specials = [...PROXIES_SPECIALS];
+  const rows = [
+    { title: "Провайдеры", kind: "use", names: providers, empty: "провайдеров пока нет — добавьте LINK, SUB_LINK, SOCKS или DPI" },
+    { title: "Группы", kind: "proxies", names: groups, empty: "других групп пока нет" },
+    { title: "Служебные", kind: "proxies", names: specials, empty: "" },
+  ];
+  t.box.innerHTML = rows.map((row) => {
+    const chips = row.names.length
+      ? row.names.map((n) =>
+          '<button type="button" class="chip" data-kind="' + row.kind + '" data-name="' + escapeAttr(n) + '">' +
+          escapeAttr(n) + "</button>").join("")
+      : '<span class="chip-empty">' + row.empty + "</span>";
+    return '<div class="chip-row"><span class="chip-row-title">' + row.title + "</span>" + chips + "</div>";
+  }).join("");
+  t.box.onclick = (e) => {
+    const chip = e.target.closest(".chip");
+    if (!chip) return;
+    const input = chip.dataset.kind === "use" ? t.use : t.proxies;
+    const name = chip.dataset.name;
+    const items = listFromInput(input).filter((x) => x !== "none");
+    const idx = items.indexOf(name);
+    if (idx >= 0) items.splice(idx, 1); else items.push(name);
+    writeListToInput(input, items);
+    syncGroupChips(pane);
+    updateGroupSectionCounts(pane);
+  };
+  syncGroupChips(pane);
+}
+
+function syncGroupChips(pane) {
+  const t = groupChipTargets(pane);
+  if (!t) return;
+  const chosen = {
+    use: new Set(listFromInput(t.use)),
+    proxies: new Set(listFromInput(t.proxies)),
+  };
+  t.box.querySelectorAll(".chip").forEach((chip) => {
+    const on = chosen[chip.dataset.kind].has(chip.dataset.name);
+    chip.classList.toggle("on", on);
+    chip.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+
+// ===== Сводка группы в списке слева =====
+// Вместо префикса env («WORK_*») — то, что человеку нужно видеть сразу: как
+// группа выбирает канал, из чего состоит и дойдёт ли она вообще до конфига.
+
+const GROUP_TYPE_SHORT = {
+  "select": "вручную",
+  "url-test": "быстрейший",
+  "fallback": "резерв",
+  "load-balance": "балансировка",
+};
+
+// Условие entrypoint.sh (блок пользовательских групп): группа попадает в
+// конфиг, только если у неё есть хоть один rule-ресурс или непустой _USE.
+// Одни proxies её не спасают.
+const GROUP_RESOURCE_SUFFIXES = ["GEOSITE", "GEOIP", "AS", "DOMAIN", "SUFFIX", "IPCIDR", "KEYWORD", "SRCIPCIDR", "DSCP"];
+
+function paneValue(pane, name) {
+  const el = pane.querySelector('[name="' + name + '"]');
+  return el ? String(fieldValue(el) || "").trim() : "";
+}
+
+function groupSummary(pane) {
+  const name = pane.dataset.group;
+  const prefix = pane.dataset.prefix;
+  if (name === "DEFAULT") return { text: "умолчания для всех групп", warn: "" };
+  const typeSel = pane.querySelector("select[data-group-type]") ||
+    pane.querySelector('select[name="' + prefix + '_TYPE"]');
+  const type = typeSel ? typeSel.value : "select";
+  const use = paneValue(pane, prefix + "_USE");
+  const proxies = paneValue(pane, prefix + "_PROXIES");
+  const count = (v) => v.split(",").map((s) => s.trim()).filter((s) => s && s !== "none").length;
+  let members;
+  if (use === "none") members = count(proxies) ? count(proxies) + " в составе" : "пустой состав";
+  else if (!use && !proxies) members = name === "GLOBAL" ? "все провайдеры" : "без состава";
+  else members = (count(use) + count(proxies)) + " в составе";
+  const text = (GROUP_TYPE_SHORT[type] || type) + " · " + members;
+
+  if (name === "GLOBAL" || name === "DNS" || pane.dataset.source === "ruleset") return { text, warn: "" };
+  const hasResource = GROUP_RESOURCE_SUFFIXES.some((s) => paneValue(pane, prefix + "_" + s) !== "");
+  const hasUse = use !== "";
+  if (!hasResource && !hasUse) {
+    return { text, warn: "не попадёт в конфиг: добавьте провайдера в состав или сайты в «Что направлять»" };
+  }
+  if (!hasResource) return { text, warn: "", note: "своих правил нет" };
+  return { text, warn: "" };
+}
+
+function refreshGroupSummary(pane) {
+  if (!pane || pane.closest("template")) return;
+  const btn = findGroupButton(pane.dataset.group);
+  if (!btn) return;
+  const s = groupSummary(pane);
+  let small = btn.querySelector("small");
+  if (!small) {
+    small = document.createElement("small");
+    btn.insertBefore(small, btn.querySelector(".group-badges"));
+  }
+  small.textContent = s.note ? s.text + " · " + s.note : s.text;
+  btn.classList.toggle("group-warn", !!s.warn);
+  btn.title = s.warn ? "Внимание: группа " + s.warn : s.text;
+  // то же предупреждение — внутри самой панели, где его можно исправить
+  let banner = pane.querySelector(":scope > .group-warning");
+  if (s.warn) {
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.className = "notice notice-warn group-warning";
+      const head = pane.querySelector(":scope > .group-pane-head");
+      pane.insertBefore(banner, head ? head.nextSibling : pane.firstChild);
+    }
+    banner.innerHTML = "<b>Группа не попадёт в конфиг</b><span>Entrypoint создаёт группу, только если у неё есть провайдер в составе (<code>use</code>) или хоть один сайт в «Что направлять в эту группу». Одних <code>proxies</code> для этого мало.</span>";
+  } else if (banner) {
+    banner.remove();
+  }
+}
+
+function refreshAllGroupSummaries() {
+  document.querySelectorAll(".group-pane").forEach(refreshGroupSummary);
+}
+
+// Единая точка: всё, что нужно живой панели группы, кроме переименования и
+// валидаторов (они подключаются отдельно и для серверных панелей тоже).
+function wireGroupPane(pane) {
+  if (!pane || pane.dataset.groupWired === "true") return;
+  pane.dataset.groupWired = "true";
+  applyGroupType(pane);
+  buildGroupChips(pane);
+  updateGroupSectionCounts(pane);
+  refreshGroupSummary(pane);
+  const sel = pane.querySelector("select[data-group-type]");
+  if (sel) sel.addEventListener("change", () => applyGroupType(pane));
+  pane.addEventListener("input", (e) => {
+    if (!e.target.name) return;
+    const t = groupChipTargets(pane);
+    if (t && (e.target === t.use || e.target === t.proxies)) syncGroupChips(pane);
+    updateGroupSectionCounts(pane);
+    refreshGroupSummary(pane);
+  });
+  pane.addEventListener("change", () => {
+    updateGroupSectionCounts(pane);
+    refreshGroupSummary(pane);
+  });
+}
+
+// Новая группа собирается клонированием серверного шаблона: одна разметка на
+// оба пути, поэтому созданная здесь панель не может отстать от серверной.
+// opts.source === "ruleset": группа порождена файлом rule_set_list (или
+// RULE_SET*_BASE64). Такие группы не пишутся в GROUP, их нельзя переименовать
+// или удалить из панели — только через сам источник.
+function addGroupPane(name, type, opts) {
+  const fromRuleSet = !!(opts && opts.source === "ruleset");
+  const clean = String(name || "").trim();
   if (!clean) return;
   if ([...document.querySelectorAll(".group-pane")].some((pane) => pane.dataset.group === clean)) {
     switchGroupPane(clean);
     return;
   }
-  const prefix = groupEnvPrefix(clean);
+  const tpl = document.getElementById("groupPaneTemplate");
   const list = document.getElementById("groupList");
   const panes = document.getElementById("groupPanes");
-  if (!list || !panes) return;
-  setGroupListValue([...groupListValue(), clean]);
+  if (!tpl || !list || !panes) return;
+  const prefix = groupEnvPrefix(clean);
+  if (!fromRuleSet) setGroupListValue([...groupListValue(), clean]);
   const btn = document.createElement("button");
   btn.type = "button";
   btn.dataset.group = clean;
+  if (fromRuleSet) btn.dataset.source = "ruleset";
   btn.onclick = () => switchGroupPane(clean);
   btn.innerHTML = `<b>${escapeAttr(clean)}</b><small>${prefix}_*</small>`;
   list.insertBefore(btn, list.querySelector(".add-group-btn"));
-  const pane = document.createElement("article");
-  pane.className = "group-pane";
-  pane.dataset.group = clean;
-  pane.dataset.prefix = prefix;
+  const holder = document.createElement("div");
+  holder.innerHTML = tpl.innerHTML
+    .split("__PREFIX__").join(prefix)
+    .split("__NAME__").join(escapeAttr(clean));
+  const pane = holder.querySelector(".group-pane");
+  if (!pane) return;
   pane.hidden = true;
-  pane.innerHTML = `
-    <div class="group-pane-head">
-      <button class="group-delete" type="button" onclick="removeGroupPane(this.closest('.group-pane').dataset.group)">Удалить группу</button>
-      <label class="field"><span><b>Group name</b><em>GROUP</em></span><input class="group-name-input" value="${escapeAttr(clean)}" data-original="${escapeAttr(clean)}"><small>Имя группы и prefix env.</small><i>${prefix}</i></label>
-    </div>
-    <div class="grid">
-      ${groupValidatedFieldMarkup(prefix, "PROXIES", "proxies", "Proxies", `Явные <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#proxies" target="_blank" rel="noopener">proxies</a> через запятую: имена других прокси-групп (регистрозависимо) либо служебные <code>DIRECT</code>, <code>REJECT</code>, <code>REJECT-DROP</code>, <code>PASS</code>.`, "DIRECT,REJECT,YOUTUBE")}
-      ${groupValidatedFieldMarkup(prefix, "USE", "use", "Use", `Список <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#use" target="_blank" rel="noopener">providers</a> через запятую или <code>none</code>. Регистрозависимо.`, "LINK1,SUB_LINK1,BYEDPI")}
-      <label class="field" data-env="${prefix}_TYPE"><span><b>Type</b><em>${prefix}_TYPE</em></span><select name="${prefix}_TYPE" data-default="select"><option value="select">select</option><option value="url-test">url-test</option><option value="load-balance">load-balance</option><option value="fallback">fallback</option></select><small>${groupTypeHint()}</small><i>new</i></label>
-      ${groupFieldMarkup(prefix, "DEFAULT_SELECTED", "Default selected", `<a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#default-selected" target="_blank" rel="noopener">default-selected</a> для type select. Пусто → наследует <code>GROUP_DEFAULT_SELECTED</code>.`, "", "text", "")}
-      ${groupFieldMarkup(prefix, "INTERVAL", "Interval", `<a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#interval" target="_blank" rel="noopener">Интервал</a> проверки в секундах. Пусто → наследует <code>GROUP_INTERVAL</code>.`, "", "number", "")}
-      ${groupFieldMarkup(prefix, "URL", "URL", `URL <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#url" target="_blank" rel="noopener">health-check</a>. Пусто → наследует <code>GROUP_URL</code>.`, "", "text", "")}
-      ${groupFieldMarkup(prefix, "URL_STATUS", "URL status", `Ожидаемый <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#expected-status" target="_blank" rel="noopener">expected-status</a>. Пусто → наследует <code>GROUP_URL_STATUS</code>.`, "", "number", "")}
-      <label class="field" data-env="${prefix}_STRATEGY"><span><b>Strategy</b><em>${prefix}_STRATEGY</em></span><select name="${prefix}_STRATEGY" data-default=""><option value="" selected>— inherit GROUP_STRATEGY —</option><option value="round-robin">round-robin</option><option value="consistent-hashing">consistent-hashing</option><option value="sticky-sessions">sticky-sessions</option></select><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/load-balance/#strategy" target="_blank" rel="noopener">Стратегия</a> для load-balance. Пусто → наследует <code>GROUP_STRATEGY</code>.</small><i>new</i></label>
-      ${groupFieldMarkup(prefix, "TOLERANCE", "Tolerance", `<a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/url-test/#tolerance" target="_blank" rel="noopener">Tolerance</a> для url-test в мс. Пусто → наследует <code>GROUP_TOLERANCE</code>.`, "", "number", "")}
-      ${groupFieldMarkup(prefix, "FILTER", "Filter", `Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#filter" target="_blank" rel="noopener">filter</a> по именам прокси.`, "", "text", "")}
-      ${groupFieldMarkup(prefix, "EXCLUDE", "Exclude", `Regex <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-filter" target="_blank" rel="noopener">exclude-filter</a>.`, "", "text", "")}
-      ${groupValidatedFieldMarkup(prefix, "EXCLUDE_TYPE", "exclude_type", "Exclude type", `<a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#exclude-type" target="_blank" rel="noopener">exclude-type</a> — исключить прокси указанных типов, разделитель <code>|</code>. <a class="doc-link" href="https://github.com/MetaCubeX/mihomo/blob/fbead56ec97ae93f904f4476df1741af718c9c2a/constant/adapters.go#L18-L45" target="_blank" rel="noopener">Adapter Type</a>, регистр не важен.`, "vmess|direct")}
-      ${groupFieldMarkup(prefix, "ICON", "Icon", `URL <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#icon" target="_blank" rel="noopener">иконки</a> группы.`, "", "text", "")}
-      <label class="field" data-env="${prefix}_HIDDEN"><span><b>Hidden</b><em>${prefix}_HIDDEN</em></span><select name="${prefix}_HIDDEN" data-default=""><option value="" selected>— показать (default) —</option><option value="true">true (скрыть из веб-панели)</option><option value="false">false (показать)</option></select><small><a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-groups/#hidden" target="_blank" rel="noopener">hidden</a> — скрыть/показать группу в веб-панели mihomo.</small><i>new</i></label>
-      ${groupFieldMarkup(prefix, "GEOSITE", "Geosite", `Имена GEOSITE через запятую. URL <code>.mrs</code> создаёт domain rule-set; <code>.yaml</code>/<code>.yml</code> — classical rule-set.`, "youtube,category-ru,https://example.com/domains.mrs", "text", "")}
-      ${groupFieldMarkup(prefix, "GEOIP", "Geoip", `Имена GEOIP через запятую. URL <code>.mrs</code> создаёт ipcidr rule-set; <code>.yaml</code>/<code>.yml</code> — classical rule-set.`, "telegram,discord,https://example.com/ips.mrs", "text", "")}
-      ${groupFieldMarkup(prefix, "AS", "ASN", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">IP-ASN</a>: AS123,AS456.`, "AS15169", "text", "")}
-      ${groupFieldMarkup(prefix, "PRIORITY", "Priority", "Чем меньше, тем выше в rules.", "", "number", "")}
-      ${groupFieldMarkup(prefix, "DOMAIN", "Domain", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN</a> через запятую.`, "example.com", "text", "")}
-      ${groupFieldMarkup(prefix, "SUFFIX", "Suffix", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN-SUFFIX</a> через запятую.`, "example.com", "text", "")}
-      ${groupFieldMarkup(prefix, "KEYWORD", "Keyword", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DOMAIN-KEYWORD</a> через запятую.`, "google", "text", "")}
-      ${groupFieldMarkup(prefix, "IPCIDR", "IP CIDR", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">IP-CIDR</a> через запятую.`, "1.1.1.0/24", "text", "")}
-      ${groupFieldMarkup(prefix, "SRCIPCIDR", "Source CIDR", `Правила <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">SRC-IP-CIDR</a> через запятую.`, "192.168.88.0/24", "text", "")}
-      ${groupFieldMarkup(prefix, "DSCP", "DSCP", `Правило <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">DSCP</a> для отдельного входа.`, "", "number", "")}
-      ${groupFieldMarkup(prefix, "DNS", "DNS policy", "DNS resolver для rule-set этой группы.", "https://dns.google/dns-query", "text", "")}
-    </div>`;
+  if (fromRuleSet) {
+    pane.dataset.source = "ruleset";
+    pane.dataset.sourceKind = opts.kind || "mount";
+    pane.dataset.sourceRef = opts.ref || "";
+    const del = pane.querySelector(".group-delete");
+    if (del) del.remove();
+    const nameInput = pane.querySelector(".group-name-input");
+    if (nameInput) nameInput.readOnly = true;
+    const note = pane.querySelector(".group-pane-head small");
+    if (note) {
+      note.textContent = "Группа из файла rule_set_list/" + (opts.ref || "") +
+        ". Файл создан после старта контейнера — в конфиге группа появится после перезапуска.";
+    }
+  }
+  // У свежей группы ни одна env ещё не стоит на сервере: серверный шаблон
+  // отрисовал статус «default», а правильный для неё — «new».
+  pane.querySelectorAll(".field > i").forEach((el) => {
+    if (el.closest(".group-pane-head")) return;
+    const txt = el.textContent.trim();
+    if (txt === "default" || txt === "set") el.textContent = "new";
+  });
   panes.appendChild(pane);
+  // На роутере этих env нет, так же как у строк из addRow. Без пометки
+  // wireFieldEvents читал статус «new» как «есть на сервере», и каждая новая
+  // группа порождала два десятка /container/envs/remove для несуществующих
+  // переменных.
+  pane.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
+    el.dataset.fromDraft = "true";
+  });
   wireFieldEvents(pane);
-  // Панель, собранная здесь, иначе осталась бы без .field-meta: подсказка и
-  // статус лежали бы отдельными строками, а не парой «слева хинт, справа
-  // статус», как в панелях, отрисованных сервером. Из-за этого только что
-  // добавленная группа выглядела иначе, чем те же поля после перезагрузки.
+  // Тип из мастера выставляем уже после wireFieldEvents и с событием: иначе
+  // значение осталось бы только в DOM, не попало бы в черновик и потерялось
+  // при переходе между страницами — группа молча создалась бы с типом select.
+  if (type) {
+    const sel = pane.querySelector("select[data-group-type]");
+    if (sel && sel.value !== type) {
+      sel.value = type;
+      sel.dispatchEvent(new Event("input", { bubbles: true }));
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  }
+  // Без этого панель, собранная здесь, осталась бы без .field-meta: подсказка и
+  // статус шли бы отдельными строками, а не парой «слева хинт, справа статус».
   if (typeof normalizeFieldMeta === "function") normalizeFieldMeta(pane);
   wireGroupRename(pane);
   wirePaneValidators(pane);
-  switchGroupPane(clean);
+  wireGroupPane(pane);
+  if (fromRuleSet) {
+    // Её появление — следствие файла на диске, а не действия пользователя:
+    // выбранную сейчас панель не перехватываем. Настройки такой группы
+    // попадают в GROUP, только если их задали, — как у серверных.
+    pane.querySelectorAll("input[name], textarea[name], select[name]").forEach((el) => {
+      el.addEventListener("input", demoteOrPromoteRuleSetGroups);
+      el.addEventListener("change", demoteOrPromoteRuleSetGroups);
+    });
+  } else {
+    switchGroupPane(clean);
+  }
   // Новая группа сразу должна засветиться в бейджах (модификация GROUP env
   // + добавленные originals). rememberField в setGroupListValue пишет в
   // localStorage без input-события, поэтому form-bubble listener мимо.
   if (typeof refreshAllBadges === "function") refreshAllBadges();
+}
+
+// ===== Мастер создания группы =====
+// Пустая панель на два десятка полей ничего не подсказывает, поэтому сначала
+// спрашиваем имя и сценарий, а тип проставляем сами.
+function openNewGroupModal() {
+  const modal = document.getElementById("newGroupModal");
+  if (!modal) {
+    const name = window.prompt("Group name", "");
+    if (name) addGroupPane(name);
+    return;
+  }
+  const input = document.getElementById("newGroupName");
+  if (input) input.value = "";
+  selectNewGroupKind(modal.querySelector(".group-kind-card") || null);
+  const err = document.getElementById("newGroupError");
+  if (err) err.textContent = "";
+  modal.hidden = false;
+  if (input) input.focus();
+}
+
+function closeNewGroupModal() {
+  const modal = document.getElementById("newGroupModal");
+  if (modal) modal.hidden = true;
+}
+
+function selectNewGroupKind(card) {
+  const modal = document.getElementById("newGroupModal");
+  if (!modal) return;
+  modal.querySelectorAll(".group-kind-card").forEach((el) => {
+    const on = el === card;
+    el.classList.toggle("on", on);
+    el.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+
+function confirmNewGroup() {
+  const modal = document.getElementById("newGroupModal");
+  if (!modal) return;
+  const input = document.getElementById("newGroupName");
+  const err = document.getElementById("newGroupError");
+  const clean = String(input?.value || "").trim();
+  const show = (msg) => { if (err) err.textContent = msg; };
+  if (!clean) return show("Введите имя группы.");
+  // Имя становится префиксом env, поэтому те же ограничения, что у имён env.
+  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(clean)) {
+    return show("Имя начинается с буквы и состоит из латиницы, цифр, дефиса и подчёркивания.");
+  }
+  if ([...document.querySelectorAll(".group-pane")].some((p) => p.dataset.group === clean)) {
+    return show("Группа с таким именем уже есть.");
+  }
+  const card = modal.querySelector(".group-kind-card.on");
+  closeNewGroupModal();
+  addGroupPane(clean, card?.dataset.type || "select");
 }
 
 // Подцепляет валидаторы (use / proxies / exclude_type) к динамически созданной
@@ -4185,6 +5033,7 @@ function wireGroupRename(pane) {
 
 function initGroupEditor() {
   document.querySelectorAll(".group-pane").forEach(wireGroupRename);
+  document.querySelectorAll(".group-pane").forEach(wireGroupPane);
   // Восстановление групп, существующих только в draft'е GROUP: сервер их
   // не рендерит до Применить, но в localStorage GROUP=... уже содержит имя,
   // плюс могут быть драфты <prefix>_USE/_PROXIES/... — без этого блока
@@ -4650,6 +5499,292 @@ function buildPreviewRules() {
   return rules.sort((a, b) => a.prio - b.prio);
 }
 
+// ===== Быстрое добавление сайта (обзор и страница «Правила и сайты») =====
+// Запрос подписчика: вбить адрес, выбрать, через что его пускать, и нажать
+// «Добавить». Всё остальное — имя группы, нужные env, порядок правил —
+// панель подбирает сама и показывает заранее, до нажатия.
+
+// Из ссылки достаём голое доменное имя: пользователь копирует адрес из
+// браузера целиком, вместе со схемой, путём и параметрами.
+function quickSiteDomain(raw) {
+  let s = String(raw || "").trim();
+  if (!s) return "";
+  s = s.replace(/^[a-z0-9+.-]+:\/\//i, "");
+  s = s.replace(/^[^@/]*@/, "");
+  s = s.split(/[/?#]/)[0];
+  s = s.replace(/:\d+$/, "");
+  s = s.toLowerCase().replace(/\.+$/, "");
+  // Кириллический домен (сайт.рф) mihomo понимает только в punycode —
+  // браузер переводит его сам, стоит пропустить имя через URL.
+  if (/[^\x00-\x7f]/.test(s)) {
+    try { s = new URL("http://" + s).hostname; } catch (e) { return ""; }
+  }
+  // www. отбрасываем: DOMAIN-SUFFIX и так покрывает все поддомены.
+  s = s.replace(/^www\./, "");
+  if (!s.includes(".")) return "";
+  if (!/^[a-z0-9.-]+$/.test(s)) return "";
+  // Зона верхнего уровня всегда с буквами: «1.2.3» или IP доменом не считаем.
+  if (!/[a-z]/.test(s.split(".").pop())) return "";
+  return s;
+}
+
+// Имя для новой группы из домена: youtube.com → YOUTUBE, bbc.co.uk → BBC.
+function quickSiteGroupName(domain, taken) {
+  const src = String(domain || "");
+  let base = (/^IP_/.test(src) ? src : src.split(".")[0]).toUpperCase().replace(/[^A-Z0-9_]/g, "");
+  if (!base || /^[0-9]/.test(base)) base = "SITE" + (base || "");
+  let name = base;
+  let n = 2;
+  while (taken.has(name)) name = base + n++;
+  return name;
+}
+
+function quickSiteEnvMap() {
+  return typeof previewEnvMap === "function" ? previewEnvMap() : new Map();
+}
+
+// Пишем черновик env так, чтобы его увидели и бейджи, и предпросмотр правил,
+// и сборка команд: она обходит localStorage, поэтому страница, на которой
+// поля нет, не мешает.
+function quickSiteSetEnv(name, value) {
+  const el = document.querySelector('#envForm [name="' + name + '"]');
+  if (el) {
+    el.value = value;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return;
+  }
+  Store.set(envKey(name), value);
+}
+
+function quickSiteTargets() {
+  const map = quickSiteEnvMap();
+  const groups = new Set(["GLOBAL"]);
+  String(map.get("GROUP") || "").split(",").forEach((g) => {
+    const t = g.trim();
+    if (t) groups.add(t);
+  });
+  document.querySelectorAll('.group-pane[data-source="ruleset"]').forEach((p) => {
+    if (p.dataset.group) groups.add(p.dataset.group);
+  });
+  const providers = typeof knownProviders === "function" ? [...knownProviders()].sort() : [];
+  return { groups: [...groups].sort(), providers };
+}
+
+function quickSiteRender() {
+  const box = document.getElementById("quickSiteTargets");
+  if (!box) return;
+  const t = quickSiteTargets();
+  const chip = (kind, name, label) =>
+    '<button type="button" class="chip" aria-pressed="false" data-kind="' + kind + '" data-name="' + escapeAttr(name) + '">' +
+    escapeAttr(label || name) + "</button>";
+  const rows = [
+    ["Готовые группы", t.groups.map((g) => chip("group", g)).join(""), ""],
+    ["Напрямую или запретить", chip("special", "DIRECT", "DIRECT — мимо прокси") + chip("special", "REJECT", "REJECT — заблокировать"), ""],
+    ["Провайдер (создаст группу)", t.providers.map((p) => chip("provider", p)).join(""),
+      "провайдеров пока нет — добавьте LINK, SUB_LINK или SOCKS"],
+  ];
+  const prev = box.querySelector(".chip.on");
+  const prevKey = prev ? prev.dataset.kind + ":" + prev.dataset.name : "";
+  box.innerHTML = rows.map(([title, chips, empty]) =>
+    '<div class="chip-row"><span class="chip-row-title">' + title + "</span>" +
+    (chips || '<span class="chip-empty">' + empty + "</span>") + "</div>").join("");
+  if (prevKey) {
+    const again = box.querySelector('.chip[data-kind="' + prevKey.split(":")[0] + '"][data-name="' + prevKey.split(":")[1] + '"]');
+    if (again) {
+      again.classList.add("on");
+      again.setAttribute("aria-pressed", "true");
+    }
+  }
+  quickSitePreview();
+}
+
+// Что именно ввёл человек: сайт или адрес. Сайт уходит в <ГРУППА>_SUFFIX
+// (DOMAIN-SUFFIX), IPv4-адрес или подсеть — в <ГРУППА>_IPCIDR (IP-CIDR).
+function quickSiteIPv4(raw) {
+  let s = String(raw || "").trim().replace(/^[a-z0-9+.-]+:\/\//i, "");
+  s = s.split(/[?#]/)[0];
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?::\d+)?(?:\/(\d{1,2}))?\/?$/.exec(s);
+  if (!m) return "";
+  const octets = m.slice(1, 5).map(Number);
+  if (octets.some((o) => o > 255)) return "";
+  const bits = m[5] === undefined ? 32 : Number(m[5]);
+  if (bits < 0 || bits > 32) return "";
+  return octets.join(".") + "/" + bits;
+}
+
+function quickSiteTarget(raw) {
+  const ip = quickSiteIPv4(raw);
+  if (ip) {
+    const shown = ip.endsWith("/32") ? ip.slice(0, -3) : ip;
+    const single = ip.endsWith("/32");
+    return { value: ip, env: "IPCIDR", rule: "IP-CIDR," + ip, ruleTail: ",no-resolve",
+      what: (single ? "адрес " : "подсеть ") + shown,
+      subject: (single ? "Адрес " : "Подсеть ") + shown,
+      go: "пойдёт", already: single ? "уже направлен" : "уже направлена",
+      blocked: single ? "будет заблокирован" : "будет заблокирована",
+      group: "IP_" + shown.replace(/[./]/g, "_") };
+  }
+  const domain = quickSiteDomain(raw);
+  if (!domain) return null;
+  // Домен в начале фразы с заглавной не пишем: это имя, а не слово.
+  return { value: domain, env: "SUFFIX", rule: "DOMAIN-SUFFIX," + domain, ruleTail: "",
+    what: domain, subject: domain + " и его поддомены",
+    go: "пойдут", already: "уже направлены", blocked: "будут заблокированы", group: "" };
+}
+
+function quickSiteCurrent(map, prefix, target) {
+  return String(map.get(prefix + "_" + target.env) || "").split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+function quickSitePreview() {
+  const out = document.getElementById("quickSitePreview");
+  const btn = document.getElementById("quickSiteAdd");
+  if (!out) return;
+  const raw = document.getElementById("quickSiteUrl")?.value || "";
+  const target = quickSiteTarget(raw);
+  const chip = document.querySelector("#quickSiteTargets .chip.on");
+  const disable = (msg, tone) => {
+    out.textContent = msg;
+    out.dataset.tone = tone || "";
+    if (btn) btn.disabled = true;
+  };
+  if (!raw.trim()) return disable("Введите адрес сайта или IP — например https://youtube.com или 1.2.3.4.");
+  if (!target) return disable("Не похоже ни на сайт, ни на IPv4: нужен домен вида youtube.com или адрес вида 1.2.3.4.", "warn");
+  if (!chip) return disable("Выберите, куда направить " + target.what + ".");
+  const kind = chip.dataset.kind;
+  const name = chip.dataset.name;
+  const map = quickSiteEnvMap();
+  if (kind === "group") {
+    const prefix = groupEnvPrefix(name);
+    if (quickSiteCurrent(map, prefix, target).includes(target.value)) {
+      return disable(target.subject + " " + target.already + " в группу " + name + ".", "warn");
+    }
+    out.textContent = target.subject + " " + target.go + " в группу " + name +
+      " — добавится в " + prefix + "_" + target.env + ".";
+  } else if (kind === "special") {
+    out.textContent = target.subject + " " +
+      (name === "DIRECT" ? target.go + " мимо прокси" : target.blocked) +
+      " — добавится отдельным правилом " + quickSiteNextRules(map) + ".";
+  } else {
+    const taken = new Set(quickSiteTargets().groups);
+    const g = quickSiteGroupName(target.group || target.value, taken);
+    out.textContent = "Будет создана группа " + g + " на провайдере " + name + ", и " +
+      target.subject.charAt(0).toLowerCase() + target.subject.slice(1) + " " + target.go +
+      " в неё — это " + g + "_USE, " + g + "_" + target.env + " и запись в GROUP.";
+  }
+  out.dataset.tone = "";
+  if (btn) btn.disabled = false;
+}
+
+function quickSiteNextRules(map) {
+  let idx = 1;
+  const used = new Set();
+  (map || quickSiteEnvMap()).forEach((_v, k) => {
+    const m = /^RULES(\d+)$/.exec(k);
+    if (m) used.add(Number(m[1]));
+  });
+  document.querySelectorAll('#rules [data-index]').forEach((row) => used.add(Number(row.dataset.index)));
+  while (used.has(idx)) idx++;
+  return "RULES" + idx;
+}
+
+function quickSiteAddRulesRow(value) {
+  const wrap = document.getElementById("rules");
+  if (!wrap || typeof addRow !== "function") {
+    quickSiteSetEnv(quickSiteNextRules(), value);
+    return;
+  }
+  const before = new Set([...wrap.querySelectorAll("[data-index]")].map((r) => r.dataset.index));
+  addRow("rules", "RULES", true);
+  const row = [...wrap.querySelectorAll("[data-index]")].find((r) => !before.has(r.dataset.index));
+  const input = row?.querySelector("input[name]");
+  if (!input) return;
+  input.value = value;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function quickSiteAdd() {
+  const input = document.getElementById("quickSiteUrl");
+  const done = document.getElementById("quickSiteDone");
+  const target = quickSiteTarget(input?.value || "");
+  const chip = document.querySelector("#quickSiteTargets .chip.on");
+  if (!target || !chip) return;
+  const kind = chip.dataset.kind;
+  const name = chip.dataset.name;
+  const map = quickSiteEnvMap();
+  let note = "";
+  if (kind === "group") {
+    const prefix = groupEnvPrefix(name);
+    const cur = quickSiteCurrent(map, prefix, target);
+    if (cur.includes(target.value)) return;
+    cur.push(target.value);
+    quickSiteSetEnv(prefix + "_" + target.env, cur.join(","));
+    note = target.value + " → группа " + name + " (" + prefix + "_" + target.env + ")";
+  } else if (kind === "special") {
+    quickSiteAddRulesRow(target.rule + "," + name + target.ruleTail);
+    note = target.value + " → " + name;
+  } else {
+    const taken = new Set(quickSiteTargets().groups);
+    const g = quickSiteGroupName(target.group || target.value, taken);
+    const groups = String(map.get("GROUP") || "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!groups.includes(g)) groups.push(g);
+    quickSiteSetEnv("GROUP", groups.join(","));
+    quickSiteSetEnv(g + "_USE", name);
+    quickSiteSetEnv(g + "_" + target.env, target.value);
+    note = target.value + " → новая группа " + g + " на провайдере " + name;
+  }
+  if (input) input.value = "";
+  if (done) {
+    const line = document.createElement("div");
+    line.textContent = "Добавлено: " + note;
+    done.appendChild(line);
+  }
+  quickSiteRender();
+  if (typeof renderRulesPreview === "function") renderRulesPreview();
+  if (typeof refreshAllBadges === "function") refreshAllBadges();
+}
+
+function quickSiteInit() {
+  const box = document.getElementById("quickSiteTargets");
+  if (!box) return;
+  // Повторная инициализация не должна вешать второй обработчик: два
+  // переключателя на одном клике гасят друг друга, и выбор цели перестаёт
+  // работать вообще. Перерисовать список при этом полезно.
+  if (box.dataset.quickSiteWired === "true") {
+    quickSiteRender();
+    return;
+  }
+  box.dataset.quickSiteWired = "true";
+  quickSiteRender();
+  box.addEventListener("click", (e) => {
+    const chip = e.target.closest(".chip");
+    if (!chip) return;
+    const on = chip.classList.contains("on");
+    box.querySelectorAll(".chip").forEach((c) => {
+      c.classList.remove("on");
+      c.setAttribute("aria-pressed", "false");
+    });
+    if (!on) {
+      chip.classList.add("on");
+      chip.setAttribute("aria-pressed", "true");
+    }
+    quickSitePreview();
+  });
+  const url = document.getElementById("quickSiteUrl");
+  if (url) {
+    url.addEventListener("input", quickSitePreview);
+    url.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      const btn = document.getElementById("quickSiteAdd");
+      if (btn && !btn.disabled) quickSiteAdd();
+    });
+  }
+  quickSitePreview();
+}
+
 function renderRulesPreview() {
   const wrap = document.getElementById("finalRulesPreview");
   if (!wrap) return;
@@ -4966,6 +6101,14 @@ function knownProviders() {
   // see ENV names that already had localStorage drafts — i.e. ones the user
   // had visited at least once.
   (seed.envs || []).forEach((n) => set.add(n));
+  // Провайдеры из файлов: сервер напечатал их на момент старта. Как только
+  // живой список пришёл, верим диску — удалённый файл перестаёт быть
+  // «известным» (и use на него подсветится), новый сразу доступен в составе.
+  ["awg", "proxy"].forEach((type) => {
+    if (typeof LiveFiles === "undefined" || !LiveFiles.current[type]) return;
+    startupProviderNames(type).forEach((n) => set.delete(n));
+    fileProviderNames(type).forEach((n) => set.add(n));
+  });
   // Dynamic providers derived from currently-set ENVs (LINK/SUB_LINK/SOCKS
   // and DPI variants). Read from localStorage so this works cross-page.
   for (const key of Store.keys()) {
@@ -5227,6 +6370,29 @@ function activatePageTab(tabId) {
   });
   try { Store.set(activeTabKey(), tabId); } catch (e) {}
   updateCommandVisibility();
+}
+
+// Вкладка SOCKS* не рисуется в навигации, пока таких env нет, но сама секция
+// на странице есть — иначе из панели нельзя было бы завести первый SOCKS.
+function revealSocksTab() {
+  const nav = document.querySelector(".page-tabs");
+  if (!nav) return;
+  let btn = nav.querySelector('.page-tab[data-tab="socks"]');
+  if (!btn) {
+    btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "page-tab";
+    btn.dataset.tab = "socks";
+    btn.setAttribute("role", "tab");
+    btn.setAttribute("aria-selected", "false");
+    btn.innerHTML = '<span class="page-tab-label">SOCKS* (устар.)</span>' +
+      '<span class="badge badge-changed" data-kind="changed" hidden></span>' +
+      '<span class="badge badge-error" data-kind="error" hidden></span>';
+    btn.addEventListener("click", () => activatePageTab("socks"));
+    const veth = nav.querySelector('.page-tab[data-tab="veth"]');
+    nav.insertBefore(btn, veth || null);
+  }
+  activatePageTab("socks");
 }
 
 function initPageTabs() {
@@ -5501,7 +6667,7 @@ function updatePendingRemovalsPanel() {
     return;
   }
   panel.hidden = false;
-  const intro = `<div class="pending-removals-head"><b>Будут удалены при применении (${items.length}):</b><span>значения были на сервере, но в черновике пусты. Откатить — «Сбросить страницу» или «Сбросить черновик».</span></div>`;
+  const intro = `<div class="pending-removals-head"><b>Будут удалены с роутера (${items.length}):</b><span>значения стоят на роутере, но в черновике пусты. Откатить — «Сбросить страницу» или «Сбросить всё».</span></div>`;
   const chips = items.map((it) => {
     const safeName = escapeAttr(it.name);
     const tip = escapeAttr(it.orig.length > 80 ? it.orig.slice(0, 77) + "…" : it.orig);
@@ -5511,6 +6677,7 @@ function updatePendingRemovalsPanel() {
 }
 
 function refreshAllBadges() {
+  if (typeof updatePendingCounter === "function") updatePendingCounter();
   refreshFieldMarkers();
   updateTabBadges();
   updateNavBadges();
@@ -5537,6 +6704,8 @@ function bootstrapUI() {
   initPasswordToggles(document);
   initPageTabs();
   initSocksEditor();
+  initProviderRows();
+  initRuleSetRows();
   initProviderMountLists();
   initFieldValidators();
   initToolsPage();
@@ -5544,6 +6713,8 @@ function bootstrapUI() {
   initBlockcheck1();
   initByedpiCheck();
   renderRulesPreview();
+  quickSiteInit();
+  initLiveFiles();
   restoreLastCommands();
   refreshAllBadges();
   document.querySelectorAll("#envForm input[name], #envForm textarea[name], #envForm select[name]").forEach((el) => {
