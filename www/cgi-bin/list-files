@@ -22,8 +22,13 @@ case "$dir_type" in
 esac
 
 json_escape() {
+  # Цикл с единицы, а не с нуля: в busybox awk sprintf("%c", 0) — пустая
+  # строка, и gsub по пустому шаблону вставлял \u0000 перед каждым символом
+  # имени («aasdasd.txt» приходил как «\u0000a\u0000a…»). Файлы тогда не
+  # совпадали со слепком старта, а правка и удаление по такому имени падали.
+  # NUL в имени файла невозможен — экранировать его незачем.
   awk '
-    BEGIN { for (i = 0; i < 32; i++) ctrl[sprintf("%c", i)] = sprintf("\\u%04x", i) }
+    BEGIN { for (i = 1; i < 32; i++) ctrl[sprintf("%c", i)] = sprintf("\\u%04x", i) }
     {
       gsub(/\\/, "\\\\"); gsub(/"/, "\\\"")
       for (c in ctrl) gsub(c, ctrl[c])
