@@ -366,6 +366,11 @@ button, .ghost, .primary, .theme-btn {
   gap: 14px;
 }
 
+/* Две сетки подряд без отступа выглядели одной, склеенной как попало. */
+.grid + .grid {
+  margin-top: 14px;
+}
+
 .field, .toggle {
   position: relative;
   min-width: 0;
@@ -392,25 +397,39 @@ button, .ghost, .primary, .theme-btn {
 
 .field-wide { grid-column: 1 / -1; }
 
+/* Шапка поля: название слева, мелкая подпись (имя env или пояснение) справа.
+   Если вдвоём они не помещаются, подпись уходит на свою строку — flex-wrap.
+   Раньше вместо переноса обоим разрешалось сжиматься до нуля с разрывом
+   внутри слова, и длинная подпись съедала название: «Повтор|ов»,
+   «Качеств|о», «Endpoi|nt», «DNS/fe|tch». */
 .field span {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: 10px;
-  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: baseline;
 }
 
-/* Имя env — одно длинное слово без пробелов, а flex-элемент не сжимается
-   ниже min-content. Из-за этого заголовок вроде GROUP_DEFAULT_SELECTED,
-   напечатанный и жирным, и мелким моно, распирал карточку и она выезжала
-   за колонку сетки. overflow-wrap: anywhere разрешает перенос внутри слова
-   и заодно уменьшает min-content, min-width: 0 снимает флекс-минимум. */
-.field > span > b,
-.field > span > em {
+/* Название рвётся только по словам: break-word делит слово, лишь когда оно
+   одно длиннее всей карточки. */
+.field > span > b {
+  flex: 1 1 auto;
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
-.field > span > em { text-align: right; }
+/* Подпись — часто одно длинное имя env вроде GROUP_DEFAULT_SELECTED или URL.
+   Ей перенос внутри слова разрешён, иначе она распирает карточку за колонку. */
+.field > span > em {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  overflow-wrap: anywhere;
+  /* Короткая подпись и так стоит справа благодаря margin-left: auto;
+     длинная, перенесённая на свою строку, читается слева направо. */
+  text-align: left;
+}
 
 .field em, .field i, .toggle i {
   color: var(--faint);
@@ -3075,3 +3094,101 @@ details.group-sec > summary:focus-visible,
   .final-rules > .final-rule-row { grid-template-columns: 32px minmax(0, 1fr); }
   .final-rules .rule-origin { grid-column: 2; }
 }
+
+/* Строка набора правил: base64 — не отдельный блок под строкой, а маленький
+   спойлер под названием. Свёрнутая строка — одна-две строки текста. */
+.rule-row.ruleset-row {
+  padding: 10px 12px;
+  align-items: center;
+}
+
+.row-extras.row-extras-inline {
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.row-extras-inline > summary {
+  display: inline-flex;
+  font-size: 11.5px;
+}
+
+.row-extras-inline[open] > label {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.row-extras-inline input {
+  min-height: 34px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.row-extras-inline small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Режим состава — не провайдер, а выбор «все / никого»: выделен штрихом. */
+.chip.chip-mode {
+  border-style: dashed;
+}
+
+.chip.chip-mode.on {
+  border-style: solid;
+}
+
+/* ── Карточки подбора стратегий и инструментов ────────────────────────
+   Здесь подпись у поля — целое предложение, а не имя env. В шапке она
+   занимала разное число строк, и поля ввода в соседних карточках стояли на
+   разной высоте. Подпись уходит под поле, а subgrid выравнивает название,
+   поле и подпись по строкам общей сетки — вся строка карточек стоит ровно. */
+.bc-grid .field > span,
+.tool-compact-grid .field > span {
+  display: contents;
+}
+
+.bc-grid .field > span > em,
+.tool-compact-grid .field > span > em {
+  order: 2;
+  margin-left: 0;
+  text-align: left;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.bc-grid .field > :is(input, select, textarea),
+.tool-compact-grid .field > :is(input, select, textarea) {
+  order: 1;
+}
+
+@supports (grid-template-rows: subgrid) {
+  .bc-grid .field,
+  .tool-compact-grid .field {
+    display: grid;
+    grid-row: span 3;
+    grid-template-rows: subgrid;
+    row-gap: 8px;
+    align-content: start;
+  }
+  .bc-grid .field > span > b,
+  .tool-compact-grid .field > span > b { grid-row: 1; align-self: end; }
+  .bc-grid .field > :is(input, select, textarea),
+  .tool-compact-grid .field > :is(input, select, textarea) { grid-row: 2; }
+  .bc-grid .field > span > em,
+  .tool-compact-grid .field > span > em { grid-row: 3; }
+}
+
+/* Номер провайдера — часть имени, его не меняют: без рамки поля ввода,
+   просто метка. */
+.env-index-fixed input {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+}
+
+.env-grip.env-grip-fixed { cursor: default; }

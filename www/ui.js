@@ -1978,14 +1978,20 @@ function resetCurrentPageDraft() {
 // boolean and consults this table — so SUB_LINK can have min=0 while still
 // emitting numeric env names (SUB_LINK0), and LINK can keep its legacy
 // "LINK == LINK0" zero-plain spelling.
+// fixedId: номер — часть имени провайдера (LINK3, SUB_LINK1, BYEDPI_2…), и по
+// этому имени на него ссылаются группы (…_USE) и цепочки (…_DIALER_PROXY).
+// Перетаскивание и правка номера переименовывали переменную, а ссылки на неё
+// оставались старыми — цепочки рвались. У таких строк номер неизменен; новая
+// строка получает свободный. Там, где номер — это порядок и по имени на строку
+// никто не ссылается (RULES, FAKE_IP_FILTER), перетаскивание остаётся.
 const INDEXED_PREFIXES = {
-  LINK:           { minIndex: 0, zeroPlain: true,  maxIndex: null, containerId: "links" },
-  SUB_LINK:       { minIndex: 0, zeroPlain: false, maxIndex: null, containerId: "subs"  },
-  SOCKS:          { minIndex: 0, zeroPlain: false, maxIndex: 99,   containerId: "socksRows" },
+  LINK:           { minIndex: 0, zeroPlain: true,  maxIndex: null, containerId: "links", fixedId: true },
+  SUB_LINK:       { minIndex: 0, zeroPlain: false, maxIndex: null, containerId: "subs", fixedId: true },
+  SOCKS:          { minIndex: 0, zeroPlain: false, maxIndex: 99,   containerId: "socksRows", fixedId: true },
   MIXED_IN_USER:  { minIndex: 0, zeroPlain: false, maxIndex: 99,   containerId: "mixedUsers" },
-  BYEDPI_CMD:     { minIndex: 0, zeroPlain: true,  maxIndex: 99,   containerId: "byedpi" },
-  ZAPRET_CMD:     { minIndex: 0, zeroPlain: true,  maxIndex: 99,   containerId: "zapret",  packets: "ZAPRET_PACKETS"  },
-  ZAPRET2_CMD:    { minIndex: 0, zeroPlain: true,  maxIndex: 99,   containerId: "zapret2", packets: "ZAPRET2_PACKETS" },
+  BYEDPI_CMD:     { minIndex: 0, zeroPlain: true,  maxIndex: 99,   containerId: "byedpi", fixedId: true },
+  ZAPRET_CMD:     { minIndex: 0, zeroPlain: true,  maxIndex: 99,   containerId: "zapret",  packets: "ZAPRET_PACKETS", fixedId: true },
+  ZAPRET2_CMD:    { minIndex: 0, zeroPlain: true,  maxIndex: 99,   containerId: "zapret2", packets: "ZAPRET2_PACKETS", fixedId: true },
   FAKE_IP_FILTER: { minIndex: 1, zeroPlain: false, maxIndex: null, containerId: "fakeFilters" },
   RULES:          { minIndex: 1, zeroPlain: false, maxIndex: null, containerId: "rules" },
   RULE_SET:       { minIndex: 1, zeroPlain: false, maxIndex: null, containerId: "rulesets", suffix: "_BASE64" },
@@ -2444,6 +2450,7 @@ function indexedRowConfig(row) {
       zeroPlain: !!spec.zeroPlain,
       max: Number.isInteger(spec.maxIndex) ? spec.maxIndex : null,
       packets: spec.packets,
+      fixedId: !!spec.fixedId,
     };
   }
   const names = [...row.querySelectorAll("input[name], textarea[name], select[name]")].map((el) => el.name);
@@ -2463,6 +2470,7 @@ function indexedRowConfig(row) {
         zeroPlain: !!spec.zeroPlain,
         max: Number.isInteger(spec.maxIndex) ? spec.maxIndex : null,
         packets: spec.packets,
+        fixedId: !!spec.fixedId,
       };
     }
   }
@@ -2868,15 +2876,17 @@ function ensureIndexedRowControls(row) {
   if (!grip) {
     grip = document.createElement("div");
     grip.className = "env-grip";
-    grip.draggable = true;
-    grip.title = "Перетащить";
-    grip.textContent = "⋮⋮";
     row.insertBefore(grip, row.firstElementChild);
-  } else {
-    grip.draggable = true;
   }
+  // Колонку под ручкой оставляем и у неизменяемых строк — иначе сетка строки
+  // съедет на одну колонку.
+  grip.draggable = !cfg.fixedId;
+  grip.textContent = cfg.fixedId ? "" : "⋮⋮";
+  grip.title = cfg.fixedId ? "" : "Перетащить";
+  grip.classList.toggle("env-grip-fixed", !!cfg.fixedId);
   const existing = row.querySelector(".env-index");
   if (existing && existing.querySelector("input")) {
+    lockFixedIndex(row, cfg);
     wireIndexedRow(row);
     return;
   }
@@ -2887,7 +2897,19 @@ function ensureIndexedRowControls(row) {
   label.innerHTML = `<input type="number" step="1" value="${current}" min="${cfg.min}" aria-label="ENV number">`;
   if (Number.isInteger(cfg.max)) label.querySelector("input").max = cfg.max;
   row.insertBefore(label, grip.nextSibling);
+  lockFixedIndex(row, cfg);
   wireIndexedRow(row);
+}
+
+function lockFixedIndex(row, cfg) {
+  if (!cfg || !cfg.fixedId) return;
+  const input = row.querySelector(".env-index input");
+  if (!input) return;
+  input.readOnly = true;
+  input.tabIndex = -1;
+  input.closest(".env-index").classList.add("env-index-fixed");
+  input.title = "Номер — часть имени провайдера, и группы ссылаются на него по этому имени. " +
+    "Поэтому он не меняется: новая строка сама получает свободный номер.";
 }
 
 function wireIndexedRow(row) {
@@ -2899,6 +2921,10 @@ function wireIndexedRow(row) {
   input.min = minIndex;
   if (cfg && Number.isInteger(cfg.max)) input.max = cfg.max;
   input.addEventListener("change", () => {
+    if (cfg && cfg.fixedId) {
+      input.value = row.dataset.index;
+      return;
+    }
     const nextIndex = Number(input.value);
     const overMax = cfg && Number.isInteger(cfg.max) && nextIndex > cfg.max;
     if (!Number.isInteger(nextIndex) || nextIndex < minIndex || overMax || !shiftIndexedRow(row, nextIndex)) {
@@ -2923,7 +2949,8 @@ function initDragAndDrop(wrap) {
   wrap.addEventListener("dragstart", (e) => {
     const grip = e.target.closest(".env-grip");
     const row = e.target.closest(".env-row[data-index]");
-    if (!grip || !row || !indexedRowConfig(row)) {
+    const rowCfg = row && indexedRowConfig(row);
+    if (!grip || !row || !rowCfg || rowCfg.fixedId) {
       e.preventDefault();
       return;
     }
@@ -3085,7 +3112,7 @@ function addRuleSetFileRow(name, size) {
   div.className = "mount-link rule-set-file";
   div.dataset.file = name;
   const displayName = name.replace(/\.txt$/, '');
-  div.innerHTML = `<span>${escapeAttr(displayName)}</span><small>${size} bytes</small><div class="file-actions"><button type="button" onclick="editRuleSetFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteRuleSetFile(this)" title="Удалить">&#10005;</button></div>`;
+  div.innerHTML = `<span>${escapeAttr(displayName)}</span><small>${size} bytes</small><div class="file-actions"><button type="button" onclick="editRuleSetFile(this)" title="Редактировать">&#9998;</button><button type="button" onclick="deleteRuleSetFile(this)" title="Удалить">&#10005;</button></div>`;
   wrap.appendChild(div);
 }
 
@@ -3204,7 +3231,7 @@ function addProxyFileRow(name, size) {
   const anchor = yamlAnchorForFile(name);
   div.dataset.anchor = anchor;
   const displayName = name.replace(/\.(yaml|yml|conf)$/, '');
-  div.innerHTML = `<a class="mount-link-title" href="yaml.html#${encodeURIComponent(anchor)}"><span>${escapeAttr(displayName)}</span><small>${size} bytes</small></a><div class="file-actions"><button type="button" onclick="editProxyFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteProxyFile(this)" title="Удалить">&#10005;</button></div>`;
+  div.innerHTML = `<a class="mount-link-title" href="yaml.html#${encodeURIComponent(anchor)}"><span>${escapeAttr(displayName)}</span><small>${size} bytes</small></a><div class="file-actions"><button type="button" onclick="editProxyFile(this)" title="Редактировать">&#9998;</button><button type="button" onclick="deleteProxyFile(this)" title="Удалить">&#10005;</button></div>`;
   wrap.appendChild(div);
 }
 
@@ -3814,7 +3841,7 @@ function addAwgFileRow(name, size) {
   const anchor = yamlAnchorForFile(name);
   div.dataset.anchor = anchor;
   const displayName = name.replace(/\.conf$/, '');
-  div.innerHTML = `<a class="mount-link-title" href="yaml.html#${encodeURIComponent(anchor)}"><span>${escapeAttr(displayName)}</span><small>${size} bytes</small></a><div class="file-actions"><button type="button" onclick="editAwgFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteAwgFile(this)" title="Удалить">&#10005;</button></div>`;
+  div.innerHTML = `<a class="mount-link-title" href="yaml.html#${encodeURIComponent(anchor)}"><span>${escapeAttr(displayName)}</span><small>${size} bytes</small></a><div class="file-actions"><button type="button" onclick="editAwgFile(this)" title="Редактировать">&#9998;</button><button type="button" onclick="deleteAwgFile(this)" title="Удалить">&#10005;</button></div>`;
   wrap.appendChild(div);
 }
 
@@ -4068,7 +4095,7 @@ function addMountedConfigRow(type, name, size) {
   const anchor = yamlAnchorForFile(name);
   div.dataset.anchor = anchor;
   const displayName = name.replace(meta.stripRe, "");
-  div.innerHTML = `<a class="mount-link-title" href="yaml.html#${encodeURIComponent(anchor)}"><span>${escapeAttr(displayName)}</span><small>${size} bytes</small></a><div class="file-actions"><button type="button" onclick="${type === "trusttunnel" ? "editTrustTunnelFile" : "editOpenVpnFile"}(this)" title="Редактировать">&#10002;</button><button type="button" onclick="${type === "trusttunnel" ? "deleteTrustTunnelFile" : "deleteOpenVpnFile"}(this)" title="Удалить">&#10005;</button></div>`;
+  div.innerHTML = `<a class="mount-link-title" href="yaml.html#${encodeURIComponent(anchor)}"><span>${escapeAttr(displayName)}</span><small>${size} bytes</small></a><div class="file-actions"><button type="button" onclick="${type === "trusttunnel" ? "editTrustTunnelFile" : "editOpenVpnFile"}(this)" title="Редактировать">&#9998;</button><button type="button" onclick="${type === "trusttunnel" ? "deleteTrustTunnelFile" : "deleteOpenVpnFile"}(this)" title="Удалить">&#10005;</button></div>`;
   wrap.appendChild(div);
 }
 
@@ -4347,7 +4374,7 @@ function addZlistRow(name, size) {
   div.dataset.file = name;
   div.dataset.name = name.toLowerCase();
   const esc = escapeAttr(name);
-  div.innerHTML = `<div class="mount-link-title"><span>${esc}</span><small>${size} bytes</small></div><div class="file-actions"><button type="button" onclick="editZlistFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteZlistFile(this)" title="Удалить">&#10005;</button></div>`;
+  div.innerHTML = `<div class="mount-link-title"><span>${esc}</span><small>${size} bytes</small></div><div class="file-actions"><button type="button" onclick="editZlistFile(this)" title="Редактировать">&#9998;</button><button type="button" onclick="deleteZlistFile(this)" title="Удалить">&#10005;</button></div>`;
   wrap.appendChild(div);
 }
 
@@ -4639,6 +4666,19 @@ function writeListToInput(input, items) {
   input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+// Пустой use и use=none — противоположности, а без подсказки выглядели
+// одинаково: ни одна чипса не выбрана. Пустой — это «все провайдеры» (или
+// то, что задано в DEFAULT), none — «без провайдеров, только proxies».
+// Поэтому режим показан двумя отдельными чипсами перед провайдерами, а снятие
+// последнего провайдера больше не превращает группу молча во «все сразу».
+function groupUseModeLabel(pane) {
+  if (pane.dataset.group === "DNS") return "все провайдеры";
+  const def = document.querySelector('#groupPanes [name="GROUP_USE"]');
+  const v = def ? String(fieldValue(def) || "").trim() : "";
+  if (v === "none") return "как в DEFAULT: без провайдеров";
+  return v ? "как в DEFAULT" : "все провайдеры";
+}
+
 function buildGroupChips(pane) {
   const t = groupChipTargets(pane);
   if (!t) return;
@@ -4646,28 +4686,40 @@ function buildGroupChips(pane) {
   const groups = [...knownGroups()].filter((g) => g !== self && g !== "DEFAULT").sort();
   const providers = [...knownProviders()].sort();
   const specials = [...PROXIES_SPECIALS];
+  const chip = (kind, name, label, cls) =>
+    '<button type="button" class="chip' + (cls ? " " + cls : "") + '" aria-pressed="false" data-kind="' + kind +
+    '" data-name="' + escapeAttr(name) + '">' + escapeAttr(label || name) + "</button>";
+  const modes = chip("use-mode", "all", groupUseModeLabel(pane), "chip-mode") +
+    chip("use-mode", "none", "без провайдеров", "chip-mode");
   const rows = [
-    { title: "Провайдеры", kind: "use", names: providers, empty: "провайдеров пока нет — добавьте LINK, SUB_LINK, SOCKS или DPI" },
+    { title: "Провайдеры", kind: "use", names: providers, lead: modes,
+      empty: "провайдеров пока нет — добавьте LINK, SUB_LINK, SOCKS или DPI" },
     { title: "Группы", kind: "proxies", names: groups, empty: "других групп пока нет" },
     { title: "Служебные", kind: "proxies", names: specials, empty: "" },
   ];
   t.box.innerHTML = rows.map((row) => {
     const chips = row.names.length
-      ? row.names.map((n) =>
-          '<button type="button" class="chip" data-kind="' + row.kind + '" data-name="' + escapeAttr(n) + '">' +
-          escapeAttr(n) + "</button>").join("")
+      ? row.names.map((n) => chip(row.kind, n)).join("")
       : '<span class="chip-empty">' + row.empty + "</span>";
-    return '<div class="chip-row"><span class="chip-row-title">' + row.title + "</span>" + chips + "</div>";
+    return '<div class="chip-row"><span class="chip-row-title">' + row.title + "</span>" +
+      (row.lead || "") + chips + "</div>";
   }).join("");
   t.box.onclick = (e) => {
-    const chip = e.target.closest(".chip");
-    if (!chip) return;
-    const input = chip.dataset.kind === "use" ? t.use : t.proxies;
-    const name = chip.dataset.name;
-    const items = listFromInput(input).filter((x) => x !== "none");
-    const idx = items.indexOf(name);
-    if (idx >= 0) items.splice(idx, 1); else items.push(name);
-    writeListToInput(input, items);
+    const c = e.target.closest(".chip");
+    if (!c) return;
+    if (c.dataset.kind === "use-mode") {
+      writeListToInput(t.use, c.dataset.name === "none" ? ["none"] : []);
+    } else {
+      const input = c.dataset.kind === "use" ? t.use : t.proxies;
+      const name = c.dataset.name;
+      const items = listFromInput(input).filter((x) => x !== "none");
+      const idx = items.indexOf(name);
+      if (idx >= 0) items.splice(idx, 1); else items.push(name);
+      // Сняли последнего провайдера у группы, где их выбирали поштучно:
+      // пустой use означал бы «все провайдеры». Оставляем none — «никого».
+      if (c.dataset.kind === "use" && !items.length && idx >= 0) items.push("none");
+      writeListToInput(input, items);
+    }
     syncGroupChips(pane);
     updateGroupSectionCounts(pane);
   };
@@ -4677,14 +4729,16 @@ function buildGroupChips(pane) {
 function syncGroupChips(pane) {
   const t = groupChipTargets(pane);
   if (!t) return;
+  const useList = listFromInput(t.use);
   const chosen = {
-    use: new Set(listFromInput(t.use)),
+    use: new Set(useList),
     proxies: new Set(listFromInput(t.proxies)),
   };
-  t.box.querySelectorAll(".chip").forEach((chip) => {
-    const on = chosen[chip.dataset.kind].has(chip.dataset.name);
-    chip.classList.toggle("on", on);
-    chip.setAttribute("aria-pressed", on ? "true" : "false");
+  const mode = !useList.length ? "all" : (useList.length === 1 && useList[0] === "none" ? "none" : "");
+  t.box.querySelectorAll(".chip").forEach((c) => {
+    const on = c.dataset.kind === "use-mode" ? c.dataset.name === mode : chosen[c.dataset.kind].has(c.dataset.name);
+    c.classList.toggle("on", on);
+    c.setAttribute("aria-pressed", on ? "true" : "false");
   });
 }
 

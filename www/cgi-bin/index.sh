@@ -1045,30 +1045,27 @@ providers_page() {
       mounted   "Mounted" \
       veth      "Интерфейсы" \
       socks     "SOCKS* (устар.)" \
-      health    "Health-check"
+      health    "Общие"
   else
     page_tabs_nav \
       link      "LINK*" \
       sub-link  "SUB_LINK*" \
       mounted   "Mounted" \
       veth      "Интерфейсы" \
-      health    "Health-check"
+      health    "Общие"
   fi
   provider_row_templates
-  section_start_tab health "Health-check" "Общие настройки проверки доступности для file/http proxy-providers или proxy-groups."
+  section_start_tab health "Общие настройки провайдеров" "Проверка доступности узлов и REALITY-параметры, общие для всех провайдеров."
+  # Раньше здесь шли две сетки подряд без отступа, и карточка REALITY
+  # «прилипала» к переключателю health-check, оставляя пустую колонку.
+  # Это два разных вопроса — у каждого свой раздел.
   cat <<'EOF'
-<div class="notice">
-  <b>REALITY и X25519MLKEM768</b>
-  <span>Подписки почти никогда не присылают <code>support-x25519mlkem768</code>, а серверам он бывает нужен. Контейнер дописывает флаг через <code>override-expr</code> провайдера, и правило смотрит на наличие <code>reality-opts</code> — обычные VLESS без REALITY, VMess, SS, Hysteria и прочие не задеваются. Действует на <code>LINK*</code>, <code>SUB_LINK*</code> и смонтированные YAML; у каждой подписки значение можно переопределить своим полем.</span>
-  <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#override" target="_blank" rel="noopener">Документация override</a>
-</div>
+<section class="group-sec">
+  <div class="group-sec-head"><b>Проверка доступности</b></div>
+  <p class="group-sec-note">Как часто и по какому адресу проверять, что узел живой. Для DPI-обходов адрес свой: через byedpi и zapret проверка идёт на сайт, который без обхода не открывается.</p>
 EOF
   echo '<div class="grid">'
-  select_field REALITY_MLKEM "REALITY MLKEM" "<code>auto</code> — проставить <code>true</code> только там, где подписка поле не прислала. <code>true</code> — навязать даже поверх присланного <code>false</code>. <code>false</code> — навязать выключение. <code>off</code> — не трогать." auto "auto true false off"
-  echo '</div>'
-
-  echo '<div class="grid">'
-  toggle_field HEALTHCHECK_PROVIDER "Healthcheck в providers" "true: health-check внутри proxy-providers, false: параметры в proxy-groups." true
+  toggle_field HEALTHCHECK_PROVIDER "Проверка в провайдерах" "Включено — узлы проверяет каждый провайдер по настройкам ниже. Выключено — проверку ведут прокси-группы, и адрес с интервалом задаются у групп." true
   field HEALTHCHECK_INTERVAL "Интервал" "Секунды между проверками, параметр <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-providers/#interval\" target=\"_blank\" rel=\"noopener\">interval</a>." "120" number "120"
   field HEALTHCHECK_URL "URL" "URL проверки, параметр <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-providers/#health-checkurl\" target=\"_blank\" rel=\"noopener\">url</a>." "https://www.gstatic.com/generate_204" text "https://www.gstatic.com/generate_204"
   field HEALTHCHECK_URL_STATUS "Status" "Ожидаемый HTTP-код ответа, параметр <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-providers/#health-checkexpected-status\" target=\"_blank\" rel=\"noopener\">expected-status</a>." "204" number "204"
@@ -1077,6 +1074,21 @@ EOF
   field HEALTHCHECK_URL_ZAPRET "ZAPRET URL" "URL проверки через ZAPRET, параметр <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-providers/#health-checkurl\" target=\"_blank\" rel=\"noopener\">url</a>." "https://www.facebook.com" text "https://www.facebook.com"
   field HEALTHCHECK_URL_STATUS_ZAPRET "ZAPRET status" "Ожидаемый HTTP-код ответа health-check через ZAPRET, параметр <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/proxy-providers/#health-checkexpected-status\" target=\"_blank\" rel=\"noopener\">expected-status</a>." "200" number "200"
   echo '</div>'
+  cat <<'EOF'
+</section>
+<section class="group-sec">
+  <div class="group-sec-head"><b>REALITY и X25519MLKEM768</b></div>
+EOF
+  cat <<'EOF'
+<div class="notice">
+  <span>Подписки почти никогда не присылают <code>support-x25519mlkem768</code>, а серверам он бывает нужен. Контейнер дописывает флаг через <code>override-expr</code> провайдера, и правило смотрит на наличие <code>reality-opts</code> — обычные VLESS без REALITY, VMess, SS, Hysteria и прочие не задеваются. Действует на <code>LINK*</code>, <code>SUB_LINK*</code> и смонтированные YAML; у каждой подписки значение можно переопределить своим полем.</span>
+  <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#override" target="_blank" rel="noopener">Документация override</a>
+</div>
+EOF
+  echo '<div class="grid">'
+  select_field REALITY_MLKEM "REALITY MLKEM" "<code>auto</code> — проставить <code>true</code> только там, где подписка поле не прислала. <code>true</code> — навязать даже поверх присланного <code>false</code>. <code>false</code> — навязать выключение. <code>off</code> — не трогать." auto "auto true false off"
+  echo '</div>'
+  echo '</section>'
   section_end
 
   section_start_tab link "LINK*" "Одиночные ссылки: vless, vmess, ss, trojan, socks5, base64 и vpn:// Amnezia Premium."
@@ -1260,7 +1272,7 @@ EOF
       size="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
       display="${base%.conf}"
       anchor="$(yaml_link_name "$base")"
-      printf '<div class="mount-link awg-file" data-file="%s" data-anchor="%s"><a class="mount-link-title" href="%s#%s"><span>%s</span><small>%s bytes</small></a><div class="file-actions"><button type="button" onclick="editAwgFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteAwgFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$anchor" | h)" "$yaml_url" "$(printf '%s' "$anchor" | h)" "$(printf '%s' "$display" | h)" "$size"
+      printf '<div class="mount-link awg-file" data-file="%s" data-anchor="%s"><a class="mount-link-title" href="%s#%s"><span>%s</span><small>%s bytes</small></a><div class="file-actions"><button type="button" onclick="editAwgFile(this)" title="Редактировать">&#9998;</button><button type="button" onclick="deleteAwgFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$anchor" | h)" "$yaml_url" "$(printf '%s' "$anchor" | h)" "$(printf '%s' "$display" | h)" "$size"
     done
   else
     echo '<div class="empty">Каталог AWG не смонтирован.</div>'
@@ -1285,7 +1297,7 @@ EOF
       size="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
       display="${base%.toml}"
       anchor="$(yaml_link_name "$base")"
-      printf '<div class="mount-link trusttunnel-file" data-file="%s" data-anchor="%s"><a class="mount-link-title" href="%s#%s"><span>%s</span><small>%s bytes</small></a><div class="file-actions"><button type="button" onclick="editTrustTunnelFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteTrustTunnelFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$anchor" | h)" "$yaml_url" "$(printf '%s' "$anchor" | h)" "$(printf '%s' "$display" | h)" "$size"
+      printf '<div class="mount-link trusttunnel-file" data-file="%s" data-anchor="%s"><a class="mount-link-title" href="%s#%s"><span>%s</span><small>%s bytes</small></a><div class="file-actions"><button type="button" onclick="editTrustTunnelFile(this)" title="Редактировать">&#9998;</button><button type="button" onclick="deleteTrustTunnelFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$anchor" | h)" "$yaml_url" "$(printf '%s' "$anchor" | h)" "$(printf '%s' "$display" | h)" "$size"
     done
   else
     echo '<div class="empty">Каталог TrustTunnel не смонтирован.</div>'
@@ -1311,7 +1323,7 @@ EOF
       display="${base%.ovpn}"
       display="${display%.conf}"
       anchor="$(yaml_link_name "$base")"
-      printf '<div class="mount-link openvpn-file" data-file="%s" data-anchor="%s"><a class="mount-link-title" href="%s#%s"><span>%s</span><small>%s bytes</small></a><div class="file-actions"><button type="button" onclick="editOpenVpnFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteOpenVpnFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$anchor" | h)" "$yaml_url" "$(printf '%s' "$anchor" | h)" "$(printf '%s' "$display" | h)" "$size"
+      printf '<div class="mount-link openvpn-file" data-file="%s" data-anchor="%s"><a class="mount-link-title" href="%s#%s"><span>%s</span><small>%s bytes</small></a><div class="file-actions"><button type="button" onclick="editOpenVpnFile(this)" title="Редактировать">&#9998;</button><button type="button" onclick="deleteOpenVpnFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$anchor" | h)" "$yaml_url" "$(printf '%s' "$anchor" | h)" "$(printf '%s' "$display" | h)" "$size"
     done
   else
     echo '<div class="empty">Каталог OpenVPN не смонтирован.</div>'
@@ -1338,7 +1350,7 @@ EOF
       display="${display%.yml}"
       display="${display%.conf}"
       anchor="$(yaml_link_name "$base")"
-      printf '<div class="mount-link proxy-file" data-file="%s" data-anchor="%s"><a class="mount-link-title" href="%s#%s"><span>%s</span><small>%s bytes</small></a><div class="file-actions"><button type="button" onclick="editProxyFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteProxyFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$anchor" | h)" "$yaml_url" "$(printf '%s' "$anchor" | h)" "$(printf '%s' "$display" | h)" "$size"
+      printf '<div class="mount-link proxy-file" data-file="%s" data-anchor="%s"><a class="mount-link-title" href="%s#%s"><span>%s</span><small>%s bytes</small></a><div class="file-actions"><button type="button" onclick="editProxyFile(this)" title="Редактировать">&#9998;</button><button type="button" onclick="deleteProxyFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$anchor" | h)" "$yaml_url" "$(printf '%s' "$anchor" | h)" "$(printf '%s' "$display" | h)" "$size"
     done
   else
     echo '<div class="empty">Каталог proxies_mount не смонтирован.</div>'
@@ -1968,7 +1980,7 @@ EOF
       [ -f "$f" ] || continue
       base="$(basename "$f")"
       size="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
-      printf '<div class="mount-link mount-link-compact zlist-file" data-file="%s" data-name="%s"><div class="mount-link-title"><span>%s</span><small>%s bytes</small></div><div class="file-actions"><button type="button" onclick="editZlistFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteZlistFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$base" | h | tr 'A-Z' 'a-z')" "$(printf '%s' "$base" | h)" "$size"
+      printf '<div class="mount-link mount-link-compact zlist-file" data-file="%s" data-name="%s"><div class="mount-link-title"><span>%s</span><small>%s bytes</small></div><div class="file-actions"><button type="button" onclick="editZlistFile(this)" title="Редактировать">&#9998;</button><button type="button" onclick="deleteZlistFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$base" | h | tr 'A-Z' 'a-z')" "$(printf '%s' "$base" | h)" "$size"
     done
   else
     echo '<div class="empty">Каталог /zapret-lists не смонтирован.</div>'
@@ -2430,18 +2442,18 @@ rule_set_row_inner() {
   _rs="$(printf '%s' "${_rv%%#*}" | wc -c | tr -d ' ')"
   cat <<EOF
   <div class="row-main">
-    <div class="row-title"><b data-ruleset-title>$(printf '%s' "$_rt" | h)</b><small>$_rn · $_rs символов base64$_rt_note</small></div>
+    <div class="row-title">
+      <b data-ruleset-title>$(printf '%s' "$_rt" | h)</b><small>$_rn · $_rs символов base64$_rt_note</small>
+      <details class="row-extras row-extras-inline">
+        <summary>base64</summary>
+        <label><input name="$_rn" value="$(env_attr "$_rn" "")" placeholder="BASE64#name" aria-label="$_rn"><small>Содержимое набора в base64 и имя после <code>#</code>. Обычно не нужно: «Изменить» открывает правила текстом.</small></label>
+      </details>
+    </div>
     <div class="row-buttons">
       <button type="button" onclick="openRuleSetModal(this)">Изменить</button>
       <button type="button" class="row-remove" onclick="removeEnvRow(this)">Удалить</button>
     </div>
   </div>
-  <details class="row-extras">
-    <summary>Значение переменной</summary>
-    <div class="row-extras-grid">
-      <label class="row-extras-wide"><span>$_rn</span><input name="$_rn" value="$(env_attr "$_rn" "")" placeholder="BASE64#name"><small>Содержимое набора в base64 и его имя после <code>#</code>. Обычно это поле не нужно: нажмите «Изменить» и правьте правила текстом.</small></label>
-    </div>
-  </details>
 EOF
 }
 
@@ -2464,7 +2476,7 @@ rulesets_page() {
       base="$(basename "$f")"
       size="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
       display="${base%.txt}"
-      printf '<div class="mount-link rule-set-file" data-file="%s"><span>%s</span><small>%s bytes</small><div class="file-actions"><button type="button" onclick="editRuleSetFile(this)" title="Редактировать">&#10002;</button><button type="button" onclick="deleteRuleSetFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$display" | h)" "$size"
+      printf '<div class="mount-link rule-set-file" data-file="%s"><span>%s</span><small>%s bytes</small><div class="file-actions"><button type="button" onclick="editRuleSetFile(this)" title="Редактировать">&#9998;</button><button type="button" onclick="deleteRuleSetFile(this)" title="Удалить">&#10005;</button></div></div>\n' "$(printf '%s' "$base" | h)" "$(printf '%s' "$display" | h)" "$size"
     done
   else
     echo '<div class="empty">Каталог rule_set_list не смонтирован.</div>'
