@@ -3175,7 +3175,7 @@ details.group-sec > summary:focus-visible,
     align-content: start;
   }
   .bc-grid .field > span > b,
-  .tool-compact-grid .field > span > b { grid-row: 1; align-self: end; }
+  .tool-compact-grid .field > span > b { grid-row: 1; align-self: start; }
   .bc-grid .field > :is(input, select, textarea),
   .tool-compact-grid .field > :is(input, select, textarea) { grid-row: 2; }
   .bc-grid .field > span > em,
