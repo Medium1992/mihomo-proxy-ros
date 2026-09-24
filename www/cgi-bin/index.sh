@@ -1541,7 +1541,7 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
     <label class="socks-toggle" title="Дополнительно перебрать .bin-файлы из /zapret-fakebin как payload для byedpi --fake-data FILE. Увеличивает количество стратегий."><input type="checkbox" id="bdcUseFakebin"><span>×fakebin</span></label>
   </div>
   <div class="grid bc-grid bc-grid-three">
-    <label class="field"><span><b>Мин. размер ответа для 16-20KB теста, КБ</b><em>Применяется к доменам с путём.</em></span>
+    <label class="field"><span><b>Мин. размер ответа, КБ</b><em>Для теста 16–20 КБ: применяется к доменам с путём.</em></span>
       <input id="bdcHardMinKb" type="number" min="4" max="256" value="16">
     </label>
     <label class="field" title="Стратегии с fake-sni/fake-tls-mod rand могут вести себя нестабильно — probe засчитывается «ok» только если все N попыток прошли подряд. 2 — рекомендовано."><span><b>Повторов на rnd-стратегию</b><em>Probe считается «ok» только если все N попыток подряд прошли. Применяется к <code>rnd</code>-стратегиям. 2 — рекомендовано.</em></span>
@@ -1683,7 +1683,7 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
     <label class="socks-toggle" title="Дополнительно перебрать каждый .bin-файл из /zapret-fakebin как payload для --dpi-desync-fake-tls=$FILE / --dpi-desync-fake-http=$FILE / --dpi-desync-fake-quic=$FILE. Сильно увеличивает количество стратегий."><input type="checkbox" id="bc1UseFakebin"><span>×fakebin</span></label>
   </div>
   <div class="grid bc-grid bc-grid-three">
-    <label class="field"><span><b>Мин. размер ответа для 16-20KB теста, КБ</b><em>Применяется к доменам с путём.</em></span>
+    <label class="field"><span><b>Мин. размер ответа, КБ</b><em>Для теста 16–20 КБ: применяется к доменам с путём.</em></span>
       <input id="bc1HardMinKb" type="number" min="4" max="256" value="16">
     </label>
     <label class="field" title="Стратегии с tls_mod=rnd рандомят ClientHello — probe засчитывается «ok» только если все N попыток прошли подряд. 2 — рекомендовано."><span><b>Повторов на rnd-стратегию</b><em>Probe считается «ok» только если все N попыток подряд прошли. Применяется к <code>rnd</code>-стратегиям. 2 — рекомендовано.</em></span>
@@ -1834,7 +1834,7 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
     <label class="socks-toggle" title="Дополнительно перебрать каждый .bin-файл из /zapret-fakebin в качестве fake-payload (заменяет fake_default_tls на --blob=fb:@…). Заметно увеличивает число стратегий (×N_blobs), но именно среди них чаще всего и находятся рабочие комбинации."><input type="checkbox" id="bcUseFakebin"><span>×fakebin</span></label>
   </div>
   <div class="grid bc-grid bc-grid-three">
-    <label class="field"><span><b>Мин. размер ответа для 16-20KB теста, КБ</b><em>Применяется к доменам с путём.</em></span>
+    <label class="field"><span><b>Мин. размер ответа, КБ</b><em>Для теста 16–20 КБ: применяется к доменам с путём.</em></span>
       <input id="bcHardMinKb" type="number" min="4" max="256" value="16">
     </label>
     <label class="field" title="Стратегии с tls_mod=rnd рандомят ClientHello — probe засчитывается «ok» только если все N попыток прошли подряд. 2 — рекомендовано."><span><b>Повторов на rnd-стратегию</b><em>Probe считается «ok» только если все N попыток подряд прошли. Применяется к <code>rnd</code>-стратегиям. 2 — рекомендовано.</em></span>
