@@ -242,6 +242,8 @@ The link from *Tools → xray2mihomo* can go straight into `SUB_LINK*`:
 SUB_LINK1=http://127.0.0.1:81/cgi-bin/xray2mihomo-sub?sub=https://provider.example/sub&format=uri
 ```
 
+**A subscription that "only works in Happ or INCY".** Such providers check that the request comes from their app and compare the whole set of headers — `User-Agent`, `x-hwid`, `x-device-os`, `x-ver-os`, `x-device-model` and others. `User-Agent` alone is not enough: without the full set the mihomo log shows `[Provider] SUB_LINKxx pull error: 422`. To see what your phone sends, open [webhook.site](https://webhook.site/), add the address it gives you to Happ as a subscription, refresh it, and copy the headers from the captured request into the tool's header editor one to one, except transport ones (`Host`, `Connection`, `Accept-Encoding`). Headers are baked into the ready link, so copy the link into `SUB_LINK*` only **after** filling them in. Keep the webhook.site address private — it shows your `x-hwid`.
+
 The converter copies the provider's `subscription-userinfo` header into its own response — the mihomo dashboard shows the traffic counters and the expiry date from it. That is the only header the core reads.
 
 #### Encrypted Happ links in `SUB_LINK*`

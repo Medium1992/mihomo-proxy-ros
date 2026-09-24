@@ -552,8 +552,12 @@ input:focus, textarea:focus, select:focus {
 
 /* Строка провайдера: на виду только ссылка, остальное — в спойлере.
    Первые две колонки занимают ручка перетаскивания и номер env. */
+/* Наборы правил тоже: без этого у них оставалась сетка .rule-row на пять
+   колонок, раскрытый спойлер попадал в колонку auto, и длинная base64-строка
+   раздувала её, сжимая заголовок и кнопки. */
 .link-row,
-.sub-link-row {
+.sub-link-row,
+.rule-row.ruleset-row {
   grid-template-columns: 28px 56px minmax(0, 1fr);
   align-items: start;
 }
@@ -561,7 +565,9 @@ input:focus, textarea:focus, select:focus {
 .link-row > .row-main,
 .link-row > .row-extras,
 .sub-link-row > .row-main,
-.sub-link-row > .row-extras {
+.sub-link-row > .row-extras,
+.ruleset-row > .row-main,
+.ruleset-row > .row-extras {
   grid-column: 3;
 }
 
@@ -2685,9 +2691,12 @@ nav a .nav-badge[data-kind="changed"] + .nav-badge[data-kind="error"] {
   .link-row > .row-main,
   .link-row > .row-extras,
   .sub-link-row > .row-main,
-  .sub-link-row > .row-extras {
+  .sub-link-row > .row-extras,
+  .ruleset-row > .row-main,
+  .ruleset-row > .row-extras {
     grid-column: auto;
   }
+  .rule-row.ruleset-row { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 560px) {
@@ -3001,3 +3010,68 @@ details.group-sec > summary:focus-visible,
 .ruleset-row.ruleset-name-changed .row-title small { color: var(--warn); }
 
 .change-file .change-value { color: var(--muted); font-family: inherit; }
+
+/* На обзоре карточка стоит внутри секции с тем же заголовком — свой
+   заголовок и рамка ей там не нужны. */
+.quick-site.quick-site-nohead {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.quick-site.quick-site-nohead .quick-site-head { display: none; }
+
+/* ── Итоговый порядок правил: компактная таблица ─────────────────── */
+.final-rules {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.final-rules > .final-rule-row {
+  grid-template-columns: 44px minmax(0, 1fr) minmax(140px, .32fr);
+  gap: 12px;
+  padding: 7px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+}
+
+.final-rules > .final-rule-row:last-child { border-bottom: 0; }
+.final-rules > .final-rule-row:nth-child(even) { background: var(--surface-2); }
+
+.final-rules > .final-rule-row.editable-rule-row {
+  border-left: 3px solid var(--accent);
+  padding-left: 9px;
+}
+
+.rule-num {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-align: right;
+}
+
+.rule-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+.final-rules .rule-origin {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+@media (max-width: 700px) {
+  .final-rules > .final-rule-row { grid-template-columns: 32px minmax(0, 1fr); }
+  .final-rules .rule-origin { grid-column: 2; }
+}

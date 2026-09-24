@@ -596,8 +596,7 @@ startup_files_script() {
 }
 
 nav_group() {
-  printf '<div class="nav-group">%s</div>
-' "$1"
+  printf '<div class="nav-group">%s</div>\n' "$1"
 }
 
 nav_item() {
@@ -816,8 +815,8 @@ EOF
   section_end
 
   known_providers_seed
-  section_start "Добавить сайт" "Самый частый сценарий — пустить один сайт через нужный прокси."
-  quick_site_card
+  section_start "Добавить сайт" "Самый частый сценарий — пустить сайт или адрес через нужный прокси. Вставьте адрес, выберите, через что его пускать, и нажмите «Добавить»: панель сама решит, в какую переменную это записать, и покажет решение заранее."
+  quick_site_card nohead
   section_end
 
   cat <<EOF
@@ -1037,21 +1036,23 @@ providers_page() {
   # Вкладка SOCKS* — наследие: те же прокси задаются ссылкой socks5:// в LINK*.
   # Пока ни одной такой env нет, она только занимает место в навигации.
   socks_tab_count="$(count_env '^SOCKS[0-9]+=')"
+  # Первой — вкладка, ради которой сюда приходят: ссылки. Health-check трогают
+  # редко, ему место в конце.
   if [ "$socks_tab_count" -gt 0 ]; then
     page_tabs_nav \
-      health    "Health-check" \
       link      "LINK*" \
       sub-link  "SUB_LINK*" \
-      socks     "SOCKS* (устар.)" \
+      mounted   "Mounted" \
       veth      "Интерфейсы" \
-      mounted   "Mounted"
+      socks     "SOCKS* (устар.)" \
+      health    "Health-check"
   else
     page_tabs_nav \
-      health    "Health-check" \
       link      "LINK*" \
       sub-link  "SUB_LINK*" \
+      mounted   "Mounted" \
       veth      "Интерфейсы" \
-      mounted   "Mounted"
+      health    "Health-check"
   fi
   provider_row_templates
   section_start_tab health "Health-check" "Общие настройки проверки доступности для file/http proxy-providers или proxy-groups."
@@ -1082,11 +1083,9 @@ EOF
   echo '<div class="subhead"><b>LINK</b><button type="button" onclick="addRow('\''links'\'', '\''LINK'\'', false)">Добавить LINK</button></div><div id="links" class="rows">'
   for name in $(env_names '^LINK[0-9]*='); do
     idx="$(printf '%s' "$name" | sed 's/LINK//')"; [ -z "$idx" ] && idx=0
-    printf '<div class="env-row env-row-stack link-row" data-index="%s">
-' "$idx"
+    printf '<div class="env-row env-row-stack link-row" data-index="%s">\n' "$idx"
     link_row_inner "$name" "LINK$idx"
-    printf '</div>
-'
+    printf '</div>\n'
   done
   cat <<'EOF'
 </div>
@@ -1114,11 +1113,9 @@ EOF
   echo '<div class="subhead"><b>SUB_LINK</b><button type="button" onclick="addRow('\''subs'\'', '\''SUB_LINK'\'', false)">Добавить SUB_LINK</button></div><div id="subs" class="rows">'
   for name in $(env_names '^SUB_LINK[0-9]+='); do
     idx="$(printf '%s' "$name" | sed 's/SUB_LINK//')"
-    printf '<div class="env-row env-row-stack sub-link-row" data-index="%s">
-' "$idx"
+    printf '<div class="env-row env-row-stack sub-link-row" data-index="%s">\n' "$idx"
     sub_link_row_inner "$name" "$name"
-    printf '</div>
-'
+    printf '</div>\n'
   done
   cat <<'EOF'
 </div>
@@ -1126,7 +1123,7 @@ EOF
   <div><b>SUB_LINKxx_PROXY</b><span>Используется как <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#proxy" target="_blank" rel="noopener">proxy</a> для загрузки подписки.</span></div>
   <div><b>SUB_LINKxx_DIALER_PROXY</b><span>Прокидывается в <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxies/#dialer-proxy" target="_blank" rel="noopener">dialer-proxy</a> созданных proxy.</span></div>
   <div><b>SUB_LINKxx_INTERVAL</b><span>Интервал обновления подписки, соответствует provider <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#interval" target="_blank" rel="noopener">interval</a>.</span></div>
-  <div><b>SUB_LINKxx_HEADERS</b><span>HTTP <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#header" target="_blank" rel="noopener">headers</a>. Редактор собирает env в формат <code>key=value#key2=value2</code>. Для happ-ссылок и режима <code>xray2mihomo</code> заголовки уезжают апстриму через конвертер, а не напрямую из mihomo.</span></div>
+  <div><b>SUB_LINKxx_HEADERS</b><span>HTTP <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#header" target="_blank" rel="noopener">headers</a>. Редактор собирает env в формат <code>key=value#key2=value2</code>. Для happ-ссылок и режима <code>xray2mihomo</code> заголовки уезжают апстриму через конвертер, а не напрямую из mihomo. Подписка открывается «только в Happ или INCY», а mihomo пишет <code>pull error: 422</code>? Нужны все заголовки телефона 1 в 1, включая <code>x-hwid</code> — как их подсмотреть, написано в «Инструменты → xray2mihomo».</span></div>
   <div><b>happ://crypt*</b><span>В <code>SUB_LINKxx</code> можно положить зашифрованную ссылку Happ (<code>crypt</code>…<code>crypt5</code>, обе раскладки). Контейнер расшифрует её при старте и подставит настоящий адрес подписки. Ключи берутся из <code>assets/happ.js</code>; если появился новый — панель напишет «неизвестный маркер», и надо обновить секреты <code>HAPP1..HAPP4</code>.</span></div>
   <div><b>SUB_LINKxx_CONVERT</b><span><code>auto</code> (по умолчанию): happ-ссылки идут через локальный конвертер <code>xray2mihomo</code>, обычные — напрямую. <code>xray2mihomo</code> — принудительно, если обычная подписка тоже отдаёт Xray JSON. <code>none</code> — отдать mihomo как есть. Конвертер живёт на loopback-порту <code>WEB_API_PORT</code>; при <code>WEB_API_PORT=0</code> конвертация недоступна.</span></div>
   <div><b>SUB_LINKxx_PROXY и конвертер</b><span>Не совмещаются: <code>proxy</code> управляет тем, как mihomo тянет сам провайдер, а после конвертации это localhost. Подписку с апстрима качает уже конвертер, и о прокси mihomo он не знает — для таких строк принудительно ставится <code>DIRECT</code>.</span></div>
@@ -2310,8 +2307,7 @@ groups_page() {
   # ui.js и расходилась при каждой правке.
   printf '<template id="groupPaneTemplate">'
   group_block "__PREFIX__" "__NAME__"
-  printf '</template>
-'
+  printf '</template>\n'
   # Мастер: пустая панель на два десятка полей ничего не подсказывает, поэтому
   # у новой группы сначала спрашиваем имя и сценарий. Ни один элемент внутри не
   # имеет name — иначе он уехал бы в сохраняемые env наравне с полями формы.
@@ -2353,8 +2349,13 @@ EOF
 # обзоре, и на странице правил. Ни одно поле карточки не имеет name —
 # значения уезжают в env через черновик, а не через форму.
 quick_site_card() {
+  # $1=nohead — карточка стоит внутри секции со своим заголовком (обзор).
+  if [ "${1:-}" = "nohead" ]; then
+    printf '<div class="quick-site quick-site-nohead">\n'
+  else
+    printf '<div class="quick-site">\n'
+  fi
   cat <<'EOF'
-<div class="quick-site">
   <div class="quick-site-head">
     <b>Добавить сайт</b>
     <span>Вставьте адрес, выберите, через что его пускать, и нажмите «Добавить». Панель сама решит, в какую переменную это записать, и покажет решение заранее.</span>
@@ -2447,17 +2448,14 @@ EOF
 rulesets_page() {
   printf '<template id="ruleSetRowTemplate">'
   rule_set_row_inner "__NAME__"
-  printf '</template>
-'
+  printf '</template>\n'
   section_start "Наборы правил" "RULE_SET*: глобальные rule-set env и файлы из каталога rule_set_list."
   echo '<div class="subhead"><b>RULE_SET*_BASE64</b><button type="button" onclick="addRow('\''rulesets'\'', '\''RULE_SET'\'', true)">Добавить RULE_SET</button></div><div id="rulesets" class="rows">'
   for name in $(env_names '^RULE_SET[0-9]+_BASE64='); do
     idx="$(printf '%s' "$name" | sed 's/RULE_SET//; s/_BASE64//')"
-    printf '<div class="env-row rule-row ruleset-row" data-index="%s">
-' "$idx"
+    printf '<div class="env-row rule-row ruleset-row" data-index="%s">\n' "$idx"
     rule_set_row_inner "$name"
-    printf '</div>
-'
+    printf '</div>\n'
   done
   echo '</div><div class="note-list"><div><b>RULE_SETxx_BASE64</b><span>Base64 rule-provider: значение декодируется entrypoint в rule-set файл. Используется вместе с <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rule-providers/" target="_blank" rel="noopener">rule-providers</a> и <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">RULE-SET</a> правилами.</span></div></div><div class="mounts" style="margin-top:24px; grid-template-columns:1fr"><article><b>RULE-SET Mounts</b><div class="mount-links rule-set-grid">'
   if [ -d "$RULE_SET_DIR" ]; then
@@ -2758,9 +2756,15 @@ tools_page() {
         <label class="field"><span><b>Формат</b><em>uri / mihomo yaml / base64</em></span><select id="toolX2mFormat"><option value="uri">URI строки</option><option value="yaml">mihomo YAML</option><option value="base64">base64</option></select></label>
         <label class="field"><span><b>DNS/fetch</b><em>openssl резолв как в DPI (для локального endpoint)</em></span><select id="toolX2mResolve"><option value="openssl">openssl</option><option value="wget">wget</option></select></label>
       </div>
+      <div class="notice notice-warn">
+        <b>Подписка работает «только в Happ или INCY»? Нужны заголовки — все</b>
+        <span>Такие провайдеры отдают подписку, только если запрос выглядит как от их приложения. Одного <code>User-Agent</code> обычно мало: сервер сверяет весь набор — <code>User-Agent</code>, <code>x-hwid</code> (идентификатор устройства), <code>x-device-os</code>, <code>x-ver-os</code>, <code>x-device-model</code> и другие. Заполните строки ниже <b>1 в 1 как их шлёт ваш телефон</b>, все до одной. Если в логе mihomo <code>pull error: 422</code> (или 401/403), сервер не признал клиента — заголовков не хватает или они не совпадают.</span>
+        <span><b>Как узнать, что шлёт телефон.</b> Откройте <a class="doc-link" href="https://webhook.site/" target="_blank" rel="noopener">webhook.site</a> — он сразу выдаст уникальный адрес. Добавьте этот адрес в Happ как подписку и обновите её. На странице webhook.site появится запрос: перепишите из него заголовки сюда, кроме служебных (<code>Host</code>, <code>Connection</code>, <code>Accept-Encoding</code>, <code>Content-Length</code>). Адрес webhook.site никому не отдавайте — по нему виден ваш <code>x-hwid</code>.</span>
+        <span><b>Порядок важен:</b> заголовки зашиваются прямо в «Готовую ссылку», поэтому сначала заполните их и только потом копируйте ссылку в <code>SUB_LINK</code>. Ссылка, скопированная раньше, уйдёт без заголовков.</span>
+      </div>
       <div class="field field-wide">
         <div class="headers-editor" data-x2m-headers data-wired="true">
-          <span>Заголовки <em>уходят апстриму как HTTP headers</em></span>
+          <span>Заголовки <em>уходят апстриму как HTTP headers и зашиваются в готовую ссылку</em></span>
           <input type="hidden" id="toolX2mHeaders">
           <div class="headers-rows"></div>
           <button type="button" class="headers-add">Добавить header</button>

@@ -4716,18 +4716,28 @@ function groupSummary(pane) {
   const typeSel = pane.querySelector("select[data-group-type]") ||
     pane.querySelector('select[name="' + prefix + '_TYPE"]');
   const type = typeSel ? typeSel.value : "select";
-  const use = paneValue(pane, prefix + "_USE");
-  const proxies = paneValue(pane, prefix + "_PROXIES");
+  const ownUse = paneValue(pane, prefix + "_USE");
+  const ownProxies = paneValue(pane, prefix + "_PROXIES");
+  // Как в entrypoint: пустые _USE и _PROXIES берутся из DEFAULT (GROUP_USE,
+  // GROUP_PROXIES) — у всех, кроме DNS. Пустой use после этого означает не
+  // «пусто», а «все провайдеры контейнера»; ничего — только явный none.
+  const inherit = name !== "DNS";
+  const fromDefault = (n) => {
+    const el = document.querySelector('#groupPanes [name="' + n + '"]');
+    return el ? String(fieldValue(el) || "").trim() : "";
+  };
+  const use = ownUse || (inherit ? fromDefault("GROUP_USE") : "");
+  const proxies = ownProxies || (inherit ? fromDefault("GROUP_PROXIES") : "");
   const count = (v) => v.split(",").map((s) => s.trim()).filter((s) => s && s !== "none").length;
   let members;
   if (use === "none") members = count(proxies) ? count(proxies) + " в составе" : "пустой состав";
-  else if (!use && !proxies) members = name === "GLOBAL" ? "все провайдеры" : "без состава";
+  else if (!use) members = "все провайдеры" + (count(proxies) ? " + " + count(proxies) : "");
   else members = (count(use) + count(proxies)) + " в составе";
   const text = (GROUP_TYPE_SHORT[type] || type) + " · " + members;
 
   if (name === "GLOBAL" || name === "DNS" || pane.dataset.source === "ruleset") return { text, warn: "" };
   const hasResource = GROUP_RESOURCE_SUFFIXES.some((s) => paneValue(pane, prefix + "_" + s) !== "");
-  const hasUse = use !== "";
+  const hasUse = ownUse !== "";
   if (!hasResource && !hasUse) {
     return { text, warn: "не попадёт в конфиг: добавьте провайдера в состав или сайты в «Что направлять»" };
   }
@@ -5791,12 +5801,15 @@ function renderRulesPreview() {
   wrap.innerHTML = "";
   buildPreviewRules().forEach((item, index) => {
     const row = document.createElement("div");
+    // Итоговый порядок — это справка, а не форма: строка текста вместо двух
+    // полей ввода только для чтения. Раньше каждое правило занимало карточку
+    // в сотню пикселей, и три десятка правил растягивались на несколько экранов.
     row.className = item.editable ? "final-rule-row editable-rule-row" : "final-rule-row readonly-rule-row";
-    row.innerHTML = `
-      <label class="env-index"><input type="number" value="${index + 1}" readonly></label>
-      <span class="rule-origin"><b>${escapeAttr(item.origin)}</b><small>priority: ${escapeAttr(item.prio)}</small><small>${escapeAttr(item.detail || "")}</small></span>
-      <input type="text" value="${escapeAttr(item.rule)}" readonly>
-    `;
+    const detail = item.detail && item.detail !== item.origin ? " · " + item.detail : "";
+    row.innerHTML =
+      `<span class="rule-num">${index + 1}</span>` +
+      `<code class="rule-text" title="${escapeAttr(item.rule)}">${escapeAttr(item.rule)}</code>` +
+      `<span class="rule-origin" title="priority: ${escapeAttr(item.prio)}">${escapeAttr(item.origin)}${escapeAttr(detail)}</span>`;
     wrap.appendChild(row);
   });
 }
