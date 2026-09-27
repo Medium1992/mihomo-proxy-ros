@@ -5618,7 +5618,26 @@ function quickSiteSetEnv(name, value) {
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return;
   }
+  // Поля на странице нет (главная) — исходное значение берём из снимка env на
+  // момент старта. Без этого панель считала переменную новой: GROUP уходил
+  // командой envs/add, а не set, и затирал уже существующие группы.
+  if (Store.get(originalKey(name)) === null) {
+    const snap = serverEnvSnapshot();
+    Store.set(originalKey(name), snap.has(name) ? snap.get(name) : "");
+    Store.set(originalPresentKey(name), snap.has(name) ? "1" : "0");
+  }
   Store.set(envKey(name), value);
+}
+
+// Только значения на момент старта, без черновика: #rulesPreviewEnv.
+function serverEnvSnapshot() {
+  const map = new Map();
+  const raw = document.getElementById("rulesPreviewEnv")?.value || "";
+  raw.split(/\n/).forEach((line) => {
+    const pos = line.indexOf("=");
+    if (pos > 0) map.set(line.slice(0, pos), line.slice(pos + 1));
+  });
+  return map;
 }
 
 function quickSiteTargets() {

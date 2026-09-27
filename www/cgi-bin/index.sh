@@ -816,6 +816,7 @@ EOF
 
   known_providers_seed
   section_start "Добавить сайт" "Самый частый сценарий — пустить сайт или адрес через нужный прокси. Вставьте адрес, выберите, через что его пускать, и нажмите «Добавить»: панель сама решит, в какую переменную это записать, и покажет решение заранее."
+  rules_env_snapshot
   quick_site_card nohead
   section_end
 
@@ -2360,6 +2361,18 @@ EOF
 # Карточка «Добавить сайт»: адрес, куда его пустить, кнопка. Стоит и на
 # обзоре, и на странице правил. Ни одно поле карточки не имеет name —
 # значения уезжают в env через черновик, а не через форму.
+# Значения env, из которых собираются правила и группы, — на момент старта.
+# Нужны везде, где стоит карточка «Добавить сайт»: без них на главной она не
+# знала текущих GROUP и *_SUFFIX и собирала GROUP только из новой группы —
+# командой envs/add поверх уже существующей переменной.
+rules_env_snapshot() {
+  echo '<textarea id="rulesPreviewEnv" hidden>'
+  for name in $(env_names '^(GROUP|RULES[0-9]+|RULE_SET[0-9]+_BASE64|[A-Z0-9_]+_(PRIORITY|GEOSITE|GEOIP|AS|DOMAIN|SUFFIX|IPCIDR|KEYWORD|SRCIPCIDR|DSCP|USE))='); do
+    printf '%s=%s\n' "$name" "$(env_raw "$name" | h)"
+  done
+  echo '</textarea>'
+}
+
 quick_site_card() {
   # $1=nohead — карточка стоит внутри секции со своим заголовком (обзор).
   if [ "${1:-}" = "nohead" ]; then
@@ -2391,11 +2404,8 @@ rules_page() {
   # знать, в какую env писать и каким типом правила. Ни одно поле карточки не
   # имеет name: значения уезжают в env через черновики, а не через форму.
   quick_site_card
-  echo '<textarea id="rulesPreviewEnv" hidden>'
-  for name in $(env_names '^(GROUP|RULES[0-9]+|RULE_SET[0-9]+_BASE64|[A-Z0-9_]+_(PRIORITY|GEOSITE|GEOIP|AS|DOMAIN|SUFFIX|IPCIDR|KEYWORD|SRCIPCIDR|DSCP|USE))='); do
-    printf '%s=%s\n' "$name" "$(env_raw "$name" | h)"
-  done
-  echo '</textarea><textarea id="rulesPreviewMounts" hidden>'
+  rules_env_snapshot
+  echo '<textarea id="rulesPreviewMounts" hidden>'
   if [ -d "$RULE_SET_DIR" ]; then
     for f in "$RULE_SET_DIR"/*; do
       [ -f "$f" ] || continue
