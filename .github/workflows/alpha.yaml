@@ -126,8 +126,42 @@ jobs:
             echo "build_needed=true" >> "$GITHUB_OUTPUT"
           fi
 
-  alpha-build:
+  # Регулятор окон XHTTP (core_patches/xhttp_flow) кладётся на каждый коммит
+  # апстрима и прогоняется своими тестами тем же Go, что и сборка. Если апстрим
+  # его сломал, альфа не встаёт, а собирается без регулятора, с
+  # предупреждением в сводке прогона.
+  alpha-flow:
     needs: alpha-check
+    if: needs.alpha-check.outputs.build_needed == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      flow: ${{ steps.test.outputs.flow }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Test the XHTTP flow patch on upstream
+        id: test
+        run: |
+          set -uo pipefail
+          if docker run --rm -v "$PWD/core_patches/xhttp_flow:/patches:ro" \
+              -e REF=${{ needs.alpha-check.outputs.upstream_ref }} \
+              golang:${{ needs.alpha-check.outputs.go_version }}-alpine sh -euc '
+                apk add --no-cache git >/dev/null
+                git clone -q https://github.com/MetaCubeX/mihomo.git /src
+                cd /src
+                git checkout -q --detach "$REF"
+                sh /patches/apply.sh
+                export GOTOOLCHAIN=local CGO_ENABLED=0
+                go test -short -count=1 -run "Flow|FrameParser|RewriteInitial" ./transport/xhttp/'; then
+            echo "flow=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::XHTTP flow patch does not apply or fails its tests on ${{ needs.alpha-check.outputs.upstream_ref }}; this alpha is built without it"
+            echo "flow=0" >> "$GITHUB_OUTPUT"
+          fi
+
+  alpha-build:
+    needs: [alpha-check, alpha-flow]
     if: needs.alpha-check.outputs.build_needed == 'true'
     runs-on: ubuntu-latest
 
@@ -242,6 +276,7 @@ jobs:
             --build-arg AMD64VERSION=${{ matrix.amd64 }} \
             --build-arg WITH_GVISOR=${{ matrix.flavor == 'gvisor' && '1' || '0' }} \
             --build-arg MIHOMO_CUSTOM_PATCHES=${{ env.MIHOMO_CUSTOM_PATCHES }} \
+            --build-arg XHTTP_FLOW=${{ needs.alpha-flow.outputs.flow }} \
             --build-arg BUILDTIME="$(date)" \
             --output type=local,dest=out \
             --progress=plain \
@@ -322,10 +357,10 @@ jobs:
           files: release/*
 
   check-and-build:
-    needs: [alpha-check, alpha-build, alpha-release]
+    needs: [alpha-check, alpha-flow, alpha-build, alpha-release]
     # !cancelled(), а не always(): отменённый прогон не должен доходить до
     # сборки образов ни при каком раскладе.
-    if: ${{ !cancelled() && needs.alpha-check.result == 'success' && (needs.alpha-build.result == 'success' || needs.alpha-build.result == 'skipped') && (needs.alpha-release.result == 'success' || needs.alpha-release.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.alpha-check.result == 'success' && (needs.alpha-flow.result == 'success' || needs.alpha-flow.result == 'skipped') && (needs.alpha-build.result == 'success' || needs.alpha-build.result == 'skipped') && (needs.alpha-release.result == 'success' || needs.alpha-release.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -134,6 +134,20 @@ RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ] && [ "$FAKEIP_SRC_RULES" = "1" ]; then
       echo "Skipping fakeip_src patch"; \
     fi
 
+# Патч xhttp_flow: регулятор окон HTTP/2 для XHTTP-клиента, чтобы медленный
+# читатель в локальной сети не держал на роутере по 4 МиБ непрочитанного на
+# каждый стрим. Сервер не меняется. Весь код — в core_patches/xhttp_flow, в
+# апстриме меняется одна строка в transport/xhttp/client.go. Тесты гоняет CI
+# до сборки и при поломке передаёт сюда XHTTP_FLOW=0. На роутере регулятор
+# выключает переменная окружения MIHOMO_XHTTP_FLOW=off без пересборки.
+ARG XHTTP_FLOW=1
+COPY core_patches/xhttp_flow /patches/xhttp_flow
+RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ] && [ "$XHTTP_FLOW" = "1" ]; then \
+      sh /patches/xhttp_flow/apply.sh; \
+    else \
+      echo "XHTTP flow governor: off"; \
+    fi
+
 # Временная подмена utls: ветка v1.9.0-mod-meta (нативный JLS, отпечатки
 # firefox 148 и safari 26.3). Пустой UTLS_OVERRIDE_BRANCH = собирать как в go.mod.
 ARG UTLS_OVERRIDE_BRANCH=v1.9.0-mod-meta

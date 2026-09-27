@@ -84,8 +84,32 @@ jobs:
             echo "build_needed=true" >> $GITHUB_OUTPUT
           fi
 
-  release-build:
+  # Регулятор окон XHTTP (core_patches/xhttp_flow) обязан лечь на релиз и
+  # пройти свои тесты тем же Go, что и сборка. Иначе релиз не выходит: в
+  # стабильной ветке тихо терять регулятор нельзя, а альфа покажет поломку
+  # раньше.
+  release-flow:
     needs: release-check
+    if: needs.release-check.outputs.build_needed == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Test the XHTTP flow patch on the release
+        run: |
+          docker run --rm -v "$PWD/core_patches/xhttp_flow:/patches:ro"             -e REF=${{ needs.release-check.outputs.tag }}             golang:${{ needs.release-check.outputs.go_version }}-alpine sh -euc '
+              apk add --no-cache git >/dev/null
+              git clone -q https://github.com/MetaCubeX/mihomo.git /src
+              cd /src
+              git fetch -q --tags origin
+              git checkout -q --detach "$REF"
+              sh /patches/apply.sh
+              export GOTOOLCHAIN=local CGO_ENABLED=0
+              go test -short -count=1 -run "Flow|FrameParser|RewriteInitial" ./transport/xhttp/'
+
+  release-build:
+    needs: [release-check, release-flow]
     if: needs.release-check.outputs.build_needed == 'true'
     runs-on: ubuntu-latest
 
@@ -263,12 +287,12 @@ jobs:
           files: release/*
 
   check-and-build:
-    needs: [release-check, release-build, release-publish]
+    needs: [release-check, release-flow, release-build, release-publish]
     # Раньше здесь стояло always(): задача запускалась при любом исходе — и
     # после падения сборки, и после отмены прогона, поэтому отмена «не
     # срабатывала». !cancelled() уважает отмену, а проверки ниже пускают
     # дальше только при успешной (или пропущенной за ненадобностью) сборке.
-    if: ${{ !cancelled() && needs.release-check.result == 'success' && (needs.release-build.result == 'success' || needs.release-build.result == 'skipped') && (needs.release-publish.result == 'success' || needs.release-publish.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.release-check.result == 'success' && (needs.release-flow.result == 'success' || needs.release-flow.result == 'skipped') && (needs.release-build.result == 'success' || needs.release-build.result == 'skipped') && (needs.release-publish.result == 'success' || needs.release-publish.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

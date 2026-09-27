@@ -340,6 +340,14 @@ In the web panel a provider row shows only the link itself: for a subscription t
 
 The `support-x25519mlkem768` flag used to be forced by a core patch applied at image build time, where a missing field meant `true` in the fork. The provider's own `override-expr` now does the same and the mihomo patch is gone. The rule keys off the presence of a `reality-opts` block, so plain VLESS without REALITY, VMess, Shadowsocks, Hysteria and the rest of a mixed subscription are untouched — and it makes no difference whether the subscription arrives as YAML or as `vless://` links, since the core turns links into the same internal mappings before applying `override`.
 
+#### HTTP/2 window governor for XHTTP
+
+By default Go's HTTP/2 lets the server send up to 4 MiB per stream before the client reads any of it. When a reader on the LAN is slow (a paused video, weak Wi-Fi, a slow site during an upload), all of that sits in mihomo's memory on the router. In our build the XHTTP client in h2 mode shows the server a 64 KiB window and returns credit only while unread data stays below what the reader consumes in two round trips. The window grows at once for a fast reader and shrinks back when it slows down. The server needs no changes; any Xray works.
+
+Measured with 30 slow readers over 100 Mbit/s and 50 ms against official Xray 26.9.9: mihomo's heap went from 136–147 MB down to 51–60 MB, with fast downloads unchanged. Against a server that governs windows itself (the `mux-ka` builds of [Xray-core-fork](https://github.com/Medium1992/Xray-core-fork)) there is no difference, since the server already protects that memory. The cost is a slower ramp-up for a new download on high-RTT paths.
+
+The governor is ported from [Xray-core-fork](https://github.com/Medium1992/Xray-core-fork/commits/feat/xhttp-mux-cool/) and lives in [`core_patches/xhttp_flow`](core_patches/xhttp_flow); it changes a single line in mihomo. Turn it off without a rebuild with the environment variable `MIHOMO_XHTTP_FLOW=off`, or at build time with `XHTTP_FLOW=0`. If the patch stops applying to upstream, the alpha is built without it (with a warning in the CI run) and the stable release is held back.
+
 ### Proxy groups
 
 `GROUP` declares the set of named groups. For each group `XXX` (uppercased), prefix-ENV variants below are honored.
