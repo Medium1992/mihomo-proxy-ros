@@ -333,16 +333,20 @@ jobs:
         run: |
           echo "${{ needs.alpha-check.outputs.version_tag }}" > release/version.txt
 
+      # Релиз ищем по списку, а не через releases/tags/alpha: черновик по тегу
+      # не находится, а при 404 gh печатает тело ошибки в stdout, и оно
+      # попадало в RELEASE_ID. Тег проверяем через git/ref (точное совпадение),
+      # а не git/refs, который отвечает и на префикс.
       - name: Replace alpha release
         run: |
-          RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/alpha --jq '.id' 2>/dev/null || true)
-          if [ -n "$RELEASE_ID" ]; then
-            gh api -X DELETE repos/${{ github.repository }}/releases/$RELEASE_ID
-          fi
-
-          TAG_REF=$(gh api repos/${{ github.repository }}/git/refs/tags/alpha --jq '.ref' 2>/dev/null || true)
-          if [ -n "$TAG_REF" ]; then
-            gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/alpha
+          set -eu
+          R=${{ github.repository }}
+          for id in $(gh api "repos/$R/releases?per_page=100" --paginate --jq '.[] | select(.tag_name == "alpha") | .id'); do
+            echo "Deleting alpha release $id"
+            gh api -X DELETE "repos/$R/releases/$id"
+          done
+          if gh api "repos/$R/git/ref/tags/alpha" >/dev/null 2>&1; then
+            gh api -X DELETE "repos/$R/git/refs/tags/alpha"
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -355,6 +359,32 @@ jobs:
           prerelease: true
           make_latest: false
           files: release/*
+
+      # softprops создаёт релиз черновиком и публикует в конце. 28.09.2026
+      # после пересоздания тега alpha он отчитался «Release ready», а релиз
+      # остался черновиком: образы по releases/tags/alpha получили 404. Здесь
+      # черновик публикуется, и дальше идём, только когда релиз виден по тегу.
+      - name: Make sure the alpha release is published
+        run: |
+          set -eu
+          R=${{ github.repository }}
+          id=$(gh api "repos/$R/releases?per_page=100" --paginate --jq '.[] | select(.tag_name == "alpha") | .id' | head -1)
+          [ -n "$id" ] || { echo "::error::alpha release was not created"; exit 1; }
+          if [ "$(gh api "repos/$R/releases/$id" --jq .draft)" = "true" ]; then
+            echo "::warning::alpha release $id was left as a draft; publishing it"
+            gh api -X PATCH "repos/$R/releases/$id" -F draft=false >/dev/null
+          fi
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if gh api "repos/$R/releases/tags/alpha" --jq .id >/dev/null 2>&1; then
+              echo "alpha release $id is published"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::alpha release $id is still not visible by tag"
+          exit 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   check-and-build:
     needs: [alpha-check, alpha-flow, alpha-build, alpha-release]
