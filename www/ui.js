@@ -8988,7 +8988,7 @@ function toolHttpFetch() {
   });
 }
 
-// ---- xray2mihomo builder tab (mirrors the Cloudflare worker page) ----
+// ---- xray2mihomo builder tab ----
 const TOOL_X2M_DEFAULT_HEADERS = [
   ["user-agent", "Happ/3.22.1/Android/17800511170441525643"],
   ["x-hwid", ""],
