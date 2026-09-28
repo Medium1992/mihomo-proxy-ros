@@ -2389,7 +2389,7 @@ quick_site_card() {
   <div class="chip-picker" id="quickSiteTargets"></div>
   <p class="quick-site-preview" id="quickSitePreview"></p>
   <div class="quick-site-actions">
-    <button type="button" class="primary" id="quickSiteAdd" onclick="quickSiteAdd()" disabled>Добавить</button>
+    <button type="button" class="primary" id="quickSiteAdd" disabled>Добавить</button>
     <span class="quick-site-hint">Это черновик, как и любые правки в панели: на роутер он попадёт командами из «Команды MikroTik».</span>
   </div>
   <div class="quick-site-done" id="quickSiteDone"></div>

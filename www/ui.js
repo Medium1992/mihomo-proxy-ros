@@ -5855,6 +5855,10 @@ function quickSiteInit() {
     }
     quickSitePreview();
   });
+  // Не onclick="quickSiteAdd()": на странице правил карточка лежит внутри
+  // #envForm, а inline-обработчик ищет имена и в форме, где quickSiteAdd — это
+  // сама кнопка по id. Вызов падал с TypeError, и кнопка молчала.
+  document.getElementById("quickSiteAdd")?.addEventListener("click", quickSiteAdd);
   const url = document.getElementById("quickSiteUrl");
   if (url) {
     url.addEventListener("input", quickSitePreview);
