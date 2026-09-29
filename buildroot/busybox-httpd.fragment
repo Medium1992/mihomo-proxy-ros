@@ -19,3 +19,8 @@ CONFIG_FEATURE_HTTPD_DATE=y
 CONFIG_FEATURE_HTTPD_ACL_IP=y
 # timeout был в прежнем rootfs, entrypoint зовёт timeout -k.
 CONFIG_TIMEOUT=y
+# stat -c %Y: время изменения файлов в mihomo-ros, mihomo-remnasub-ros,
+# xray-remnasub-ros. Без него там молча подставляется 0.
+CONFIG_STAT=y
+CONFIG_FEATURE_STAT_FORMAT=y
+CONFIG_FEATURE_STAT_FILESYSTEM=y

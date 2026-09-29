@@ -15,7 +15,7 @@ COPY --chown=br busybox-httpd.fragment ./
 COPY --chown=br mihomo_armv5_defconfig buildroot/configs/
 RUN make -C buildroot mihomo_armv5_defconfig \
  && make -C buildroot \
- && for opt in CONFIG_FEATURE_HTTPD_CGI CONFIG_FEATURE_HTTPD_BASIC_AUTH CONFIG_FEATURE_HTTPD_AUTH_MD5 CONFIG_TIMEOUT; do \
+ && for opt in CONFIG_FEATURE_HTTPD_CGI CONFIG_FEATURE_HTTPD_BASIC_AUTH CONFIG_FEATURE_HTTPD_AUTH_MD5 CONFIG_TIMEOUT CONFIG_STAT CONFIG_FEATURE_STAT_FORMAT; do \
       grep -qx "$opt=y" buildroot/output/build/busybox-*/.config \
         || { echo "busybox: $opt did not make it into the build" >&2; exit 1; }; \
     done
