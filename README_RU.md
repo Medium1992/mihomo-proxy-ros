@@ -468,6 +468,14 @@ $s
 - [DNS_FWD](https://github.com/Medium1992/MikroTik_DNS_FWD) — управление DNS forwarding
 - [IPList](https://github.com/Medium1992/MikroTik_IPlist) — IP-листы
 
+## 🧱 Образ для armv5
+
+Образы `amd64`, `arm64` и `arm/v7` собираются на `alpine:latest`. Для `arm/v5` Alpine нет, поэтому там используется `rootfs.tar`, собранный Buildroot (musl, ARMv5TEJ). В нём тот же набор, что ставится в Alpine: busybox с `httpd` как у busybox-extras (CGI, basic auth, MD5), `jq` с регулярками, OpenSSL, сертификаты, tzdata, iproute2, iptables-legacy. Пересборка, около получаса:
+
+```sh
+docker build -f buildroot/Dockerfile --output type=local,dest=. buildroot
+```
+
 ## 🐳 Docker Compose
 
 Готовый пример — в [`docker-compose.yml`](./docker-compose.yml).

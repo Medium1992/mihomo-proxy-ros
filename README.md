@@ -468,6 +468,14 @@ After install, fine-tune everything either via the **WebUI on `:80`** or via the
 - [DNS_FWD](https://github.com/Medium1992/MikroTik_DNS_FWD) — DNS forwarding management
 - [IPList](https://github.com/Medium1992/MikroTik_IPlist) — IP-list helpers
 
+## 🧱 armv5 image
+
+The `amd64`, `arm64` and `arm/v7` images are built on `alpine:latest`. Alpine has no `arm/v5`, so that image uses a `rootfs.tar` built with Buildroot (musl, ARMv5TEJ). It carries the same set Alpine installs: busybox with `httpd` as in busybox-extras (CGI, basic auth, MD5), `jq` with regex support, OpenSSL, CA certificates, tzdata, iproute2 and iptables-legacy. Rebuild it (about half an hour) with:
+
+```sh
+docker build -f buildroot/Dockerfile --output type=local,dest=. buildroot
+```
+
 ## 🐳 Docker Compose
 
 See [`docker-compose.yml`](./docker-compose.yml) for a standalone example.
