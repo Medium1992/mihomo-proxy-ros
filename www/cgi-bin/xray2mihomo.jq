@@ -569,7 +569,13 @@ def applyXhttpExtra($o; $extraRaw):
   (parseExtraObj($extraRaw)) as $extra
   | if ($extra | length) == 0 then $o
     else
-      (xhttpScalars($o; $extra)) as $o1
+      (xhttpScalars($o; $extra)) as $o0
+      # extra.headers поверх xhttpSettings.headers, как в Xray; mihomo 1.19.32
+      # так же переносит их в своём конвертере ссылок.
+      | (headerMap($extra.headers)) as $eh
+      | (if ($o0.host == null) and (firstHost($extra.headers) != "") then $o0 + {host: firstHost($extra.headers)} else $o0 end) as $oh
+      | (($eh | del(.Host) | del(.host))) as $eh2
+      | (if ($eh2 | length) > 0 then $oh + {headers: (($oh.headers // {}) + $eh2)} else $oh end) as $o1
       | (xmuxToReuse($extra.xmux)) as $reuse
       | (if ($reuse | length) > 0 then $o1 + {"reuse-settings": $reuse} else $o1 end) as $o2
       | (if ($extra.downloadSettings != null) then streamToXhttpDownloadSettings($extra.downloadSettings) else {} end) as $ds
