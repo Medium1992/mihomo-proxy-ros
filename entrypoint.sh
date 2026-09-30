@@ -21,6 +21,16 @@ sysctl -w net.netfilter.nf_conntrack_tcp_timeout_close=10
 sysctl -w net.netfilter.nf_conntrack_tcp_timeout_unacknowledged=300
 sysctl -w net.netfilter.nf_conntrack_udp_timeout_stream=180
 
+# TCP-тюнинг сокетов контейнера, то есть исходящих соединений mihomo:
+# лимит неотправленного буфера (у ядра его нет — лишняя память и
+# bufferbloat), без сброса окна после простоя для долгих mux/xhttp,
+# поиск MTU при потерях за PPPoE и туннелями, быстрее уходят FIN_WAIT2.
+# В netns контейнера часть sysctl может быть только для чтения — не критично.
+sysctl -w net.ipv4.tcp_notsent_lowat=131072 >/dev/null 2>&1 || true
+sysctl -w net.ipv4.tcp_slow_start_after_idle=0 >/dev/null 2>&1 || true
+sysctl -w net.ipv4.tcp_mtu_probing=1 >/dev/null 2>&1 || true
+sysctl -w net.ipv4.tcp_fin_timeout=30 >/dev/null 2>&1 || true
+
 for iface in $(ip -o link show up | awk -F': ' '/link\/ether/ {gsub(/@.*$/,"",$2); if($2!="lo") print $2}'); do
 tc qdisc add dev $iface root fq_codel >/dev/null 2>&1;
 ip link set dev $iface multicast off >/dev/null 2>&1;
