@@ -23,7 +23,7 @@
 - 📦 **Автоустановка** в один сниппет в терминал MikroTik
 - 🛠 Несколько VETH-интерфейсов становятся прокси-выходами → mangle в RouterOS отправит куда нужно
 
-> Тестировалось на **RouterOS 7.20+**. Нужен пакет `container` и `device-mode container=yes`.
+> Тестировалось на **RouterOS 7.20+**. Нужен пакет `container` и `device-mode container=yes`. На 7.24+ раскатка создаёт контейнер с `privileged=yes` (`script24.rsc`), на 7.21–7.23 — без него (`script21.rsc`).
 
 ## ⚡ Быстрый старт
 
@@ -431,7 +431,11 @@ ETH1_GATEWAY2=192.168.5.11#сосед-tor
 :if ($statusDeviceMode=false) do={
 :put "Please check /system/device-mode/print container enable"
 }
-:if ($currentMinor >= 21) do={
+:if ($currentMinor >= 24) do={
+:put "Current version RouterOS 7.$currentMinor"
+:set r [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/script24.rsc mode=https output=user as-value]
+}
+:if ($currentMinor >= 21 and $currentMinor < 24) do={
 :put "Current version RouterOS 7.$currentMinor"
 :set r [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/script21.rsc mode=https output=user as-value]
 }

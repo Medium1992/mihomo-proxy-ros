@@ -23,7 +23,7 @@
 - 📦 Single-step **automated install** via MikroTik terminal snippet
 - 🛠 Multiple VETH interfaces appear as outbound proxies → mangle in RouterOS to send traffic where you want
 
-> Tested with **RouterOS 7.20+**. Requires the `container` package and `device-mode container=yes`.
+> Tested with **RouterOS 7.20+**. Requires the `container` package and `device-mode container=yes`. On 7.24+ the installer creates the container with `privileged=yes` (`script24.rsc`); on 7.21–7.23 it does not (`script21.rsc`).
 
 ## ⚡ Quickstart
 
@@ -431,7 +431,11 @@ Then paste the snippet below into RouterOS terminal:
 :if ($statusDeviceMode=false) do={
 :put "Please check /system/device-mode/print container enable"
 }
-:if ($currentMinor >= 21) do={
+:if ($currentMinor >= 24) do={
+:put "Current version RouterOS 7.$currentMinor"
+:set r [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/script24.rsc mode=https output=user as-value]
+}
+:if ($currentMinor >= 21 and $currentMinor < 24) do={
 :put "Current version RouterOS 7.$currentMinor"
 :set r [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/script21.rsc mode=https output=user as-value]
 }

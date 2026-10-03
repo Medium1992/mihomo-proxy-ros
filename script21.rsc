@@ -7,6 +7,9 @@
 :put "Script loaded, press Enter to start"
 :set start [/terminal ask]
 :put "Starting script"
+# defconf turns on auto-smb-sharing: without this the ContainerTemp disk below
+# would show up on the network as an SMB share.
+:do {/disk/settings/set auto-smb-sharing=no auto-media-sharing=no auto-media-interface=none} on-error={}
 
 :local TempContainer
 :local flagTempContainer false
@@ -51,8 +54,7 @@ foreach i in=$slotArray do={
 :if ($selectSlot!="system") do={:set pathPull "$selectSlot/"}
 :put "The slot $selectSlot selected for pulling Containers, path pulling $pathPull"
 :if ([:len [/disk/find where slot=$selectSlot fs=tmpfs]] > 0) do={
-:local rootDir ($pathPull . "Containers/MihomoProxyRoS")
-:local repullSource (":local c [/container/find where comment=\"MihomoProxyRoS\"]\r\n:if ([:len \$c] > 0) do={\r\n:do {/container/stop \$c} on-error={}\r\n:while ([:len [/container/find where comment=\"MihomoProxyRoS\" and stopped]] = 0) do={:delay 1}\r\n/container/remove \$c\r\n}\r\n/container/add remote-image=\"ghcr.io/medium1992/mihomo-proxy-ros\" envlists=MihomoProxyRoS mountlists=MihomoProxyRoS interface=MihomoProxyRoS root-dir=\"" . $rootDir . "\" start-on-boot=yes comment=\"MihomoProxyRoS\"\r\n:while ([:len [/container/find where comment=\"MihomoProxyRoS\" and running]] = 0) do={/container/start [find where comment=\"MihomoProxyRoS\" and stopped]; :delay 3}")
+:local repullSource (":delay 30s\r\n:local c [/container/find where comment=\"MihomoProxyRoS\"]\r\n:if ([:len \$c] > 0) do={/container/repull \$c}")
 :if ([:len [/system/script/find where name="MihomoProxyRoS_repull"]] = 0) do={/system/script/add name=MihomoProxyRoS_repull source=$repullSource} else={/system/script/set [find where name="MihomoProxyRoS_repull"] source=$repullSource}
 :if ([:len [/system/scheduler/find where name="MihomoProxyRoS_repull"]] = 0) do={/system/scheduler/add name=MihomoProxyRoS_repull start-time=startup on-event="/system/script/run MihomoProxyRoS_repull"} else={/system/scheduler/set [find where name="MihomoProxyRoS_repull"] start-time=startup on-event="/system/script/run MihomoProxyRoS_repull"}
 } else={
@@ -120,7 +122,7 @@ foreach i in=$slotArray do={
 add doh-servers=https://8.8.8.8/dns-query name=Google
 add doh-servers=https://1.1.1.1/dns-query name=CloudFlare
 add doh-servers=https://9.9.9.9/dns-query name=Quad9
-add dns-servers=111.88.96.50,111.88.96.51 name=XBOX
+add dns-servers=111.88.96.54,111.88.96.55 name=XBOX
 add doh-servers=https://xbox-dns.ru/dns-query name=XBOX-DOH
 add dns-servers=77.88.8.8,77.88.8.1 name=Yandex verify-doh-cert=no
 add dns-servers=8.8.8.8 name=Google8 verify-doh-cert=no
@@ -191,6 +193,8 @@ $WARules
 :put "Add env LOG_LEVEL value: error"} on-error {}
 :do {add key=FAKE_IP_TTL list=MihomoProxyRoS value=10
 :put "Add env FAKE_IP_TTL value: 10"} on-error {}
+:do {add key=SNIFFER_SKIP_DST_ADDRESS list=MihomoProxyRoS value="rule-set:Telegram_geoip_telegram,rule-set:META_geoip_facebook,109.239.140.0/24,194.221.250.50/32"
+:put "Add env SNIFFER_SKIP_DST_ADDRESS value: rule-set:Telegram_geoip_telegram,rule-set:META_geoip_facebook,109.239.140.0/24,194.221.250.50/32"} on-error {}
 :do {add key=BYEDPI_CMD list=MihomoProxyRoS value="-Ku -a1 -An -d1 -s1+s -d3+s -s6+s -d9+s -s12+s -d15+s -s20+s -d25+s -s30+s -d35+s -At,r,s -s1 -q1 -At,r,s -s5 -o2 -At,r,s -o1 -d1 -r1+s -s1+s -d3+s -At,r,s -f-1 -r1+s -At,r,s -s1 -o1+s -s-1"
 :put "Add env BYEDPI_CMD"} on-error {}
 :if (([/system/resource/get architecture-name] = "arm64") or ([/system/resource/get architecture-name] = "x86_64")) do={
@@ -209,8 +213,8 @@ $WARules
 :put "Add env TELEGRAM_GEOIP value: telegram"} on-error {}
 :do { add key=TELEGRAM_AS list=MihomoProxyRoS value=AS62041,AS59930,AS62014,AS211157,AS44907
 :put "Add env TELEGRAM_AS value: AS62041,AS59930,AS62014,AS211157,AS44907"} on-error {}
-:do { add key=TELEGRAM_IPCIDR list=MihomoProxyRoS value=109.239.140.0/24,5.28.192.0/18,194.221.61.2/32,172.121.110.0/24,142.252.197.0/24
-:put "Add env TELEGRAM_IPCIDR value: 109.239.140.0/24,5.28.192.0/18,194.221.61.2/32,172.121.110.0/24,142.252.197.0/24"} on-error {}
+:do { add key=TELEGRAM_IPCIDR list=MihomoProxyRoS value=109.239.140.0/24,194.221.250.50/32
+:put "Add env TELEGRAM_IPCIDR value: 109.239.140.0/24,194.221.250.50/32"} on-error {}
 :do { add key=DISCORD_GEOSITE list=MihomoProxyRoS value=discord
 :put "Add env DISCORD_GEOSITE value: discord"} on-error {}
 :do { add key=DISCORD_GEOIP list=MihomoProxyRoS value=discord

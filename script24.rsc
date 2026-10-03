@@ -1,3 +1,4 @@
+:local totalspace [/system/resource/get total-hdd-space]
 :local freespace [/system/resource/get free-hdd-space]
 :if ($freespace<80914560 and ([:len [/container/find comment="MihomoProxyRoS"]] = 0) and ([:len [[/disk/find where fs=ext4 free>80914560]]] = 0)) do={
 :put "Low free space on storage(s), script exit"
@@ -52,6 +53,14 @@ foreach i in=$slotArray do={
 :set selectSlot $i
 :if ($selectSlot!="system") do={:set pathPull "$selectSlot/"}
 :put "The slot $selectSlot selected for pulling Containers, path pulling $pathPull"
+:if ([:len [/disk/find where slot=$selectSlot fs=tmpfs]] > 0) do={
+:local repullSource (":delay 30s\r\n:local c [/container/find where comment=\"MihomoProxyRoS\"]\r\n:if ([:len \$c] > 0) do={/container/repull \$c}")
+:if ([:len [/system/script/find where name="MihomoProxyRoS_repull"]] = 0) do={/system/script/add name=MihomoProxyRoS_repull source=$repullSource} else={/system/script/set [find where name="MihomoProxyRoS_repull"] source=$repullSource}
+:if ([:len [/system/scheduler/find where name="MihomoProxyRoS_repull"]] = 0) do={/system/scheduler/add name=MihomoProxyRoS_repull start-time=startup on-event="/system/script/run MihomoProxyRoS_repull"} else={/system/scheduler/set [find where name="MihomoProxyRoS_repull"] start-time=startup on-event="/system/script/run MihomoProxyRoS_repull"}
+} else={
+/system/script/remove [find where name="MihomoProxyRoS_repull"]
+/system/scheduler/remove [find where name="MihomoProxyRoS_repull"]
+}
 :set flagDisks true
 }}}}
 
@@ -117,8 +126,7 @@ add dns-servers=111.88.96.54,111.88.96.55 name=XBOX
 add doh-servers=https://xbox-dns.ru/dns-query name=XBOX-DOH
 add dns-servers=77.88.8.8,77.88.8.1 name=Yandex verify-doh-cert=no
 add dns-servers=8.8.8.8 name=Google8 verify-doh-cert=no
-/certificate/settings/set builtin-trust-anchors=not-trusted
-/certificate/settings/set builtin-trust-anchors=trusted
+/certificate/settings/set builtin-trust-store=dns,container
 /ip/dns/set allow-remote-requests=yes cache-max-ttl=1d cache-size=15000KiB doh-max-concurrent-queries=500 doh-max-server-connections=10 servers=8.8.8.8 use-doh-server=https://8.8.8.8/dns-query verify-doh-cert=yes
 /ip dns static
 add forward-to=Google8 match-subdomain=yes name=pool.ntp.org type=FWD
@@ -138,16 +146,8 @@ add address=2.ru.pool.ntp.org
 add address=3.ru.pool.ntp.org
 :put "DNS and NTP client configuration complete"
 /ipv6 nd set [ find default=yes ] advertise-dns=yes disabled=yes
-/ipv6 settings set accept-redirects=no accept-router-advertisements=no allow-fast-path=no disable-ipv6=yes disable-link-local-address=yes forward=no
+/ipv6 settings set accept-redirects=no accept-router-advertisements=no accept-router-advertisements-on=none allow-fast-path=no disable-ipv6=yes disable-link-local-address=yes forward=no
 :put "Disable ipv6"
-#/ip service
-#set ftp disabled=yes
-#set ssh disabled=yes
-#set telnet disabled=yes
-#set www disabled=yes
-#set api disabled=yes
-#set api-ssl disabled=yes
-#:put "Disable services ftp, ssh, telnet, www, api, api-ssl"
 /ip route
 add blackhole comment=BlackHole distance=254 dst-address=10.0.0.0/8 gateway="" routing-table=main
 add blackhole comment=BlackHole distance=254 dst-address=172.16.0.0/12 gateway="" routing-table=main
@@ -170,6 +170,18 @@ add blackhole comment=BlackHole distance=254 dst-address=172.16.0.0/12 gateway="
 add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway="" routing-table=MihomoProxyRoS
 :put "Add default route 0.0.0.0/0 into routing table MihomoProxyRoS & BlackHole route"}
 
+:global whatsappRules
+:set whatsappRules [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/custom_list/add_env_WA.rsc mode=https output=user as-value]
+:if (($whatsappRules->"status")="finished") do={
+:global contentWhatsappRules ($whatsappRules->"data")
+:if ([:len $contentWhatsappRules] > 0) do={
+:global WARules [:parse $contentWhatsappRules]
+:log warning "script loading WARules completed and added"
+:put "script loading WARules completed and added"
+$WARules
+}
+}
+
 /container/envs
 :do {add key=FAKE_IP_RANGE list=MihomoProxyRoS value=198.18.0.0/15
 :put "Add env FAKE_IP_RANGE value: 198.18.0.0/15"} on-error {}
@@ -185,6 +197,12 @@ add blackhole comment=BlackHole distance=254 dst-address=192.168.0.0/16 gateway=
 :put "Add env SNIFFER_SKIP_DST_ADDRESS value: rule-set:Telegram_geoip_telegram,rule-set:META_geoip_facebook,109.239.140.0/24,194.221.250.50/32"} on-error {}
 :do {add key=BYEDPI_CMD list=MihomoProxyRoS value="-Ku -a1 -An -d1 -s1+s -d3+s -s6+s -d9+s -s12+s -d15+s -s20+s -d25+s -s30+s -d35+s -At,r,s -s1 -q1 -At,r,s -s5 -o2 -At,r,s -o1 -d1 -r1+s -s1+s -d3+s -At,r,s -f-1 -r1+s -At,r,s -s1 -o1+s -s-1"
 :put "Add env BYEDPI_CMD"} on-error {}
+:if (([/system/resource/get architecture-name] = "arm64") or ([/system/resource/get architecture-name] = "x86_64")) do={
+:do {add key=ZAPRET_CMD list=MihomoProxyRoS value=""
+:put "Add env ZAPRET_CMD"} on-error {}
+:do {add key=ZAPRET2_CMD list=MihomoProxyRoS value=""
+:put "Add env ZAPRET2_CMD"} on-error {}
+}
 :do { add key=GROUP list=MihomoProxyRoS value=YouTube,Telegram,Discord,META,SuperCell,AI,Twitch
 :put "Add env GROUP value: YouTube,Telegram,Discord,META,SuperCell,AI,Twitch"} on-error {}
 :do { add key=YOUTUBE_GEOSITE list=MihomoProxyRoS value=youtube
@@ -257,14 +275,14 @@ add address=8.8.4.4 list=DNS
 } on-error {}
 
 /ip firewall mangle
-:if ([:len [find comment="YT_MSS"]] = 0) do={add action=change-mss chain=forward dst-address-list=YT in-interface=MihomoProxyRoS new-mss=88 protocol=tcp tcp-flags=syn connection-state=new comment="YT_MSS"; :put "Add mangle rules YT_MSS"}
-:if ([:len [find comment="Accept_no_mark"]] = 0) do={add action=accept chain=prerouting connection-mark=no-mark connection-state=established comment="Accept_no_mark"; :put "Add mangle rules 1"}
-:if ([:len [find comment="AcceptInWAN&Containers"]] = 0) do={add action=accept chain=prerouting in-interface-list=InAccept comment="AcceptInWAN&Containers"; :put "Add mangle rules 2"}
-:if ([:len [find comment="RoutingToMihomo2"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="RoutingToMihomo2"; :put "Add mangle rules 3"}
-:if ([:len [find comment="MarkConnAddressList"]] = 0) do={add action=mark-connection chain=prerouting in-interface-list=LAN connection-mark=no-mark connection-state=new dst-address-list=MihomoProxyRoS new-connection-mark=MihomoProxyRoS comment="MarkConnAddressList"; :put "Add mangle rules 4"}
-:if ([:len [find comment="Discord_RTC"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=102 connection-mark=no-mark connection-state=new content="\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19294-19344,50000-50100 protocol=udp comment="Discord_RTC"; :put "Add mangle rules 5"}
-:if ([:len [find comment="Discord_WebRTC"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=128 connection-mark=no-mark connection-state=new content="\12\A4\42" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19294-19344,50000-50100 protocol=udp comment="Discord_WebRTC"; :put "Add mangle rules 6"}
-:if ([:len [find comment="RoutingToMihomo1"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="RoutingToMihomo1"; :put "Add mangle rules 7"}
+:if ([:len [find comment="YT_MSS"]] = 0) do={add action=change-mss chain=forward dst-address-list=YT in-interface=MihomoProxyRoS new-mss=88 protocol=tcp tcp-flags=syn connection-state=new comment="YT_MSS"; :put "Add mangle rule YT_MSS"}
+:if ([:len [find comment="Accept_no_mark"]] = 0) do={add action=accept chain=prerouting connection-mark=no-mark connection-state=established comment="Accept_no_mark"; :put "Add mangle rule 1"}
+:if ([:len [find comment="AcceptInWAN&Containers"]] = 0) do={add action=accept chain=prerouting in-interface-list=InAccept comment="AcceptInWAN&Containers"; :put "Add mangle rule 2"}
+:if ([:len [find comment="RoutingToMihomo2"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="RoutingToMihomo2"; :put "Add mangle rule 3"}
+:if ([:len [find comment="MarkConnAddressList"]] = 0) do={add action=mark-connection chain=prerouting in-interface-list=LAN connection-mark=no-mark connection-state=new dst-address-list=MihomoProxyRoS new-connection-mark=MihomoProxyRoS comment="MarkConnAddressList"; :put "Add mangle rule 4"}
+:if ([:len [find comment="Discord_RTC"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=102 connection-mark=no-mark connection-state=new content="\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19294-19344,50000-50100 protocol=udp comment="Discord_RTC"; :put "Add mangle rule 5"}
+:if ([:len [find comment="Discord_WebRTC"]] = 0) do={add action=mark-connection chain=prerouting connection-bytes=128 connection-mark=no-mark connection-state=new content="\12\A4\42" dst-address-type=!local in-interface-list=LAN new-connection-mark=MihomoProxyRoS dst-port=19294-19344,50000-50100 protocol=udp comment="Discord_WebRTC"; :put "Add mangle rule 6"}
+:if ([:len [find comment="RoutingToMihomo1"]] = 0) do={add action=mark-routing chain=prerouting in-interface-list=LAN connection-mark=MihomoProxyRoS new-routing-mark=MihomoProxyRoS passthrough=no comment="RoutingToMihomo1"; :put "Add mangle rule 7"}
 
 /ip dns static
 :if ([:len [find name="mask.icloud.com"]] = 0) do={ add name="mask.icloud.com" type=NXDOMAIN }
@@ -550,31 +568,28 @@ add interval=10s name=route_UP comment="route_UP" on-event="/system/script/run r
 
 :local flagContainer false
 :while ($flagContainer = false) do={
+:if ($totalspace>=120000000) do={
+:if ([:len [/container/mounts/find comment="MihomoProxyRoS"]] = 0) do={
+:do { /file/add name=mihomo type=directory} on-error {}
+/container/mounts/add src=/mihomo/ dst=/root/.config/mihomo/ list=MihomoProxyRoS comment="MihomoProxyRoS"
+}
+} else={
 :if ([:len [/container/mounts/find comment="MihomoProxyRoSAWG"]] = 0) do={
 :do { /file/add name=awg_conf type=directory} on-error {}
-/container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ name=awg_conf comment="MihomoProxyRoSAWG"
+/container/mounts/add src=/awg_conf/ dst=/root/.config/mihomo/awg/ list=MihomoProxyRoS comment="MihomoProxyRoSAWG"
 }
 :if ([:len [/container/mounts/find comment="MihomoProxyRoSProxies"]] = 0) do={
 :do { /file/add name=proxies_yaml type=directory} on-error {}
-/container/mounts/add src=/proxies_yaml/ dst=/root/.config/mihomo/proxies_mount/ name=proxies_yaml comment="MihomoProxyRoSProxies"
+/container/mounts/add src=/proxies_yaml/ dst=/root/.config/mihomo/proxies_mount/ list=MihomoProxyRoS comment="MihomoProxyRoSProxies"
 }
 :if ([:len [/container/mounts/find comment="MihomoProxyRoSRuleSet"]] = 0) do={
 :do { /file/add name=ruleset_txt type=directory} on-error {}
-/container/mounts/add src=/ruleset_txt/ dst=/root/.config/mihomo/rule_set_list/ name=ruleset_txt comment="MihomoProxyRoSRuleSet"
+/container/mounts/add src=/ruleset_txt/ dst=/root/.config/mihomo/rule_set_list list=MihomoProxyRoS comment="MihomoProxyRoSRuleSet"
+}
 }
 :if ([:len [/container/find comment="MihomoProxyRoS"]] = 0) do={
-/container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" envlists=MihomoProxyRoS mounts=awg_conf,proxies_yaml,ruleset_txt interface=MihomoProxyRoS root-dir=($pathPull . "Containers/MihomoProxyRoS") start-on-boot=yes comment="MihomoProxyRoS"
+/container/add remote-image="ghcr.io/medium1992/mihomo-proxy-ros" privileged=yes envlists=MihomoProxyRoS mountlists=MihomoProxyRoS interface=MihomoProxyRoS root-dir=($pathPull . "Containers/MihomoProxyRoS") start-on-boot=yes comment="MihomoProxyRoS"
 :put "Start pull MihomoProxyRoS container, pls wait when container starting, pls wait"
-:delay 1
-}
-:if ([:len [/container/find comment="MihomoProxyRoS" and stopped]] > 0) do={
-/container/start [find where comment="MihomoProxyRoS" and stopped]
-:put "Container MihomoProxyRoS started"
-:set $flagContainer true
-}
-:if ([:len [/container/find comment="MihomoProxyRoS" and download/extract failed]] > 0) do={
-/container/repull [find where comment="MihomoProxyRoS"]
-:put "Container MihomoProxyRoS extract failed, repull, pls wait"
 :delay 1
 }
 :if ([:len [/container/find comment="MihomoProxyRoS" and (stopped or running)]] > 0) do={
@@ -582,18 +597,8 @@ add interval=10s name=route_UP comment="route_UP" on-event="/system/script/run r
 :delay 3
 :if ([:len [/container/find comment="MihomoProxyRoS" and running]] > 0) do={
 :put "Container MihomoProxyRoS started"
-:set $flagContainer true
+:set flagContainer true
 }
-:if ([:len [/container/find comment="MihomoProxyRoS" and stopped]] > 0) do={
-/container/repull [find where comment="MihomoProxyRoS"]
-:put "Container MihomoProxyRoS extract failed, repull, pls wait"
-:delay 1
-}
-}
-:if ([:len [/container/find comment="MihomoProxyRoS" and download/extract failed]] > 0) do={
-/container/repull [find where comment="MihomoProxyRoS"]
-:put "Container MihomoProxyRoS extract failed, repull, pls wait"
-:delay 1
 }
 :delay 1
 }
@@ -604,11 +609,13 @@ add interval=10s name=route_UP comment="route_UP" on-event="/system/script/run r
 :put "Webpanel UI http://192.168.255.2:9090/ui/"
 :put "For donate:"
 :put "- USDT(TRC20):TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ"
+:put "- USDT(Polygon PoS):0xa4f2d9035e8bacf4cdff27904f03ecc5479f7e17"
 :put "Invite link Telegram-group https://t.me/+96HVPF3Ww6o3YTNi"
 :log warning "script complete, enjoy!"
 :log warning "For use WG,AWG pls push conf files on Mikrotik to path /awg_conf/"
 :log warning "Webpanel UI http://192.168.255.2:9090/ui/"
 :log warning "For donate:"
 :log warning "- USDT(TRC20):TWDDYD1nk5JnG6FxvEu2fyFqMCY9PcdEsJ"
+:log warning "- USDT(Polygon PoS):0xa4f2d9035e8bacf4cdff27904f03ecc5479f7e17"
 :log warning "Invite link Telegram-group https://t.me/+96HVPF3Ww6o3YTNi"
 }
