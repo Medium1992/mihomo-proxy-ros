@@ -54,7 +54,7 @@ foreach i in=$slotArray do={
 :if ($selectSlot!="system") do={:set pathPull "$selectSlot/"}
 :put "The slot $selectSlot selected for pulling Containers, path pulling $pathPull"
 :if ([:len [/disk/find where slot=$selectSlot fs=tmpfs]] > 0) do={
-:local repullSource (":delay 30s\r\n:local c [/container/find where comment=\"MihomoProxyRoS\"]\r\n:if ([:len \$c] > 0) do={/container/repull \$c}")
+:local repullSource (":delay 30s\r\n:local c [/container/find where comment=\"MihomoProxyRoS\"]\r\n:if ([:len \$c] > 0) do={\r\n/container/repull \$c\r\n:delay 5s\r\n:local i 0\r\n:while (([:len [/container/find where comment=\"MihomoProxyRoS\" and running]] = 0) and (\$i < 200)) do={\r\n:if ([:len [/container/find where comment=\"MihomoProxyRoS\" and (stopped or running)]] > 0) do={\r\n/container/start [/container/find where comment=\"MihomoProxyRoS\" and stopped]\r\n}\r\n:delay 3s\r\n:set i (\$i + 1)\r\n}\r\n:if ([:len [/container/find where comment=\"MihomoProxyRoS\" and running]] > 0) do={:log info \"MihomoProxyRoS started after repull\"} else={:log warning \"MihomoProxyRoS did not start after repull\"}\r\n}")
 :if ([:len [/system/script/find where name="MihomoProxyRoS_repull"]] = 0) do={/system/script/add name=MihomoProxyRoS_repull source=$repullSource} else={/system/script/set [find where name="MihomoProxyRoS_repull"] source=$repullSource}
 :if ([:len [/system/scheduler/find where name="MihomoProxyRoS_repull"]] = 0) do={/system/scheduler/add name=MihomoProxyRoS_repull start-time=startup on-event="/system/script/run MihomoProxyRoS_repull"} else={/system/scheduler/set [find where name="MihomoProxyRoS_repull"] start-time=startup on-event="/system/script/run MihomoProxyRoS_repull"}
 } else={
