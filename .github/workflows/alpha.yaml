@@ -153,7 +153,7 @@ jobs:
                 git checkout -q --detach "$REF"
                 sh /patches/apply.sh
                 export GOTOOLCHAIN=local CGO_ENABLED=0
-                go test -short -count=1 -run "Flow|FrameParser|RewriteInitial" ./transport/xhttp/'; then
+                go test -short -count=1 -run "Flow|FrameParser|RewriteInitial" ./transport/xhttp/ ./common/convert/'; then
             echo "flow=1" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::XHTTP flow patch does not apply or fails its tests on ${{ needs.alpha-check.outputs.upstream_ref }}; this alpha is built without it"

@@ -359,11 +359,11 @@ xhttp-opts:
 
 Windows range from 65535 bytes to 1 GiB. Unset, Go's stock windows apply (4 MiB per stream). With the governor they are a ceiling and the real window follows consumption; without it they are fixed windows. Windows above a few MiB only pay off for a single fast stream over a long path. Only XHTTP in h2 mode is affected: HTTP/1.1 and HTTP/3 are left alone.
 
-Happ subscriptions that go through the `SUB_LINKxx_CONVERT` converter carry `h2Flow` from `xhttpSettings.extra` over to `h2-flow` by themselves. For a regular subscription add the block with `SUB_LINKxx_OVERRIDE_EXPR`, e.g. `(select(.network == "xhttp") | .xhttp-opts.h2-flow.enabled) = true`.
+`h2Flow` in `extra` is carried over to `h2-flow` by itself — from `vless://` links (the `extra` parameter) and from Happ subscriptions that go through the `SUB_LINKxx_CONVERT` converter. If a subscription does not carry it, add the block with `SUB_LINKxx_OVERRIDE_EXPR`, e.g. `(select(.network == "xhttp") | .xhttp-opts.h2-flow.enabled) = true`.
 
 Measured with the governor on: 30 slow readers over 100 Mbit/s and 50 ms against official Xray 26.9.9 — mihomo's heap 136–147 MB → 51–60 MB; the first 4 MiB of a new download at 40 ms RTT in about 0.2 s against 0.06 s without the governor.
 
-The code lives in [`core_patches/xhttp_flow`](core_patches/xhttp_flow); it changes two lines of mihomo's `adapter/outbound/vless.go`. Leave the governor out of a build with `XHTTP_FLOW=0`. If the patch stops applying to upstream, the alpha is built without it (with a warning in the CI run) and the stable release is held back.
+The code lives in [`core_patches/xhttp_flow`](core_patches/xhttp_flow); it changes two lines of mihomo's `adapter/outbound/vless.go` and one line of `common/convert/v.go`. Leave the governor out of a build with `XHTTP_FLOW=0`. If the patch stops applying to upstream, the alpha is built without it (with a warning in the CI run) and the stable release is held back.
 
 ### Proxy groups
 

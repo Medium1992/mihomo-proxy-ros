@@ -106,7 +106,7 @@ jobs:
               git checkout -q --detach "$REF"
               sh /patches/apply.sh
               export GOTOOLCHAIN=local CGO_ENABLED=0
-              go test -short -count=1 -run "Flow|FrameParser|RewriteInitial" ./transport/xhttp/'
+              go test -short -count=1 -run "Flow|FrameParser|RewriteInitial" ./transport/xhttp/ ./common/convert/'
 
   release-build:
     needs: [release-check, release-flow]
