@@ -4,6 +4,7 @@ package xhttp
 
 import (
 	"encoding/binary"
+	"math/rand/v2"
 	"net"
 	"os"
 	"sync"
@@ -48,7 +49,6 @@ const (
 	h2SettingMaxFrameSize      = 0x5
 	h2MinMaxFrameSize          = 16384
 
-	flowPingMagic    = 0x78666c77
 	flowPingInterval = time.Second
 	flowPingTimeout  = 10 * time.Second
 	flowDefaultRTT   = 200 * time.Millisecond
@@ -75,15 +75,16 @@ func (l flowLimit) enabled() bool {
 	return l.max > 0
 }
 
-// flowEnabled lets MIHOMO_XHTTP_FLOW=off take the governor out without a new build.
-var flowEnabled = os.Getenv("MIHOMO_XHTTP_FLOW") != "off"
+// flowEnabled is the default for XHTTP proxies whose "h2-flow" does not
+// say: off unless MIHOMO_XHTTP_FLOW=on.
+var flowEnabled = os.Getenv("MIHOMO_XHTTP_FLOW") == "on"
 
 // flowDefault never lets a window shrink below the initial window HTTP/2
 // itself defines, nor grow beyond what the peer really granted.
 var flowDefault = flowLimit{init: h2InitWindow, max: 1 << 30}
 
 type tcpStats struct {
-	rtt, minRTT time.Duration
+	rtt, minRTT, rttVar time.Duration
 }
 
 type flowListener struct {
@@ -215,6 +216,11 @@ type flowWindow struct {
 	measured bool
 	ramped   bool
 	qAt      time.Time
+	qSample  int
+	rates    [flowModelRounds]int64
+	rateAt   int
+	flat     int
+	piPrev   float64
 }
 
 // adjust sets the cap to twice what the reader consumed over the last round
@@ -248,6 +254,11 @@ func (w *flowWindow) adjust(now time.Time, rtt time.Duration, init, limit int32,
 	if hold {
 		grow = min(grow, int64(w.cap))
 	}
+	if w.prev > 0 && 4*copied < 5*w.prev {
+		w.flat++
+	} else {
+		w.flat = 0
+	}
 	w.prev, w.measured = copied, true
 	w.mark, w.markBase = now, w.returned
 	switch {
@@ -262,6 +273,94 @@ func (w *flowWindow) adjust(now time.Time, rtt time.Duration, init, limit int32,
 	default:
 		w.slow = 0
 	}
+}
+
+// Once the kernel vouches for the round trip of the empty path, a ramped
+// window follows a model of the path instead of reacting to queueing: the
+// bandwidth-delay product BBR would estimate, from the fastest the reader took
+// data over the last flowModelRounds round trips, plus a quarter. The quarter
+// lets the reader's rate rise by as much per round trip where there is room,
+// and leaves at most a quarter round trip of queue where there is not.
+const (
+	flowModelRounds      = 10
+	flowModelGainPercent = 125
+	flowModelMinRound    = 20 * time.Millisecond
+)
+
+// model sets the cap from the path model; rtprop is the empty path's round
+// trip.
+func (w *flowWindow) model(now time.Time, rtprop time.Duration, init, limit int32) {
+	round := max(rtprop, flowModelMinRound)
+	if w.rateAt == 0 && w.prev > 0 {
+		// The ramp's last round seeds the filter, so one slow first round
+		// cannot drop a window the reader just showed it fills.
+		w.rates[0] = w.prev * int64(time.Second) / int64(round)
+		w.rateAt = 1
+	}
+	if now.Sub(w.mark) < round {
+		return
+	}
+	w.rates[w.rateAt%flowModelRounds] = (w.returned - w.markBase) * int64(time.Second) / int64(now.Sub(w.mark))
+	w.rateAt++
+	w.mark, w.markBase = now, w.returned
+	var bw int64
+	for _, r := range w.rates {
+		bw = max(bw, r)
+	}
+	target := bw * int64(rtprop) / int64(time.Second) * flowModelGainPercent / 100
+	w.cap = int32(min(max(target, int64(init)), int64(limit)))
+}
+
+// Once the reader's rate has grown by less than a quarter for flowFullRounds
+// round trips in a row, the path is full, as BBR judges it, and a download
+// window on a server is held by a PI controller on the queue the kernel sees.
+// The error is a fraction of the setpoint and a step a fraction of the bytes
+// the setpoint holds at the reader's rate, once per round trip, so the loop
+// gain is the controller's own and the same gains fit any bandwidth and RTT.
+const (
+	flowFullRounds = 3
+	flowPIKi       = 0.3
+	flowPIKp       = 0.2
+	flowPIMaxStep  = 0.5
+	flowPIMinSet   = 5 * time.Millisecond
+)
+
+// pi moves the cap once per round trip so that the queue settles at a quarter
+// of the empty path's round trip, or at four times the RTT variance where the
+// path jitters more: the floor is the lowest sample ever, deep in the jitter's
+// tail, while the smoothed RTT sits at its middle, and that gap is no queue. In velocity form it adds Ki
+// times the error and Kp times its change. With the queue under a quarter of
+// the setpoint the cap may also grow by a quarter per round trip, so that it
+// catches up with a path that got faster. A reader that takes less than a
+// quarter of the window per round trip limits itself: the cap does not grow
+// then, and shrinks by a quarter after flowShrinkAfter such rounds.
+func (w *flowWindow) pi(now time.Time, st tcpStats, init, limit int32) {
+	round := now.Sub(w.mark)
+	if round < max(st.minRTT, flowModelMinRound) {
+		return
+	}
+	copied := w.returned - w.markBase
+	w.mark, w.markBase = now, w.returned
+	set := max(st.minRTT/4, 4*st.rttVar, flowPIMinSet)
+	e := min(max(float64(set-(st.rtt-st.minRTT))/float64(set), -2), 1)
+	held := float64(copied) * float64(set) / float64(round)
+	delta := held * (flowPIKi*e + flowPIKp*(e-w.piPrev))
+	w.piPrev = e
+	cap := float64(w.cap)
+	if e > 0.75 {
+		delta = max(delta, cap/4)
+	}
+	delta = min(max(delta, -flowPIMaxStep*cap), flowPIMaxStep*cap)
+	if 4*copied < int64(w.cap) {
+		delta = min(delta, 0)
+		if w.slow++; w.slow >= flowShrinkAfter {
+			delta = min(delta, -cap/4)
+			w.slow = 0
+		}
+	} else {
+		w.slow = 0
+	}
+	w.cap = int32(min(max(int64(cap+delta), int64(init)), int64(limit)))
 }
 
 // flowLearned remembers the largest cap a stream on this connection needed
@@ -317,7 +416,10 @@ type flowConn struct {
 	rtt         time.Duration
 	rttPrev     time.Duration
 	rttSince    time.Time
-	pingSeq     uint32
+	rttLast     time.Duration
+	rttBase     time.Duration
+	rttSamples  int
+	pingData    uint64
 	pingSentAt  time.Time
 	lastPing    time.Time
 
@@ -352,14 +454,7 @@ type flowConn struct {
 // a TCP proxy in front leaves it quiet; the round trip the windows grow by
 // still comes from the PING, which crosses such a proxy.
 func (c *flowConn) queueing(now time.Time) int {
-	if c.tcp == nil {
-		return 0
-	}
-	if now.Sub(c.kAt) >= flowKernelEvery {
-		c.kAt = now
-		c.kstat, c.kOK = readTCPStats(c.tcp)
-	}
-	if !c.kOK || c.kstat.minRTT <= 0 {
+	if !c.kernelStats(now) {
 		return 0
 	}
 	switch q := c.kstat.rtt - c.kstat.minRTT; {
@@ -369,6 +464,92 @@ func (c *flowConn) queueing(now time.Time) int {
 		return 1
 	}
 	return 0
+}
+
+// kernelStats refreshes the kernel's view of this TCP connection and reports
+// whether there is one.
+func (c *flowConn) kernelStats(now time.Time) bool {
+	if c.tcp == nil {
+		return false
+	}
+	if now.Sub(c.kAt) >= flowKernelEvery {
+		c.kAt = now
+		c.kstat, c.kOK = readTCPStats(c.tcp)
+	}
+	return c.kOK && c.kstat.minRTT > 0
+}
+
+// pingFloor is the round trip of the empty path for pingQueueing. The first
+// PING's ACK can already wait behind data the peer pushed while its TCP was
+// still in slow start, so the kernel's min_rtt, taken at the TCP handshake,
+// is preferred. A TCP proxy in front shows the kernel only the hop to the
+// proxy: a min_rtt that far below the PING's means exactly that, and the PING
+// is kept.
+func (c *flowConn) pingFloor(now time.Time) time.Duration {
+	floor := c.rttBase
+	if c.floorConfirmed(now) && c.kstat.minRTT < floor {
+		floor = c.kstat.minRTT
+	}
+	return floor
+}
+
+// modelled reports whether windows follow the path model: the kernel vouches
+// for the round trip, as checked against the first PING.
+func (c *flowConn) modelled(now time.Time) bool {
+	return c.rttBase != 0 && c.floorConfirmed(now)
+}
+
+// floorConfirmed reports whether the kernel vouches for the round trip of the
+// empty path: it has a min_rtt for this socket that is not far below what the
+// PINGs show, so no TCP proxy sits in front.
+func (c *flowConn) floorConfirmed(now time.Time) bool {
+	return c.kernelStats(now) && (c.rttBase == 0 || 4*c.kstat.minRTT >= c.rttBase)
+}
+
+// Without a confirmed floor the PING-seen queue cannot be told from the round
+// trip, so windows that the queue hold guards stay where Go keeps them.
+const (
+	flowUnconfirmedUp   = 1 << 20
+	flowUnconfirmedDown = 4 << 20
+)
+
+// pingQueueing is queueing for what the kernel cannot see: the backlog of a
+// client's upload, or of a download towards a client this side dialed from.
+// A PING's ACK waits behind whatever is queued between the peers, so the last
+// round trip, or the wait for an ACK still due, above the lowest one this
+// connection has seen is that backlog. Like the kernel's min_rtt, the floor
+// is kept for the connection's life: a long transfer keeps the queue full, and
+// a floor that forgot the empty path would rise with it. A PING samples it only
+// once a second, so it reacts at half the queue the kernel signal tolerates.
+func (c *flowConn) pingQueueing(now time.Time) int {
+	if c.rttBase == 0 {
+		return 0
+	}
+	last := c.rttLast
+	if !c.pingSentAt.IsZero() {
+		last = max(last, now.Sub(c.pingSentAt))
+	}
+	floor := c.pingFloor(now)
+	switch q := last - floor; {
+	case q > max(floor, flowQueueShrink):
+		return 2
+	case q > max(floor/2, flowQueueHold):
+		return 1
+	}
+	return 0
+}
+
+// queueShrink trims a window that keeps a PING-seen queue standing: by a
+// quarter once per PING sample, since a sample stays stale for a second, and
+// never below what the reader takes over a round trip of the empty path, so
+// the path stays full while the queue drains.
+func (c *flowConn) queueShrink(w *flowWindow, now time.Time, init int32) {
+	if w.qSample == c.rttSamples {
+		return
+	}
+	w.qSample = c.rttSamples
+	keep := w.prev * int64(c.pingFloor(now)) / int64(c.currentRTT())
+	w.cap = int32(max(int64(init), int64(w.cap)/4*3, keep))
 }
 
 func newFlowConn(c net.Conn, up, down flowLimit) *flowConn {
@@ -576,10 +757,14 @@ func (c *flowConn) finish(id uint32, s *flowStream) {
 	}
 }
 
-// currentRTT is the lowest round trip seen over the last one to two windows:
-// PING queues behind data, so anything above the minimum is our own backlog
-// and must not feed back into the caps.
+// currentRTT is the kernel's min_rtt where it vouches for the path, otherwise
+// the lowest PING over the last one to two windows: PING queues behind data,
+// so anything above the minimum is our own backlog and must not feed back into
+// the caps.
 func (c *flowConn) currentRTT() time.Duration {
+	if c.rttBase != 0 && c.kOK && c.kstat.minRTT > 0 && 4*c.kstat.minRTT >= c.rttBase {
+		return c.kstat.minRTT
+	}
 	switch {
 	case c.rtt == 0:
 		return flowDefaultRTT
@@ -591,6 +776,11 @@ func (c *flowConn) currentRTT() time.Duration {
 
 func (c *flowConn) sampleRTT(now time.Time, sample time.Duration) {
 	sample = max(sample, flowMinRTT)
+	c.rttLast = sample
+	c.rttSamples++
+	if c.rttBase == 0 || sample < c.rttBase {
+		c.rttBase = sample
+	}
 	if now.Sub(c.rttSince) >= flowRTTWindow {
 		c.rttPrev, c.rtt, c.rttSince = c.rtt, 0, now
 	}
@@ -600,24 +790,31 @@ func (c *flowConn) sampleRTT(now time.Time, sample time.Duration) {
 }
 
 // appendPing adds a PING for the remote peer once a second while streams are
-// open, so the connection knows its round trip.
+// open, so the connection knows its round trip. The first goes out as soon as
+// the connection is up, before data can queue in front of its ACK, so the
+// connection learns the round trip of the empty path. Once the kernel vouches
+// for that round trip, no more are needed.
 func (c *flowConn) appendPing(out []byte) []byte {
 	now := time.Now()
-	if !c.pingReady || len(c.streams) == 0 || now.Sub(c.lastPing) < flowPingInterval ||
+	if !c.pingReady || (len(c.streams) == 0 && c.rttBase != 0) || c.modelled(now) || now.Sub(c.lastPing) < flowPingInterval ||
 		(!c.pingSentAt.IsZero() && now.Sub(c.pingSentAt) < flowPingTimeout) {
 		return out
 	}
-	c.pingSeq++
 	c.pingSentAt, c.lastPing = now, now
+	return c.appendPingFrame(out)
+}
+
+// appendPingFrame adds a PING carrying fresh random data, as Go's own HTTP/2
+// health checks do, and remembers it to recognize the ACK.
+func (c *flowConn) appendPingFrame(out []byte) []byte {
+	c.pingData = rand.Uint64()
 	out = append(out, 0, 0, 8, h2Ping, 0, 0, 0, 0, 0)
-	out = binary.BigEndian.AppendUint32(out, flowPingMagic)
-	return binary.BigEndian.AppendUint32(out, c.pingSeq)
+	return binary.BigEndian.AppendUint64(out, c.pingData)
 }
 
 // pingAck reports whether a PING ACK answers ours, taking its round trip.
 func (c *flowConn) pingAck(f h2Frame, payload []byte) bool {
-	if f.flags&h2FlagAck == 0 || binary.BigEndian.Uint32(payload) != flowPingMagic ||
-		binary.BigEndian.Uint32(payload[4:]) != c.pingSeq || c.pingSentAt.IsZero() {
+	if f.flags&h2FlagAck == 0 || binary.BigEndian.Uint64(payload) != c.pingData || c.pingSentAt.IsZero() {
 		return false
 	}
 	now := time.Now()
@@ -666,12 +863,8 @@ func (c *flowConn) fireGuard() {
 		return
 	}
 	c.guardProbe = true
-	c.pingSeq++
 	c.pingSentAt = time.Now()
-	var ping []byte
-	ping = append(ping, 0, 0, 8, h2Ping, 0, 0, 0, 0, 0)
-	ping = binary.BigEndian.AppendUint32(ping, flowPingMagic)
-	ping = binary.BigEndian.AppendUint32(ping, c.pingSeq)
+	ping := c.appendPingFrame(nil)
 	c.mu.Unlock()
 	c.injectToClient(ping)
 }
@@ -818,12 +1011,35 @@ func (r *flowReader) control(f h2Frame, header, payload, out []byte) []byte {
 		if inc < flowSmallCredit {
 			c.incremental = true
 		}
-		q := 0
-		if !c.client {
+		var q int
+		switch {
+		case c.client && c.modelled(now):
+		case c.client:
+			q = c.pingQueueing(now)
+		default:
 			q = c.queueing(now)
 		}
-		s.down.adjust(now, c.currentRTT(), c.down.init, c.down.max, c.client || c.incremental, q > 0)
-		if q == 2 && now.Sub(s.down.qAt) >= c.currentRTT() {
+		switch {
+		case c.client && c.modelled(now) && s.down.ramped:
+			s.down.model(now, c.currentRTT(), c.down.init, c.down.max)
+		case !c.client && c.incremental && s.down.flat >= flowFullRounds && c.modelled(now):
+			// Only clients that credit in small steps: one that waits for
+			// half of its own window could be held below that half. Only
+			// where the kernel sees the path: behind a TCP proxy it sees
+			// no queue at all.
+			s.down.pi(now, c.kstat, c.down.init, c.down.max)
+		default:
+			s.down.adjust(now, c.currentRTT(), c.down.init, c.down.max, c.client || c.incremental, q > 0)
+		}
+		switch {
+		case c.client:
+			if q == 2 {
+				c.queueShrink(&s.down, now, c.down.init)
+			}
+			if !c.floorConfirmed(now) {
+				s.down.cap = min(s.down.cap, flowUnconfirmedDown)
+			}
+		case q == 2 && now.Sub(s.down.qAt) >= c.currentRTT():
 			s.down.qAt = now
 			s.down.cap = max(c.down.init, s.down.cap/4*3)
 		}
@@ -917,7 +1133,22 @@ func (w *flowWriter) control(f h2Frame, header, payload, out []byte) []byte {
 		}
 		now := time.Now()
 		s.up.returned += inc
-		s.up.adjust(now, c.currentRTT(), c.up.init, c.up.max, true, false)
+		var q int
+		switch {
+		case c.modelled(now) && s.up.ramped:
+			s.up.model(now, c.currentRTT(), c.up.init, c.up.max)
+		case c.modelled(now):
+			s.up.adjust(now, c.currentRTT(), c.up.init, c.up.max, true, false)
+		default:
+			q = c.pingQueueing(now)
+			s.up.adjust(now, c.currentRTT(), c.up.init, c.up.max, true, q > 0)
+		}
+		if q == 2 {
+			c.queueShrink(&s.up, now, c.up.init)
+		}
+		if !c.floorConfirmed(now) {
+			s.up.cap = min(s.up.cap, flowUnconfirmedUp)
+		}
 		c.upLearned.note(now, c.up.init, s.up.cap)
 		rel := c.upRelease(s)
 		if rel <= 0 {
@@ -940,13 +1171,4 @@ func (w *flowWriter) boundary(out []byte) []byte {
 		c.wqueue = nil
 	}
 	return c.appendPing(out)
-}
-
-// flowDial puts the client role of the governor on an HTTP/2 connection the
-// transport has just dialed, unless dialing failed or MIHOMO_XHTTP_FLOW=off.
-func flowDial(c net.Conn, err error) (net.Conn, error) {
-	if err != nil || !flowEnabled {
-		return c, err
-	}
-	return newFlowClientConn(c), nil
 }

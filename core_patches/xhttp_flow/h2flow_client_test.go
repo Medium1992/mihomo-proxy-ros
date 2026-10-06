@@ -159,7 +159,8 @@ func TestFlowClientIntegrityDuplex(t *testing.T) {
 func clientDownloadRate(t *testing.T, sc struct {
 	name     string
 	up, down flowLimit
-}, governed bool, rtt time.Duration) (float64, time.Duration) {
+}, governed bool, rtt time.Duration,
+) (float64, time.Duration) {
 	const size = 64 << 20
 	_, addr := startFlowServer(t, sc.up, sc.down, false, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buf := make([]byte, 32<<10)

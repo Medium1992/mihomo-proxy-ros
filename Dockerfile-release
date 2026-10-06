@@ -134,12 +134,13 @@ RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ] && [ "$FAKEIP_SRC_RULES" = "1" ]; then
       echo "Skipping fakeip_src patch"; \
     fi
 
-# Патч xhttp_flow: регулятор окон HTTP/2 для XHTTP-клиента, чтобы медленный
-# читатель в локальной сети не держал на роутере по 4 МиБ непрочитанного на
-# каждый стрим. Сервер не меняется. Весь код — в core_patches/xhttp_flow, в
-# апстриме меняется одна строка в transport/xhttp/client.go. Тесты гоняет CI
-# до сборки и при поломке передаёт сюда XHTTP_FLOW=0. На роутере регулятор
-# выключает переменная окружения MIHOMO_XHTTP_FLOW=off без пересборки.
+# Патч xhttp_flow: регулятор окон HTTP/2 для XHTTP-клиента из Xray-core-fork,
+# чтобы медленный читатель в локальной сети не держал на роутере по 4 МиБ
+# непрочитанного на каждый стрим, и блок h2-flow в xhttp-opts. Как в форке,
+# регулятор выключен, пока его не включит MIHOMO_XHTTP_FLOW=on или
+# h2-flow.enabled у прокси. Код — в core_patches/xhttp_flow, в апстриме
+# меняются две строки adapter/outbound/vless.go. Тесты гоняет CI до сборки и
+# при поломке передаёт сюда XHTTP_FLOW=0.
 ARG XHTTP_FLOW=1
 COPY core_patches/xhttp_flow /patches/xhttp_flow
 RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ] && [ "$XHTTP_FLOW" = "1" ]; then \

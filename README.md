@@ -342,11 +342,28 @@ The `support-x25519mlkem768` flag used to be forced by a core patch applied at i
 
 #### HTTP/2 window governor for XHTTP
 
-By default Go's HTTP/2 lets the server send up to 4 MiB per stream before the client reads any of it. When a reader on the LAN is slow (a paused video, weak Wi-Fi, a slow site during an upload), all of that sits in mihomo's memory on the router. In our build the XHTTP client in h2 mode shows the server a 64 KiB window and returns credit only while unread data stays below what the reader consumes in two round trips. The window grows at once for a fast reader and shrinks back when it slows down. The server needs no changes; any Xray works.
+By default Go's HTTP/2 lets the server send up to 4 MiB per stream before the client reads any of it. When a reader on the LAN is slow (a paused video, weak Wi-Fi), all of that sits in mihomo's memory on the router. Our build carries the governor from [Xray-core-fork](https://github.com/Medium1992/Xray-core-fork/releases) (the client role, as a `mux-ka` bridge uses it): the download window follows what the reader actually takes, and on Linux it is held to a model of the path — 1.25 × the highest read rate × the kernel's `min_rtt`. The server needs no changes; any Xray works.
 
-Measured with 30 slow readers over 100 Mbit/s and 50 ms against official Xray 26.9.9: mihomo's heap went from 136–147 MB down to 51–60 MB, with fast downloads unchanged. Against a server that governs windows itself (the `mux-ka` builds of [Xray-core-fork](https://github.com/Medium1992/Xray-core-fork)) there is no difference, since the server already protects that memory. The cost is a slower ramp-up for a new download on high-RTT paths.
+As in the fork, the governor is **off by default**. Turn it on:
 
-The governor is ported from [Xray-core-fork](https://github.com/Medium1992/Xray-core-fork/commits/feat/xhttp-mux-cool/) and lives in [`core_patches/xhttp_flow`](core_patches/xhttp_flow); it changes a single line in mihomo. Turn it off without a rebuild with the environment variable `MIHOMO_XHTTP_FLOW=off`, or at build time with `XHTTP_FLOW=0`. If the patch stops applying to upstream, the alpha is built without it (with a warning in the CI run) and the stable release is held back.
+- for every XHTTP proxy, with the container environment variable `MIHOMO_XHTTP_FLOW=on`;
+- for one proxy, with an `h2-flow` block in `xhttp-opts` (it wins over the variable):
+
+```yaml
+xhttp-opts:
+  h2-flow:
+    enabled: true
+    max-stream-receive-window: 16777216      # per-stream receive window, bytes
+    max-connection-receive-window: 33554432  # per-connection receive window, bytes
+```
+
+Windows range from 65535 bytes to 1 GiB. Unset, Go's stock windows apply (4 MiB per stream). With the governor they are a ceiling and the real window follows consumption; without it they are fixed windows. Windows above a few MiB only pay off for a single fast stream over a long path. Only XHTTP in h2 mode is affected: HTTP/1.1 and HTTP/3 are left alone.
+
+Happ subscriptions that go through the `SUB_LINKxx_CONVERT` converter carry `h2Flow` from `xhttpSettings.extra` over to `h2-flow` by themselves. For a regular subscription add the block with `SUB_LINKxx_OVERRIDE_EXPR`, e.g. `(select(.network == "xhttp") | .xhttp-opts.h2-flow.enabled) = true`.
+
+Measured with the governor on: 30 slow readers over 100 Mbit/s and 50 ms against official Xray 26.9.9 — mihomo's heap 136–147 MB → 51–60 MB; the first 4 MiB of a new download at 40 ms RTT in about 0.2 s against 0.06 s without the governor.
+
+The code lives in [`core_patches/xhttp_flow`](core_patches/xhttp_flow); it changes two lines of mihomo's `adapter/outbound/vless.go`. Leave the governor out of a build with `XHTTP_FLOW=0`. If the patch stops applying to upstream, the alpha is built without it (with a warning in the CI run) and the stable release is held back.
 
 ### Proxy groups
 

@@ -17,38 +17,30 @@ import (
 	"time"
 
 	mhttp "github.com/metacubex/http"
+	"github.com/metacubex/mihomo/common/structure"
 )
 
 // The tests above drive the governor with x/net's HTTP/2 client. mihomo dials
 // XHTTP through its own net/http fork, so these go through NewTransport, the
-// exact path the h2 mode takes, with the governor switched on and off.
+// exact path the h2 mode takes, wrapped the way vless.go wraps it.
 
-func newMihomoTestClient(addr string, governed bool) *mhttp.Client {
-	var mu sync.Mutex
-	on := governed
-	rt := NewTransport(
-		func(ctx context.Context) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "tcp", addr)
-		},
-		func(ctx context.Context, c net.Conn, isH2 bool) (net.Conn, error) { return c, nil },
-		nil, nil, 0,
-	)
-	// flowEnabled is read when a connection is dialed, not when the transport
-	// is built, so hold it for this client's dials.
-	return &mhttp.Client{Transport: roundTripFunc(func(r *mhttp.Request) (*mhttp.Response, error) {
-		mu.Lock()
-		prev := flowEnabled
-		flowEnabled = on
-		resp, err := rt.RoundTrip(r)
-		flowEnabled = prev
-		mu.Unlock()
-		return resp, err
-	})}
+func newMihomoTransport(addr string, opts *H2FlowOptions) mhttp.RoundTripper {
+	return opts.Wrap(func() mhttp.RoundTripper {
+		return NewTransport(
+			func(ctx context.Context) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+			},
+			func(ctx context.Context, c net.Conn, isH2 bool) (net.Conn, error) { return c, nil },
+			nil, nil, 0,
+		)
+	})()
 }
 
-type roundTripFunc func(*mhttp.Request) (*mhttp.Response, error)
+func flowOpts(on bool) *H2FlowOptions { return &H2FlowOptions{Enabled: &on} }
 
-func (f roundTripFunc) RoundTrip(r *mhttp.Request) (*mhttp.Response, error) { return f(r) }
+func newMihomoTestClient(addr string, governed bool) *mhttp.Client {
+	return &mhttp.Client{Transport: newMihomoTransport(addr, flowOpts(governed))}
+}
 
 func TestFlowMihomoSlowReaderBounded(t *testing.T) {
 	for _, sc := range clientCases {
@@ -177,5 +169,81 @@ func TestFlowMihomoKeepsThroughput(t *testing.T) {
 	t.Logf("rtt 40ms: stock %.1f MiB/s, governed %.1f MiB/s", base, gov)
 	if gov < base*0.85 {
 		t.Fatalf("governed %.1f is below 85%% of stock %.1f", gov, base)
+	}
+}
+
+// With the governor off, max-stream-receive-window is the fixed window the
+// server may fill ahead of the reader: about 1 MiB here instead of Go's 4 MiB.
+func TestFlowMihomoReceiveWindow(t *testing.T) {
+	off := false
+	opts := &H2FlowOptions{Enabled: &off, MaxStreamReceiveWindow: 1 << 20}
+	var written atomic.Int64
+	_, addr := startFlowServer(t, flowLimit{}, flowLimit{}, false, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, 16<<10)
+		for {
+			n, err := w.Write(buf)
+			written.Add(int64(n))
+			if err != nil {
+				return
+			}
+		}
+	}))
+	client := &mhttp.Client{Transport: newMihomoTransport(addr, opts)}
+	resp, err := client.Get("https://x/down")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var consumed atomic.Int64
+	stop := make(chan struct{})
+	go slowCopy(resp.Body, 256<<10, &consumed, stop)
+	time.Sleep(3 * time.Second)
+	gap := written.Load() - consumed.Load()
+	close(stop)
+	resp.Body.Close()
+	t.Logf("fixed 1 MiB window: gap %d", gap)
+	if gap < 768<<10 || gap > 1536<<10 {
+		t.Fatalf("gap %d does not match a 1 MiB stream window", gap)
+	}
+}
+
+// No h2-flow block and no MIHOMO_XHTTP_FLOW: the governor stays off, as in
+// Xray-core-fork, and the transport keeps Go's windows.
+func TestFlowMihomoOffByDefault(t *testing.T) {
+	prev := flowEnabled
+	flowEnabled = false
+	defer func() { flowEnabled = prev }()
+	var opts *H2FlowOptions
+	if opts.governed() {
+		t.Fatal("governor on without h2-flow or MIHOMO_XHTTP_FLOW")
+	}
+	flowEnabled = true
+	if !opts.governed() {
+		t.Fatal("MIHOMO_XHTTP_FLOW=on did not turn the governor on")
+	}
+	if flowOpts(false).governed() {
+		t.Fatal("h2-flow.enabled=false did not win over MIHOMO_XHTTP_FLOW=on")
+	}
+}
+
+// The YAML keys decode with the decoder mihomo uses for proxies.
+func TestFlowMihomoOptionsDecode(t *testing.T) {
+	var dst struct {
+		H2Flow *H2FlowOptions `proxy:"h2-flow,omitempty"`
+	}
+	src := map[string]any{"h2-flow": map[string]any{
+		"enabled":                       true,
+		"max-stream-receive-window":     16777216,
+		"max-connection-receive-window": "33554432",
+	}}
+	d := structure.NewDecoder(structure.Option{TagName: "proxy", WeaklyTypedInput: true, KeyReplacer: structure.DefaultKeyReplacer})
+	if err := d.Decode(src, &dst); err != nil {
+		t.Fatal(err)
+	}
+	f := dst.H2Flow
+	if f == nil || f.Enabled == nil || !*f.Enabled || f.MaxStreamReceiveWindow != 16777216 || f.MaxConnectionReceiveWindow != 33554432 {
+		t.Fatalf("decoded %+v", f)
+	}
+	if h2FlowReceiveWindow(1000, "x") != 0 || h2FlowReceiveWindow(2<<30, "x") != 0 || h2FlowReceiveWindow(1<<20, "x") != 1<<20 {
+		t.Fatal("window range check")
 	}
 }

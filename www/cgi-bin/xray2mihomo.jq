@@ -577,7 +577,17 @@ def applyXhttpExtra($o; $extraRaw):
       | (($eh | del(.Host) | del(.host))) as $eh2
       | (if ($eh2 | length) > 0 then $oh + {headers: (($oh.headers // {}) + $eh2)} else $oh end) as $o1
       | (xmuxToReuse($extra.xmux)) as $reuse
-      | (if ($reuse | length) > 0 then $o1 + {"reuse-settings": $reuse} else $o1 end) as $o2
+      | (if ($reuse | length) > 0 then $o1 + {"reuse-settings": $reuse} else $o1 end) as $o2a
+      # h2Flow из Xray-core-fork (mux-ka): регулятор окон HTTP/2 и окна приёма.
+      # Патч mihomo-proxy-ros читает его как xhttp-opts.h2-flow; другие ядра
+      # mihomo незнакомый ключ пропускают.
+      | ($extra.h2Flow) as $hf
+      | (if ($hf | type) == "object" then
+           ({} | setIf("enabled"; (if ($hf.enabled | type) == "boolean" then $hf.enabled else null end))
+               | setIf("max-stream-receive-window"; ($hf.maxStreamReceiveWindow // null | if type == "string" then tonumber? else . end))
+               | setIf("max-connection-receive-window"; ($hf.maxConnectionReceiveWindow // null | if type == "string" then tonumber? else . end)))
+         else {} end) as $h2f
+      | (if ($h2f | length) > 0 then $o2a + {"h2-flow": $h2f} else $o2a end) as $o2
       | (if ($extra.downloadSettings != null) then streamToXhttpDownloadSettings($extra.downloadSettings) else {} end) as $ds
       | (if ($ds | length) > 0 then $o2 + {"download-settings": $ds} else $o2 end)
     end;
