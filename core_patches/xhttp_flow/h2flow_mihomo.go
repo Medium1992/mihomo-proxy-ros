@@ -10,6 +10,14 @@ import (
 	"github.com/metacubex/mihomo/log"
 )
 
+// Defaults of a governed server in Xray-core-fork (h2flow_transport.go there).
+// mihomo only runs the client role; the governor's tests of a client against
+// such a server use them.
+const (
+	flowServerReceiveWindow = 6 << 20
+	flowServerSendWindow    = 4 << 20
+)
+
 // H2FlowOptions is the "h2-flow" block of a proxy's xhttp-opts, the
 // counterpart of "h2Flow" in xhttpSettings.extra of Xray-core-fork:
 //
