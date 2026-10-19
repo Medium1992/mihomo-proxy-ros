@@ -168,9 +168,8 @@ func initialWindow(payload []byte) (real int32, found bool) {
 
 type tcpStats struct {
 	rtt, minRTT, rttVar time.Duration
-	// unacked is what the connection has sent and not had acknowledged:
-	// what it has in the network, on the wire and in the queue.
-	unacked int64
+	// inFlight is the bytes sent and not yet acknowledged.
+	inFlight int64
 }
 
 type flowListener struct {
@@ -395,6 +394,9 @@ type flowWindow struct {
 	flat     int
 	steady   int
 	piPrev   float64
+	piRTT    time.Duration
+	// noted is returned as of the connection's last flowEffect note.
+	noted int64
 }
 
 // adjust sets the cap to twice what the reader consumed over the last round
@@ -520,12 +522,6 @@ const (
 	flowPIMinSet   = 5 * time.Millisecond
 )
 
-// queueSetpoint is the queue pi settles at: a quarter of the empty path's
-// round trip, or four times the RTT variance where the path jitters more.
-func queueSetpoint(st tcpStats) time.Duration {
-	return max(st.minRTT/4, 4*st.rttVar, flowPIMinSet)
-}
-
 // pi moves the cap once per round trip so that the queue settles at a quarter
 // of the empty path's round trip, or at four times the RTT variance where the
 // path jitters more: the floor is the lowest sample ever, deep in the jitter's
@@ -533,16 +529,17 @@ func queueSetpoint(st tcpStats) time.Duration {
 // times the error and Kp times its change. With the queue under a quarter of
 // the setpoint the cap may also grow by a quarter per round trip, so that it
 // catches up with a path that got faster. A reader that takes less than a
-// quarter of the window per round trip limits itself: the cap does not grow
-// then, and shrinks by a quarter after flowShrinkAfter such rounds.
-func (w *flowWindow) pi(now time.Time, st tcpStats, init, limit int32) {
+// quarter of what the window gives it per round limits itself: the cap does
+// not grow then, and shrinks by a quarter after flowShrinkAfter such rounds.
+// Cuts are scaled by gain, see flowEffect.
+func (w *flowWindow) pi(now time.Time, st tcpStats, init, limit int32, gain float64) {
 	round := now.Sub(w.mark)
 	if round < max(st.minRTT, flowModelMinRound) {
 		return
 	}
 	copied := w.returned - w.markBase
 	w.mark, w.markBase = now, w.returned
-	set := queueSetpoint(st)
+	set := max(st.minRTT/4, 4*st.rttVar, flowPIMinSet)
 	e := min(max(float64(set-(st.rtt-st.minRTT))/float64(set), -2), 1)
 	held := float64(copied) * float64(set) / float64(round)
 	delta := held * (flowPIKi*e + flowPIKp*(e-w.piPrev))
@@ -552,7 +549,26 @@ func (w *flowWindow) pi(now time.Time, st tcpStats, init, limit int32) {
 		delta = max(delta, cap/4)
 	}
 	delta = min(max(delta, -flowPIMaxStep*cap), flowPIMaxStep*cap)
-	if 4*copied < int64(w.cap) {
+	if delta < 0 {
+		delta *= gain
+	}
+	if w.piRTT > 0 {
+		// Where cuts do not move the queue, the cap follows the round trip,
+		// so the reader keeps its rate as the queue grows and shrinks. Up
+		// only while the cap is what holds the reader: above what some other
+		// limit lets it take, a cap that grew would leave a later cut
+		// nothing to land on, and flowEffect nothing to judge it by.
+		follow := (1 - gain) * cap * float64(st.rtt-w.piRTT) / float64(w.piRTT)
+		if follow < 0 || 4*float64(copied)*float64(st.rtt) >= 3*cap*float64(round) {
+			delta += follow
+		}
+	}
+	w.piRTT = st.rtt
+	// The cap covers a round trip, the round the empty path's: beside a
+	// queue a reader that takes all it is given still copies only the
+	// round's share of the cap, and must not be taken for one that limits
+	// itself.
+	if 4*copied < int64(w.cap)*int64(round)/int64(max(st.rtt, round)) {
 		delta = min(delta, 0)
 		if w.slow++; w.slow >= flowShrinkAfter {
 			delta = min(delta, -cap/4)
@@ -692,12 +708,7 @@ type flowConn struct {
 	// traffic keeps full, and holds its own queue no shorter than TCP does.
 	noQueueCuts bool
 
-	// path is what this server's connections from the same client share
-	// of the queue, see foreignQueue, looked up once it is first needed:
-	// asking a connection behind a PROXY header for its peer waits for that
-	// header.
-	path    *flowPath
-	pathSet bool
+	effect flowEffect
 }
 
 // queueing tells how far the kernel RTT of this TCP connection has climbed
@@ -719,203 +730,25 @@ func (c *flowConn) queueing(now time.Time) int {
 	return 0
 }
 
-// A server cuts download caps against the queue the kernel sees, so that its
-// own data does not stand in front of other streams. pi does so gradually,
-// to hold the queue near its setpoint without jumping on jitter. A queue
-// that other traffic keeps full, on a link shared in the evening, does not
-// shorten when the server cuts: cut after cut only hands that traffic the
-// path, down to init per round trip, as little as a megabit per second where
-// that traffic stands for a second in the queue.
-//
-// The server's own queue is made of what it has in the network, so it
-// shortens when that does. So once a queue stands at twice a quarter of the
-// empty path's round trip, the server watches two things: what its
-// downloads to the client have in flight, which the cuts move, and what its
-// connections to the client have sent and not had acknowledged, as the
-// kernel counts it, which is what stands in the network. When both have
-// come down to half of the most they were, and the queue has not come down
-// by a quarter for flowSuspectRounds round trips, the queue is foreign; the
-// wait is for the kernel's round trip, which is smoothed and follows the
-// queue some way behind. The first alone halves as a reader catches up,
-// much of it waiting in buffers at either end; the second alone is small
-// whenever other traffic takes most of the path, cut or not.
-//
-// A foreign queue's downloads are neither cut nor held against it, and their
-// caps follow their readers as without a governor, so they keep the share a
-// server without one would. The queue counts as the server's own again once
-// it has stood drained under the bar for flowSuspectRounds round trips, and
-// after flowForeignRounds round trips, when the server cuts against it again
-// to see.
-//
-// A client's connections to the server share its bottleneck, and the queue
-// one of them sees is mostly the others' data; within a connection, so is
-// the queue one stream sees. So the queue is judged for all downloads to the
-// client's address at once, a flowPath, against the least round trip any of
-// its connections has had: a connection opened into a standing queue takes
-// that queue for its empty path. The path keeps its state for flowPathKeep
-// after its last connection closes, as a client opens new ones, and takes a
-// new floor as often, as the kernel does.
-const (
-	flowPathFresh     = 4
-	flowSuspectRounds = 2
-	flowForeignRounds = 32
-	flowPathKeep      = 5 * time.Minute
-)
-
-// flowPath is the queue state a server's connections from one address
-// share. Its lock is taken under a connection's, never the other way.
-type flowPath struct {
-	key    string
-	refs   int
-	idleAt time.Time
-
-	mu sync.Mutex
-	// floor is the least empty-path round trip of the path's connections
-	// since floorAt. conns is what each connection reported last. cutQ is the queue when it
-	// first stood over the bar, zero while it does not, and cutIn the most
-	// of each since; suspectAt is when both halved with the queue where it
-	// was, zero while not. foreignAt is when
-	// the queue began to count as foreign, zero while it counts as the
-	// server's own.
-	floor     time.Duration
-	floorAt   time.Time
-	conns     map[*flowConn]flowPathConn
-	cutQ      time.Duration
-	cutIn     [2]int64
-	suspectAt time.Time
-	foreignAt time.Time
-}
-
-// flowPathConn is what a connection last told its path: what its open
-// downloads have in flight, what it has in the network, the queue it saw
-// and when.
-type flowPathConn struct {
-	inFlight, inNet int64
-	queue           time.Duration
-	at              time.Time
-}
-
-var (
-	flowPathsMu    sync.Mutex
-	flowPaths      = map[string]*flowPath{}
-	flowPathsSwept time.Time
-)
-
-// flowPathOf returns the queue state shared by connections from c's peer
-// address, taking a reference, or nil where c has none.
-func flowPathOf(c net.Conn) *flowPath {
-	addr, ok := c.RemoteAddr().(*net.TCPAddr)
-	if !ok {
-		return nil
+// cutGain is how much of a cut against the queue takes effect, see
+// flowEffect: the connection notes its round trip, the bytes its kernel has
+// in flight and the caps of the downloads that took data since the last
+// note, once per round trip of the empty path. A stream that carries no
+// data, as an upload's beside the download, would have its cap stand for
+// a cut that never moved.
+func (c *flowConn) cutGain(now time.Time) float64 {
+	if !c.kOK || !c.effect.due(now, max(c.kstat.minRTT, flowModelMinRound)) {
+		return c.effect.value()
 	}
-	key, now := addr.IP.String(), time.Now()
-	flowPathsMu.Lock()
-	defer flowPathsMu.Unlock()
-	if now.Sub(flowPathsSwept) >= flowPathKeep {
-		flowPathsSwept = now
-		for k, p := range flowPaths {
-			if p.refs == 0 && now.Sub(p.idleAt) >= flowPathKeep {
-				delete(flowPaths, k)
-			}
+	var caps int64
+	for _, s := range c.streams {
+		if !s.serverDone && s.down.returned != s.down.noted {
+			caps += int64(s.down.cap)
 		}
+		s.down.noted = s.down.returned
 	}
-	p := flowPaths[key]
-	if p == nil {
-		p = &flowPath{key: key, conns: map[*flowConn]flowPathConn{}}
-		flowPaths[key] = p
-	}
-	p.refs++
-	return p
-}
-
-// release drops c's reference to p and what it had in flight.
-func (p *flowPath) release(c *flowConn) {
-	p.mu.Lock()
-	delete(p.conns, c)
-	p.mu.Unlock()
-	flowPathsMu.Lock()
-	defer flowPathsMu.Unlock()
-	if p.refs--; p.refs == 0 {
-		p.idleAt = time.Now()
-	}
-}
-
-// sharedPath returns c's flowPath, looking it up the first time.
-func (c *flowConn) sharedPath() *flowPath {
-	if !c.pathSet {
-		c.pathSet = true
-		c.path = flowPathOf(c.Conn)
-	}
-	return c.path
-}
-
-// foreignQueue adds what c's downloads have in flight and the queue the
-// kernel reads now to its path's state, and reports whether the queue counts
-// as foreign now.
-func (c *flowConn) foreignQueue(now time.Time) bool {
-	if !c.kernelStats(now) {
-		return false
-	}
-	p := c.sharedPath()
-	if p == nil {
-		return false
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.floorAt.IsZero() || now.Sub(p.floorAt) >= flowPathKeep {
-		p.floor, p.floorAt = c.kstat.minRTT, now
-	}
-	p.floor = min(p.floor, c.kstat.minRTT)
-	st := c.kstat
-	st.minRTT = p.floor
-	// The bar leaves the jitter out, unlike pi's setpoint: a queue that
-	// other traffic keeps full swings the round trip by as much as it holds.
-	bar := 2 * max(st.minRTT/4, flowPIMinSet)
-	if p.conns == nil {
-		p.conns = map[*flowConn]flowPathConn{}
-	}
-	p.conns[c] = flowPathConn{max(0, c.downOpenSent-c.downOpenReturned), c.kstat.unacked, st.rtt - st.minRTT, now}
-	// The queue is the longest a connection has seen lately. Clients behind
-	// one address, as behind a carrier NAT, share the path without sharing
-	// a bottleneck: one with an empty path must not end another's verdict.
-	var in [2]int64
-	var queue time.Duration
-	for _, n := range p.conns {
-		in[0], in[1] = in[0]+n.inFlight, in[1]+n.inNet
-		if now.Sub(n.at) < flowPathFresh*st.rtt {
-			queue = max(queue, n.queue)
-		}
-	}
-	switch {
-	case !p.foreignAt.IsZero():
-		// As a verdict waits for the smoothed round trip, so does its end:
-		// other traffic in a sawtooth lets its queue dip for a moment.
-		switch {
-		case now.Sub(p.foreignAt) >= flowForeignRounds*st.rtt:
-			p.foreignAt, p.suspectAt = time.Time{}, time.Time{}
-		case queue > bar:
-			p.suspectAt = time.Time{}
-		case p.suspectAt.IsZero():
-			p.suspectAt = now
-		case now.Sub(p.suspectAt) >= flowSuspectRounds*st.rtt:
-			p.foreignAt, p.suspectAt = time.Time{}, time.Time{}
-		}
-	case queue <= bar:
-		p.cutQ = 0
-	case p.cutQ == 0:
-		p.cutQ, p.cutIn, p.suspectAt = queue, in, time.Time{}
-	default:
-		p.cutIn = [2]int64{max(p.cutIn[0], in[0]), max(p.cutIn[1], in[1])}
-		switch {
-		case in[0] > p.cutIn[0]/2 || in[1] > p.cutIn[1]/2 || queue <= p.cutQ*3/4:
-			p.suspectAt = time.Time{}
-		case p.suspectAt.IsZero():
-			p.suspectAt = now
-		case now.Sub(p.suspectAt) >= flowSuspectRounds*st.rtt:
-			p.foreignAt, p.cutQ, p.suspectAt = now, 0, time.Time{}
-		}
-	}
-	return !p.foreignAt.IsZero()
+	set := max(c.kstat.minRTT/4, 4*c.kstat.rttVar, flowPIMinSet)
+	return c.effect.note(now, c.kstat.rtt, c.kstat.minRTT, set, c.kstat.inFlight, caps)
 }
 
 // kernelStats refreshes the kernel's view of this TCP connection and reports
@@ -1103,11 +936,6 @@ func (c *flowConn) releaseLocked() {
 	c.wqueue = nil
 	clear(c.wcredit)
 	c.closed = true
-	if c.path != nil {
-		c.path.release(c)
-		c.path = nil
-	}
-	c.pathSet = true
 	if c.guard != nil {
 		c.guard.Stop()
 	}
@@ -1805,19 +1633,15 @@ func (r *flowReader) control(f h2Frame, header, payload, out []byte) []byte {
 		default:
 			q = c.queueing(now)
 		}
-		foreign := !c.client && !c.noQueueCuts && c.foreignQueue(now)
-		if foreign {
-			q = 0
-		}
 		switch {
 		case c.client && c.modelled(now) && s.down.settled():
 			s.down.model(now, c.currentRTT(), c.down.init, c.down.max)
-		case !c.client && !c.noQueueCuts && !foreign && c.incremental && s.down.flat >= flowFullRounds && c.modelled(now):
+		case !c.client && !c.noQueueCuts && c.incremental && s.down.flat >= flowFullRounds && c.modelled(now):
 			// Only clients that credit in small steps: one that waits for
 			// half of its own window could be held below that half. Only
 			// where the kernel sees the path: behind a TCP proxy it sees
 			// no queue at all.
-			s.down.pi(now, c.kstat, c.down.init, c.down.max)
+			s.down.pi(now, c.kstat, c.down.init, c.down.max, c.cutGain(now))
 		default:
 			s.down.adjust(now, c.currentRTT(), c.down.init, c.down.max, c.client || c.incremental, q > 0)
 		}
@@ -1831,7 +1655,7 @@ func (r *flowReader) control(f h2Frame, header, payload, out []byte) []byte {
 			}
 		case q == 2 && !c.noQueueCuts && now.Sub(s.down.qAt) >= c.currentRTT():
 			s.down.qAt = now
-			s.down.cap = max(c.down.init, s.down.cap/4*3)
+			s.down.cap = max(c.down.init, s.down.cap-int32(c.cutGain(now)*float64(s.down.cap/4)))
 		}
 		c.downLearned.note(now, c.down.init, s.down.cap)
 		rel := c.downRelease(s)
