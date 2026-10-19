@@ -696,6 +696,9 @@ EOF
 }
 
 footer() {
+  # Снимок env групп и правил нужен командам DNS на любой странице: домен
+  # убирается с роутера, только если его нет больше ни в одной группе.
+  [ -n "${RULES_ENV_SNAPSHOT_DONE:-}" ] || rules_env_snapshot
   cat <<'EOF'
     <div class="bottom-submit">
       <button class="primary command-trigger" type="button" onclick="generateCommands()">Сгенерировать команды MikroTik</button>
@@ -2366,6 +2369,7 @@ EOF
 # знала текущих GROUP и *_SUFFIX и собирала GROUP только из новой группы —
 # командой envs/add поверх уже существующей переменной.
 rules_env_snapshot() {
+  RULES_ENV_SNAPSHOT_DONE=1
   echo '<textarea id="rulesPreviewEnv" hidden>'
   for name in $(env_names '^(GROUP|RULES[0-9]+|RULE_SET[0-9]+_BASE64|[A-Z0-9_]+_(PRIORITY|GEOSITE|GEOIP|AS|DOMAIN|SUFFIX|IPCIDR|KEYWORD|SRCIPCIDR|DSCP|USE))='); do
     printf '%s=%s\n' "$name" "$(env_raw "$name" | h)"
@@ -2393,6 +2397,15 @@ quick_site_card() {
     <span class="quick-site-hint">Это черновик, как и любые правки в панели: на роутер он попадёт командами из «Команды MikroTik».</span>
   </div>
   <div class="quick-site-done" id="quickSiteDone"></div>
+  <div class="quick-site-recent" id="quickSiteRecent" hidden></div>
+  <details class="quick-site-ros">
+    <summary>Имена на роутере для команд DNS: <span id="quickSiteRosSummary">MihomoProxyRoS</span></summary>
+    <p class="quick-site-hint">Вместе с env панель генерирует <code>/ip dns static</code> (FWD) для доменов и <code>/ip firewall address-list</code> для IP групп. По умолчанию имена как в раскатке; если у вас свои — укажите их, они запомнятся.</p>
+    <div class="quick-site-ros-fields">
+      <label><span>forward-to (FWD)</span><input id="quickSiteFwd" placeholder="MihomoProxyRoS" autocomplete="off" spellcheck="false"></label>
+      <label><span>address-list</span><input id="quickSiteAddrList" placeholder="MihomoProxyRoS" autocomplete="off" spellcheck="false"></label>
+    </div>
+  </details>
 </div>
 EOF
 }

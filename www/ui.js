@@ -609,7 +609,10 @@ function collectPageCommands() {
     const cmd = commandFor(el.name, original, value, originalPresent);
     if (cmd) commands.push(cmd);
   });
-  return commands;
+  return commands.concat(routerCommandsFor([...seen].map((name) => {
+    const el = document.querySelector('#envForm [name="' + name + '"]');
+    return { name, original: Store.get(originalKey(name)) || "", value: el ? fieldValue(el) : "" };
+  })));
 }
 
 function collectAllCommands() {
@@ -625,7 +628,100 @@ function collectAllCommands() {
     const cmd = commandFor(name, original, value, originalPresent);
     if (cmd) commands.push(cmd);
   });
-  return commands;
+  return commands.concat(routerCommandsFor(names.map((name) => ({
+    name, original: Store.get(originalKey(name)) || "", value: Store.get(envKey(name)) || "",
+  }))));
+}
+
+// ---- Команды для самого роутера: /ip dns static и address-list ----
+// Домены групп (*_SUFFIX, *_DOMAIN) и правил RULES, которые не идут в DIRECT,
+// роутер должен отправлять в mihomo: для них нужна запись FWD с address-list,
+// как в раскатке. IP групп (*_IPCIDR) попадают в address-list напрямую.
+// Команды считаются по разнице env «было → стало», а не по логу: домен
+// убирается с роутера, только если его больше нет ни в одной группе и правиле.
+const RouterNames = {
+  fwd: "MihomoProxyRoS",
+  list: "MihomoProxyRoS",
+  loaded: false,
+  async load() {
+    if (this.loaded) return;
+    this.loaded = true;
+    try {
+      const data = await (await fetch("/cgi-bin/panel-data?name=routeros", { cache: "no-store" })).json();
+      if (data && typeof data.fwd === "string" && data.fwd.trim()) this.fwd = data.fwd.trim();
+      if (data && typeof data.list === "string" && data.list.trim()) this.list = data.list.trim();
+    } catch (e) { /* без файла остаются имена раскатки */ }
+  },
+  save() {
+    fetch("/cgi-bin/panel-data?name=routeros", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Requested-With": "mihomo-ui" },
+      body: JSON.stringify({ fwd: this.fwd, list: this.list }),
+    }).catch(() => {});
+  },
+};
+
+function routerItemsOf(env) {
+  // name → { domains: Map(domain → {exact, group}), ips: Map(cidr → group) } по всем
+  // группам из GROUP и правилам RULES*, кроме DIRECT.
+  const domains = new Map();
+  const ips = new Map();
+  const groups = String(env.get("GROUP") || "").split(",").map((g) => g.trim()).filter(Boolean);
+  groups.forEach((g) => {
+    const prefix = groupEnvPrefix(g);
+    splitList(env.get(prefix + "_SUFFIX")).forEach((d) => { if (!domains.has(d)) domains.set(d, { exact: false, group: g }); });
+    splitList(env.get(prefix + "_DOMAIN")).forEach((d) => { if (!domains.has(d)) domains.set(d, { exact: true, group: g }); });
+    splitList(env.get(prefix + "_IPCIDR")).forEach((ip) => { if (!ips.has(ip)) ips.set(ip, g); });
+  });
+  for (const [name, value] of env) {
+    if (!/^RULES[0-9]+$/.test(name)) continue;
+    String(value || "").split(";").forEach((line) => {
+      const parts = line.split(",").map((p) => p.trim());
+      if (parts.length < 3 || /^DIRECT$/i.test(parts[2])) return;
+      const type = parts[0].toUpperCase();
+      if (type === "DOMAIN-SUFFIX" && !domains.has(parts[1])) domains.set(parts[1], { exact: false, group: parts[2] });
+      else if (type === "DOMAIN" && !domains.has(parts[1])) domains.set(parts[1], { exact: true, group: parts[2] });
+      else if (type === "IP-CIDR" && !ips.has(parts[1])) ips.set(parts[1], parts[2]);
+    });
+  }
+  return { domains, ips };
+}
+
+function routerCommandsFor(pairs) {
+  const changed = pairs.filter((p) => p.name === "GROUP" || /^RULES[0-9]+$/.test(p.name) || /_(SUFFIX|DOMAIN|IPCIDR)$/.test(p.name));
+  if (!changed.length) return [];
+  const now = previewEnvMap();
+  const was = new Map(now);
+  changed.forEach((p) => {
+    now.set(p.name, p.value);
+    if (p.original === "" && !originalWasPresent(p.name)) was.delete(p.name); else was.set(p.name, p.original);
+  });
+  const a = routerItemsOf(was);
+  const b = routerItemsOf(now);
+  const q = (s) => '"' + String(s).replace(/(["\\$])/g, "\\$1") + '"';
+  const fwd = q(RouterNames.fwd);
+  const list = q(RouterNames.list);
+  const addr = (ip) => ip.replace(/\/32$/, "");
+  const out = [];
+  for (const [d, info] of b.domains) {
+    if (a.domains.has(d)) continue;
+    out.push(":if ([:len [/ip dns static find name=" + q(d) + " type=FWD]] = 0) do={/ip dns static add name=" + q(d) +
+      " type=FWD forward-to=" + fwd + " address-list=" + list + (info.exact ? "" : " match-subdomain=yes") + " comment=" + q(info.group) + "}");
+  }
+  for (const d of a.domains.keys()) {
+    if (!b.domains.has(d)) out.push("/ip dns static remove [find name=" + q(d) + " type=FWD forward-to=" + fwd + "]");
+  }
+  for (const [ip, group] of b.ips) {
+    if (a.ips.has(ip)) continue;
+    out.push(":if ([:len [/ip firewall address-list find list=" + list + " address=" + q(addr(ip)) + "]] = 0) do={/ip firewall address-list add list=" +
+      list + " address=" + q(addr(ip)) + " comment=" + q(group) + "}");
+  }
+  for (const ip of a.ips.keys()) {
+    if (!b.ips.has(ip)) out.push("/ip firewall address-list remove [find list=" + list + " address=" + q(addr(ip)) + "]");
+  }
+  // Каждая команда в :do {} on-error={}: при вставке скриптом одна ошибка
+  // (имя уже занято, другая запись с тем же именем) не остановит остальные.
+  return out.length ? ["", "# DNS и address-list роутера (forward-to=" + RouterNames.fwd + ", address-list=" + RouterNames.list + ")"]
+    .concat(out.map((c) => ":do {" + c + "} on-error={}")) : [];
 }
 
 function formatCommands(title, commands) {
@@ -737,6 +833,35 @@ function renderChangesList() {
   box.innerHTML = '<p class="changes-summary">' + summary + "</p><ul class=\"changes\">" + rows + "</ul>" + filesHtml;
 }
 
+function quickSiteRosInit() {
+  const fwd = document.getElementById("quickSiteFwd");
+  const list = document.getElementById("quickSiteAddrList");
+  const summary = document.getElementById("quickSiteRosSummary");
+  const show = () => {
+    if (fwd) fwd.value = RouterNames.fwd === "MihomoProxyRoS" ? "" : RouterNames.fwd;
+    if (list) list.value = RouterNames.list === "MihomoProxyRoS" ? "" : RouterNames.list;
+    if (summary) summary.textContent = RouterNames.fwd === RouterNames.list ? RouterNames.fwd : RouterNames.fwd + " / " + RouterNames.list;
+  };
+  RouterNames.load().then(show);
+  QuickRecent.load().then(quickRecentRender);
+  const onChange = () => {
+    RouterNames.fwd = (fwd?.value || "").trim() || "MihomoProxyRoS";
+    RouterNames.list = (list?.value || "").trim() || "MihomoProxyRoS";
+    RouterNames.save();
+    show();
+  };
+  fwd?.addEventListener("change", onChange);
+  list?.addEventListener("change", onChange);
+  document.getElementById("quickSiteRecent")?.addEventListener("click", (e) => {
+    const li = e.target.closest("li[data-i]");
+    if (!li) return;
+    const entry = QuickRecent.items.slice().reverse()[Number(li.dataset.i)];
+    if (!entry) return;
+    if (e.target.closest(".quick-site-recent-del")) quickRecentDelete(entry);
+    else if (e.target.closest(".quick-site-recent-forget")) { QuickRecent.drop(entry); quickRecentRender(); }
+  });
+}
+
 async function generateCommands() {
   if (!commandUiAllowed()) {
     updateCommandVisibility();
@@ -748,6 +873,7 @@ async function generateCommands() {
   Store.set("mihomo-command-env-list", getEnvListName());
   await refreshOriginalsFromServer(currentCommandNames());
   await LiveFiles.loadAll().catch(() => null);
+  await RouterNames.load();
   const pageCommands = collectPageCommands();
   const allCommands = collectAllCommands();
   const pageText = formatCommands("Команды для текущей страницы", pageCommands);
@@ -5775,17 +5901,102 @@ function quickSiteNextRules(map) {
 function quickSiteAddRulesRow(value) {
   const wrap = document.getElementById("rules");
   if (!wrap || typeof addRow !== "function") {
-    quickSiteSetEnv(quickSiteNextRules(), value);
-    return;
+    const name = quickSiteNextRules();
+    quickSiteSetEnv(name, value);
+    return name;
   }
   const before = new Set([...wrap.querySelectorAll("[data-index]")].map((r) => r.dataset.index));
   addRow("rules", "RULES", true);
   const row = [...wrap.querySelectorAll("[data-index]")].find((r) => !before.has(r.dataset.index));
   const input = row?.querySelector("input[name]");
-  if (!input) return;
+  if (!input) return "";
   input.value = value;
   input.dispatchEvent(new Event("input", { bubbles: true }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
+  return input.name;
+}
+
+// «Недавно добавленные» через карточку. Лог лежит в /dev/shm на сервере
+// (/cgi-bin/panel-data?name=recent): виден с любого устройства, сбрасывается
+// рестартом контейнера, флешку не трогает. Кнопка «Удалить» сверяется с
+// актуальными env, а не с логом: что уже убрали, удалять не предлагается.
+const QuickRecent = {
+  items: [],
+  loaded: false,
+  async load() {
+    if (this.loaded) return;
+    this.loaded = true;
+    try {
+      const data = await (await fetch("/cgi-bin/panel-data?name=recent", { cache: "no-store" })).json();
+      if (Array.isArray(data)) this.items = data.slice(-50);
+    } catch (e) { /* пусто */ }
+  },
+  save() {
+    fetch("/cgi-bin/panel-data?name=recent", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Requested-With": "mihomo-ui" },
+      body: JSON.stringify(this.items.slice(-50)),
+    }).catch(() => {});
+  },
+  add(entry) {
+    this.items = this.items.filter((it) => !(it.value === entry.value && it.env === entry.env));
+    this.items.push(Object.assign({ at: Date.now() }, entry));
+    this.items = this.items.slice(-50);
+    this.save();
+  },
+  drop(entry) {
+    this.items = this.items.filter((it) => it !== entry);
+    this.save();
+  },
+};
+
+function quickRecentPresent(entry, env) {
+  if (entry.kind === "special") return String(env.get(entry.env) || "") === entry.rule;
+  return splitList(env.get(entry.env)).includes(entry.value);
+}
+
+function quickRecentRender() {
+  const box = document.getElementById("quickSiteRecent");
+  if (!box) return;
+  const env = quickSiteEnvMap();
+  const items = QuickRecent.items.slice().reverse();
+  box.hidden = !items.length;
+  if (!items.length) { box.innerHTML = ""; return; }
+  const time = (ms) => { const d = new Date(ms); return d.toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); };
+  box.innerHTML = "<b>Недавно добавленные</b><ul>" + items.map((it, i) => {
+    const present = quickRecentPresent(it, env);
+    return '<li data-i="' + i + '"><code>' + escapeAttr(it.value) + "</code> → " + escapeAttr(it.target) +
+      ' <span class="quick-site-recent-env">' + escapeAttr(it.env) + " · " + time(it.at) + "</span> " +
+      (present ? '<button type="button" class="ghost quick-site-recent-del">Удалить</button>'
+               : '<span class="quick-site-recent-gone">нет в env</span> <button type="button" class="ghost quick-site-recent-forget" title="Убрать из списка">✕</button>') +
+      "</li>";
+  }).join("") + "</ul>";
+}
+
+function quickRecentDelete(entry) {
+  const env = quickSiteEnvMap();
+  if (!quickRecentPresent(entry, env)) { quickRecentRender(); return; }
+  if (entry.kind === "special") {
+    quickSiteSetEnv(entry.env, "");
+  } else {
+    const rest = splitList(env.get(entry.env)).filter((v) => v !== entry.value);
+    quickSiteSetEnv(entry.env, rest.join(","));
+    // Группа, которую создала сама карточка и в которой ничего не осталось,
+    // уходит целиком: из GROUP и вместе с её _USE.
+    if (entry.created && !rest.length) {
+      const prefix = groupEnvPrefix(entry.target);
+      const others = ["_SUFFIX", "_DOMAIN", "_IPCIDR"].filter((s) => prefix + s !== entry.env && splitList(env.get(prefix + s)).length);
+      if (!others.length) {
+        const groups = String(env.get("GROUP") || "").split(",").map((s) => s.trim()).filter((g) => g && g !== entry.target);
+        quickSiteSetEnv("GROUP", groups.join(","));
+        quickSiteSetEnv(prefix + "_USE", "");
+      }
+    }
+  }
+  QuickRecent.drop(entry);
+  quickSiteRender();
+  quickRecentRender();
+  if (typeof renderRulesPreview === "function") renderRulesPreview();
+  if (typeof refreshAllBadges === "function") refreshAllBadges();
 }
 
 function quickSiteAdd() {
@@ -5804,9 +6015,12 @@ function quickSiteAdd() {
     if (cur.includes(target.value)) return;
     cur.push(target.value);
     quickSiteSetEnv(prefix + "_" + target.env, cur.join(","));
+    QuickRecent.add({ kind: "group", value: target.value, env: prefix + "_" + target.env, target: name });
     note = target.value + " → группа " + name + " (" + prefix + "_" + target.env + ")";
   } else if (kind === "special") {
-    quickSiteAddRulesRow(target.rule + "," + name + target.ruleTail);
+    const rule = target.rule + "," + name + target.ruleTail;
+    const rulesName = quickSiteAddRulesRow(rule);
+    if (rulesName) QuickRecent.add({ kind: "special", value: target.value, env: rulesName, target: name, rule });
     note = target.value + " → " + name;
   } else {
     const taken = new Set(quickSiteTargets().groups);
@@ -5816,6 +6030,7 @@ function quickSiteAdd() {
     quickSiteSetEnv("GROUP", groups.join(","));
     quickSiteSetEnv(g + "_USE", name);
     quickSiteSetEnv(g + "_" + target.env, target.value);
+    QuickRecent.add({ kind: "provider", value: target.value, env: g + "_" + target.env, target: g, created: true });
     note = target.value + " → новая группа " + g + " на провайдере " + name;
   }
   if (input) input.value = "";
@@ -5825,6 +6040,7 @@ function quickSiteAdd() {
     done.appendChild(line);
   }
   quickSiteRender();
+  quickRecentRender();
   if (typeof renderRulesPreview === "function") renderRulesPreview();
   if (typeof refreshAllBadges === "function") refreshAllBadges();
 }
@@ -5841,6 +6057,7 @@ function quickSiteInit() {
   }
   box.dataset.quickSiteWired = "true";
   quickSiteRender();
+  quickSiteRosInit();
   box.addEventListener("click", (e) => {
     const chip = e.target.closest(".chip");
     if (!chip) return;

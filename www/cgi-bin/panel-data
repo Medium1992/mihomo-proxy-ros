@@ -1,0 +1,52 @@
+#!/bin/sh
+# /cgi-bin/panel-data?name=… — небольшие данные панели, которые не являются env.
+#   routeros — имена forward-to и address-list для команд /ip dns static и
+#              /ip firewall address-list. Пишется на диск в конфиг-каталог, но
+#              только когда человек их меняет, так что флешку это не трёт.
+#   recent   — что недавно добавляли через «Добавить сайт». Лежит в /dev/shm:
+#              переживает закрытие браузера, сбрасывается рестартом контейнера,
+#              на флешку не пишется.
+#   GET  → содержимое (или {} / [] если пусто)
+#   POST → перезаписать телом запроса (JSON, до 64 КБ)
+
+case "$QUERY_STRING" in
+  *name=routeros*) FILE=/root/.config/mihomo/panel-routeros.json; EMPTY='{}' ;;
+  *name=recent*)   FILE=/dev/shm/mihomo-ui/recent.json; EMPTY='[]' ;;
+  *)
+    echo "Content-Type: application/json; charset=utf-8"; echo ""
+    printf '{"ok":false,"error":"unknown name"}\n'
+    exit 0 ;;
+esac
+MAX_BYTES=65536
+
+if [ "$REQUEST_METHOD" = "POST" ]; then
+  echo "Content-Type: application/json; charset=utf-8"; echo ""
+  . /www/cgi-bin/_guard.sh
+  csrf_guard_json
+  case "$CONTENT_LENGTH" in
+    ''|*[!0-9]*) CONTENT_LENGTH=0 ;;
+  esac
+  if [ "$CONTENT_LENGTH" -gt "$MAX_BYTES" ]; then
+    printf '{"ok":false,"error":"body too large"}\n'
+    exit 0
+  fi
+  mkdir -p "$(dirname "$FILE")" 2>/dev/null
+  ( umask 077; head -c "$CONTENT_LENGTH" > "$FILE.tmp" )
+  # Тот же текст — не трогаем файл: для routeros это лишняя запись на флешку.
+  if [ -f "$FILE" ] && cmp -s "$FILE" "$FILE.tmp"; then
+    rm -f "$FILE.tmp"
+  else
+    mv -f "$FILE.tmp" "$FILE"
+  fi
+  printf '{"ok":true}\n'
+  exit 0
+fi
+
+echo "Content-Type: application/json; charset=utf-8"
+echo "Cache-Control: no-store"
+echo ""
+if [ -s "$FILE" ]; then
+  cat "$FILE"
+else
+  printf '%s\n' "$EMPTY"
+fi
