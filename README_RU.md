@@ -476,6 +476,16 @@ $s
 
 …и сам настроит конфиг роутера, mangle + маршрутизацию, установку контейнера и стартовый пул доменов.
 
+### Удаление
+
+Сниппет ниже спросит подтверждение и уберёт всё, что добавили раскатка и её скрипты обновления: контейнер, его env и маунты, veth, маршруты и таблицу маршрутизации, правила mangle, записи DNS FWD, адрес-листы, скрипты и расписания. Папки с вашими конфигами удалит только после отдельного вопроса. Общие настройки роутера (IPv6, настройки DNS и NTP, DoH-форвардеры) остаются как есть.
+
+```routeros
+:global r [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/installer/uninstall.rsc mode=https output=user as-value]
+:if (($r->"status")="finished") do={:global s [:parse ($r->"data")]; $s}
+/system/script/environment/remove [find where name="r" or name="s"]
+```
+
 После установки тонкая донастройка — либо через **веб-панель на `:80`**, либо через вспомогательные репозитории:
 
 - [DNS_FWD](https://github.com/Medium1992/MikroTik_DNS_FWD) — управление DNS forwarding

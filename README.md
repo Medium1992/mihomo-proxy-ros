@@ -476,6 +476,16 @@ During execution the script asks for:
 
 …then sets up router config, mangle + routing, container install, and the initial domain pool.
 
+### Uninstall
+
+The snippet below asks for confirmation and removes what the installer and its update scripts added: the container, its envs and mounts, the veth, routes and routing table, mangle rules, DNS FWD entries, address lists, scripts and schedulers. It asks separately before deleting the folders with your configs. Router-wide settings (IPv6, DNS and NTP settings, the DoH forwarders) are left as they are.
+
+```routeros
+:global r [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/installer/uninstall.rsc mode=https output=user as-value]
+:if (($r->"status")="finished") do={:global s [:parse ($r->"data")]; $s}
+/system/script/environment/remove [find where name="r" or name="s"]
+```
+
 After install, fine-tune everything either via the **WebUI on `:80`** or via the existing helper repos:
 
 - [DNS_FWD](https://github.com/Medium1992/MikroTik_DNS_FWD) — DNS forwarding management
