@@ -474,6 +474,7 @@ During execution the script asks for:
 - what to do: `1) install`, `2) remove`, `3) quit`
 - one proxy URL (`vless://`, `vmess://`, `ss://`, `trojan://`)
 - optional subscription URL (`http(s)://...`)
+- whether to add the `Apple` group (`yes` / `no`): Apple domains and addresses go through the proxy, both in mihomo (`APPLE_GEOSITE`, `APPLE_GEOIP`) and on the router (DNS FWD and the address list)
 
 …then sets up router config, mangle + routing, container install, and the initial domain pool.
 

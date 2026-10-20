@@ -4,6 +4,7 @@
 :global MPRpathPull
 :global MPRlink
 :global MPRsublink
+:global MPRapple
 :local freespace [/system/resource/get free-hdd-space]
 :if ($freespace<80914560 and ([:len [/container/find comment="MihomoProxyRoS"]] = 0) and ([:len [[/disk/find where fs=ext4 free>80914560]]] = 0)) do={
 :put "Low free space on storage(s), script exit"
@@ -91,4 +92,11 @@ foreach i in=$slotArray do={
 :if ([:len $MPRsublink] = 0) do={
 :set MPRsublink $defaultSUBLINK
 }
+
+:local appleAnswer ""
+:while ($appleAnswer != "yes" and $appleAnswer != "no") do={
+:put "Add the Apple group, so that all Apple resources go through the proxy? yes/no"
+:set appleAnswer [/terminal ask]
+}
+:set MPRapple ($appleAnswer = "yes")
 }

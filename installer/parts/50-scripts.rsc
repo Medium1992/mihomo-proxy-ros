@@ -1,4 +1,5 @@
 # Update scripts for DNS FWD and IP lists, their first run, schedulers.
+:global MPRapple
 :if ([:len [/system/script/find name="IP_MihomoProxyRoS"]] = 0) do={
 /system script
 add name=IP_MihomoProxyRoS source="# Define global variables\r\
@@ -246,6 +247,37 @@ add name=route_UP source=\
     \n/ip/route/set [find where comment=\$i disabled=yes] disabled=no\
     \n}"
 :put "Add script route_UP"}
+
+# Apple: the update scripts are only created when missing, so the resource
+# goes into the first resource list of whatever script is there, new or old.
+:local appleAdded false
+:if ($MPRapple) do={
+:foreach p in={{"FWD_update";"apple"};{"IP_MihomoProxyRoS";"geoipv4/apple"}} do={
+:local sname ($p->0)
+:local res ("\"" . ($p->1) . "\";")
+:local sid [/system/script/find where name=$sname]
+:if ([:len $sid] > 0) do={
+:local src [/system/script/get $sid source]
+:local anchor ":local resources {"
+:local at [:find $src $anchor]
+:if ([:typeof [:find $src $res]] = "nil" and [:typeof $at] = "num") do={
+:set at ($at + [:len $anchor])
+/system/script/set $sid source=([:pick $src 0 $at] . "
+" . $res . [:pick $src $at [:len $src]])
+:set appleAdded true
+:put ("Add " . ($p->1) . " to script " . $sname)
+}
+}
+}
+}
+# an existing install: pull the Apple entries now instead of at 06:30
+:if ($appleAdded and [:len [/system/scheduler/find comment="MihomoProxyRoS"]] > 0) do={
+:do {
+:put "Run scripts FWD_update and IP_MihomoProxyRoS for Apple, pls wait"
+/system/script/run FWD_update
+/system/script/run IP_MihomoProxyRoS
+} on-error {}
+}
 
 :if ([:len [/system/scheduler/find comment="MihomoProxyRoS"]] = 0) do={
 :do {

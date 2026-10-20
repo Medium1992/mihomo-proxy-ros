@@ -2,6 +2,7 @@
 :global MPRminor
 :global MPRlink
 :global MPRsublink
+:global MPRapple
 /container/envs
 :do {add key=FAKE_IP_RANGE list=MihomoProxyRoS value=198.18.0.0/15
 :put "Add env FAKE_IP_RANGE value: 198.18.0.0/15"} on-error {}
@@ -23,8 +24,26 @@
 :do {add key=ZAPRET2_CMD list=MihomoProxyRoS value=""
 :put "Add env ZAPRET2_CMD"} on-error {}
 }
-:do { add key=GROUP list=MihomoProxyRoS value=YouTube,Telegram,Discord,META,SuperCell,AI,Twitch
-:put "Add env GROUP value: YouTube,Telegram,Discord,META,SuperCell,AI,Twitch"} on-error {}
+:local groups "YouTube,Telegram,Discord,META,SuperCell,AI,Twitch"
+:if ($MPRapple) do={:set groups ($groups . ",Apple")}
+:do { add key=GROUP list=MihomoProxyRoS value=$groups
+:put "Add env GROUP value: $groups"} on-error {
+# GROUP is already there: keep it as the operator left it, only add Apple
+:if ($MPRapple) do={
+:local cur [get [find where key=GROUP and list=MihomoProxyRoS] value]
+:if ([:typeof [:find ("," . $cur . ",") ",Apple,"]] = "nil") do={
+:if ([:len $cur] > 0) do={:set cur ($cur . ",Apple")} else={:set cur "Apple"}
+set [find where key=GROUP and list=MihomoProxyRoS] value=$cur
+:put "Add Apple to env GROUP: $cur"
+}
+}
+}
+:if ($MPRapple) do={
+:do { add key=APPLE_GEOSITE list=MihomoProxyRoS value=apple
+:put "Add env APPLE_GEOSITE value: apple"} on-error {}
+:do { add key=APPLE_GEOIP list=MihomoProxyRoS value="https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo-lite/geoip/apple.mrs"
+:put "Add env APPLE_GEOIP value: geo-lite geoip apple.mrs"} on-error {}
+}
 :do { add key=YOUTUBE_GEOSITE list=MihomoProxyRoS value=youtube
 :put "Add env YOUTUBE_GEOSITE value: youtube"} on-error {}
 :do { add key=TELEGRAM_GEOSITE list=MihomoProxyRoS value=telegram
