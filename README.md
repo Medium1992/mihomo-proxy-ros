@@ -471,7 +471,7 @@ $s
 
 During execution the script asks for:
 
-- what to do: `1) install or update`, `2) remove`, `3) quit`
+- what to do: `1) install`, `2) remove`, `3) quit`
 - one proxy URL (`vless://`, `vmess://`, `ss://`, `trojan://`)
 - optional subscription URL (`http(s)://...`)
 

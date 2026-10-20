@@ -39,7 +39,7 @@
 :local choice ""
 :while ($choice != "1" and $choice != "2" and $choice != "3") do={
 :put "MihomoProxyRoS, RouterOS 7.$MPRminor"
-:put " 1) install or update"
+:put " 1) install"
 :put " 2) remove"
 :put " 3) quit"
 :set choice [/terminal ask]
