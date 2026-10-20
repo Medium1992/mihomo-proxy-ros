@@ -471,6 +471,7 @@ $s
 
 During execution the script asks for:
 
+- what to do: `1) install or update`, `2) remove`, `3) quit`
 - one proxy URL (`vless://`, `vmess://`, `ss://`, `trojan://`)
 - optional subscription URL (`http(s)://...`)
 
@@ -478,13 +479,7 @@ During execution the script asks for:
 
 ### Uninstall
 
-The snippet below asks for confirmation and removes what the installer and its update scripts added: the container, its envs and mounts, the veth, routes and routing table, mangle rules, DNS FWD entries, address lists, scripts and schedulers. It asks separately before deleting the folders with your configs. Router-wide settings (IPv6, DNS and NTP settings, the DoH forwarders) are left as they are.
-
-```routeros
-:global r [/tool fetch url=https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/installer/uninstall.rsc mode=https output=user as-value]
-:if (($r->"status")="finished") do={:global s [:parse ($r->"data")]; $s}
-/system/script/environment/remove [find where name="r" or name="s"]
-```
+Run the install snippet above and choose `2) remove`. It asks for confirmation and removes what the installer and its update scripts added: the container, its envs and mounts, the veth, routes and routing table, mangle rules, DNS FWD entries, address lists, scripts and schedulers. It asks separately before deleting the folders with your configs. Router-wide settings (IPv6, DNS and NTP settings, the DoH forwarders) are left as they are.
 
 After install, fine-tune everything either via the **WebUI on `:80`** or via the existing helper repos:
 

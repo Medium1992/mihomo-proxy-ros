@@ -9,10 +9,6 @@
 :put "Low free space on storage(s), script exit"
 :set MPRstop true
 } else={
-:local start
-:put "Script loaded, press Enter to start"
-:set start [/terminal ask]
-:put "Starting script"
 # defconf turns on auto-smb-sharing: without this the ContainerTemp disk below
 # would show up on the network as an SMB share.
 :do {/disk/settings/set auto-smb-sharing=no auto-media-sharing=no auto-media-interface=none} on-error={}

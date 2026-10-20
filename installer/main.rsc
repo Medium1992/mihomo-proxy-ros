@@ -1,13 +1,14 @@
-# MihomoProxyRoS installer.
-# Fetches every part into RAM, checks all of them and only then runs them:
-# a part that fails to download, or that RouterOS rejects, stops the install
-# before anything on the router is touched. Nothing is written to the disk.
+# MihomoProxyRoS installer: asks whether to install or remove.
+# Fetches every part of the chosen action into RAM, checks all of them and
+# only then runs them: a part that fails to download, or that RouterOS
+# rejects, stops before anything on the router is touched. Nothing is
+# written to the disk.
 #
 # One line per part: {from RouterOS 7.x; to 7.x; file under installer/}.
 # A command that exists only on some versions (unknown commands and values
 # reject the whole script) goes to its own part here, or into a string that a
 # shared part :parse-s at run time only on the versions that have it.
-:local parts {
+:local installParts {
 {20;99;"parts/00-start.rsc"};
 {20;99;"parts/10-network.rsc"};
 {21;99;"parts/20-whatsapp.rsc"};
@@ -17,6 +18,9 @@
 {20;20;"parts/60-container-720.rsc"};
 {21;99;"parts/60-container.rsc"};
 {20;99;"parts/90-finish.rsc"};
+}
+:local removeParts {
+{20;99;"uninstall.rsc"};
 }
 :local base "https://raw.githubusercontent.com/Medium1992/mihomo-proxy-ros/refs/heads/main/installer/"
 
@@ -28,6 +32,21 @@
 :if ([:typeof $MPRminor] != "num" or $MPRminor < 20) do={
 :put "RouterOS $ver is not supported, update to at least RouterOS 7.20"
 :set MPRstop true
+}
+
+:local parts [:toarray ""]
+:if (!$MPRstop) do={
+:local choice ""
+:while ($choice != "1" and $choice != "2" and $choice != "3") do={
+:put "MihomoProxyRoS, RouterOS 7.$MPRminor"
+:put " 1) install or update"
+:put " 2) remove"
+:put " 3) quit"
+:set choice [/terminal ask]
+}
+:if ($choice = "1") do={:set parts $installParts}
+:if ($choice = "2") do={:set parts $removeParts}
+:if ($choice = "3") do={:set MPRstop true}
 }
 
 # 1. download
@@ -83,7 +102,7 @@ $s
 
 # 3. run the parts in order, each as its own script
 :if (!$MPRstop) do={
-:put "Installer ready: $[:len $codes] parts for RouterOS 7.$MPRminor"
+:put "Ready: $[:len $codes] part(s) for RouterOS 7.$MPRminor"
 :foreach i,data in=$codes do={
 :if (!$MPRstop) do={
 :onerror e in={
