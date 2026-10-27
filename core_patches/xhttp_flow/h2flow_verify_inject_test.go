@@ -57,7 +57,7 @@ func TestFlowInjectedWriteFailureIsTerminal(t *testing.T) {
 	}
 }
 
-// TestFlowInjectedWriteFailureTearsStream (added for bdbac60e) shows what the
+// TestFlowInjectedWriteFailureTearsStream shows what the
 // client reads after a short write of the governor's own frames. The torn
 // half is already on the wire, so the client sees the connection end inside a
 // frame, as with a stock stack whose socket fails mid-write; nothing the

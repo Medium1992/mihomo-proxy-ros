@@ -43,7 +43,7 @@ func (o *H2FlowOptions) governed() bool {
 	if o != nil && o.Enabled != nil {
 		return *o.Enabled
 	}
-	return flowEnabled
+	return flowEnabled.Load()
 }
 
 func h2FlowReceiveWindow(v int, name string) int {

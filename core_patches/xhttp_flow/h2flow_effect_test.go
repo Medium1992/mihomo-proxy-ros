@@ -128,7 +128,7 @@ func TestFlowPIGainHolds(t *testing.T) {
 	}{{1, true}, {0, false}} {
 		w := flowWindow{cap: 1 << 20, mark: time.Now(), piRTT: 250 * time.Millisecond}
 		w.returned = 1 << 20
-		w.pi(w.mark.Add(st.rtt), st, h2InitWindow, 1<<30, tc.gain)
+		w.pi(w.mark.Add(st.rtt), st, h2InitWindow, 1<<30, tc.gain, 0)
 		if got := w.cap < 1<<20; got != tc.cut {
 			t.Fatalf("gain %v: cap %d from %d", tc.gain, w.cap, 1<<20)
 		}
@@ -145,7 +145,7 @@ func TestFlowPIFollowsOnlyABindingCap(t *testing.T) {
 	st := tcpStats{rtt: 300 * time.Millisecond, minRTT: 100 * time.Millisecond}
 	w := flowWindow{cap: 4 << 20, mark: time.Now(), piRTT: 250 * time.Millisecond}
 	w.returned = 1 << 20
-	w.pi(w.mark.Add(st.rtt), st, h2InitWindow, 1<<30, 0)
+	w.pi(w.mark.Add(st.rtt), st, h2InitWindow, 1<<30, 0, 0)
 	if w.cap > 4<<20 {
 		t.Fatalf("cap %d grew over the %d the reader is held under", w.cap, 4<<20)
 	}
@@ -171,7 +171,7 @@ func TestFlowPIReaderBesideQueue(t *testing.T) {
 	w := flowWindow{cap: 4 << 20, mark: time.Now()}
 	for range 2 * flowShrinkAfter {
 		w.returned += int64(w.cap) * int64(st.minRTT) / int64(st.rtt)
-		w.pi(w.mark.Add(st.minRTT), st, h2InitWindow, 1<<30, 0)
+		w.pi(w.mark.Add(st.minRTT), st, h2InitWindow, 1<<30, 0, 0)
 	}
 	if w.cap < 4<<20 {
 		t.Fatalf("cap %d, from %d, for a reader that takes all it is given", w.cap, 4<<20)
@@ -194,7 +194,9 @@ func TestFlowEffectCountsDownloadsOnly(t *testing.T) {
 	// The download is cut by a third and takes data; the queue stands.
 	down.down.cap, down.down.returned = 700<<10, 2
 	c.kstat.inFlight = 700 << 10
+	t.Logf("before the cut: %+v", c.effect)
 	c.effect.cutBy(300 << 10)
+	t.Logf("after the cut: %+v", c.effect)
 	if g := c.cutGain(now.Add(time.Second)); g != 0 {
 		t.Fatalf("gain %v for a download cut against a queue that did not move", g)
 	}
@@ -207,28 +209,37 @@ func TestFlowPIFollowsOneStep(t *testing.T) {
 	st := tcpStats{rtt: time.Second, minRTT: 100 * time.Millisecond}
 	w := flowWindow{cap: 1 << 20, mark: time.Now(), piRTT: 100 * time.Millisecond}
 	w.returned = 1 << 20
-	w.pi(w.mark.Add(st.minRTT), st, h2InitWindow, 1<<30, 0)
+	w.pi(w.mark.Add(st.minRTT), st, h2InitWindow, 1<<30, 0, 0)
 	if float64(w.cap) > float64(1<<20)*(1+flowPIMaxStep) {
 		t.Fatalf("cap %d from %d in one step", w.cap, 1<<20)
 	}
 }
 
-// TestFlowEffectCountsSlowDownload is a download that returns no credit in a
-// round, as one beside a long queue does: its cap stays in the sum, so that
-// the round reads as no cut.
+// TestFlowEffectCountsSlowDownload has two downloads beside a queue that does
+// not move, one of which returns no credit in the round before a cut, as one
+// beside a long queue does. Its cap stays in the sum: the cut of 300 KiB is
+// under a fifth of the 2 MiB of caps, not judged yet, and the gain stays 1.
+// Taken out of the sum, the same cut is three tenths of 1 MiB, judged against
+// a queue that stood, and the gain falls to none.
 func TestFlowEffectCountsSlowDownload(t *testing.T) {
-	down := &flowStream{}
-	down.down.cap = 1 << 20
-	c := &flowConn{streams: map[uint32]*flowStream{1: down}, kOK: true}
+	fast, slow := &flowStream{}, &flowStream{}
+	fast.down.cap, slow.down.cap = 1<<20, 1<<20
+	c := &flowConn{streams: map[uint32]*flowStream{1: fast, 3: slow}, kOK: true}
 	c.kstat = tcpStats{rtt: 300 * time.Millisecond, minRTT: 100 * time.Millisecond, inFlight: 1 << 20}
 	now := time.Now()
-	down.down.returned = 1
+	fast.down.returned, slow.down.returned = 1, 1
 	c.cutGain(now)
-	// A round with no credit from the download, and what is in flight down
-	// as TCP loses a little; the queue stands.
+	// The slow download returns nothing in the next round.
+	now = now.Add(200 * time.Millisecond)
+	fast.down.returned = 2
+	c.cutGain(now)
+	c.effect.cutBy(300 << 10)
+	// The cut lands: what is in flight falls three tenths; the queue stands.
+	now = now.Add(200 * time.Millisecond)
+	fast.down.returned = 3
 	c.kstat.inFlight = 700 << 10
-	if g := c.cutGain(now.Add(200 * time.Millisecond)); g != 1 {
-		t.Fatalf("gain %v after a round the download returned nothing in", g)
+	if g := c.cutGain(now); g != 1 {
+		t.Fatalf("gain %v: the slow download's cap left the sum, and a cut under a fifth of the caps was judged", g)
 	}
 }
 
@@ -272,7 +283,7 @@ func TestFlowPIReturnsCut(t *testing.T) {
 	for _, gain := range []float64{1, 0.5} {
 		w := flowWindow{cap: 1 << 20, mark: time.Now()}
 		w.returned = 1 << 20
-		cut := w.pi(w.mark.Add(st.rtt), st, h2InitWindow, 1<<30, gain)
+		cut := w.pi(w.mark.Add(st.rtt), st, h2InitWindow, 1<<30, gain, 0)
 		if got := float64(1<<20 - w.cap); cut <= 0 || got < cut-1 || got > cut+1 {
 			t.Fatalf("gain %v: pi returned %v, the cap fell by %v", gain, cut, got)
 		}
@@ -285,7 +296,80 @@ func TestFlowPIReturnsCutThatLanded(t *testing.T) {
 	st := tcpStats{rtt: 300 * time.Millisecond, minRTT: 100 * time.Millisecond}
 	w := flowWindow{cap: h2InitWindow + 1000, mark: time.Now()}
 	w.returned = 1 << 20
-	if cut := w.pi(w.mark.Add(st.rtt), st, h2InitWindow, 1<<30, 1); cut > 1000 {
+	if cut := w.pi(w.mark.Add(st.rtt), st, h2InitWindow, 1<<30, 1, 0); cut > 1000 {
 		t.Fatalf("pi returned %v for a cap that could fall by 1000", cut)
+	}
+}
+
+// TestFlowEffectDoesNotAttributePreCutFlightDrop (from the review of the
+// change) has what is in flight fall before the controller cuts: the cut is
+// judged from the round before it, and what is in flight has not come down
+// since.
+func TestFlowEffectDoesNotAttributePreCutFlightDrop(t *testing.T) {
+	var e flowEffect
+	start := time.Unix(1, 0)
+	e.note(start, 200*time.Millisecond, 100*time.Millisecond,
+		20*time.Millisecond, 1024, 1024)
+
+	// Flight falls before any controller cut; queue delay rises.
+	e.note(start.Add(time.Second), 300*time.Millisecond,
+		100*time.Millisecond, 20*time.Millisecond, 768, 1024)
+
+	e.cutBy(256)
+	gain := e.note(start.Add(2*time.Second), 275*time.Millisecond,
+		100*time.Millisecond, 20*time.Millisecond, 768, 768)
+	if gain != 1 {
+		t.Fatalf("gain=%g: no flight reduction occurred after the cut", gain)
+	}
+}
+
+// TestFlowEffectZeroFlightFirstCut takes the first cut of an episode in a
+// round with nothing in flight, as a peer that has acknowledged all it was
+// sent before it credits does, and then a second cut that halves what is in
+// flight while the queue stays: the gain goes to none. Judged against no
+// flight, 1 - x/0, the cut was never judged and the gain stayed 1.
+func TestFlowEffectZeroFlightFirstCut(t *testing.T) {
+	for _, first := range []int64{1 << 20, 0} {
+		t.Run(map[bool]string{true: "positive-first-flight", false: "zero-first-flight"}[first > 0], func(t *testing.T) {
+			var e flowEffect
+			now := time.Unix(100, 0)
+			note := func(flight, caps int64) float64 {
+				now = now.Add(time.Second)
+				return e.note(now, 300*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond, flight, caps)
+			}
+			note(first, 1<<20)
+			e.cutBy(256 << 10)
+			note(1<<20, 768<<10)
+			e.cutBy(256 << 10)
+			gain := note(512<<10, 512<<10)
+			t.Logf("first-flight=%d flightTop=%g flight=%g capsTop=%g cut=%g gain=%g", first, e.flightTop, e.flight, e.capsTop, e.cut, gain)
+			if gain != 0 {
+				t.Fatalf("gain=%g after a later 50%% flight reduction with a standing queue; flight reference remains %g", gain, e.flightTop)
+			}
+		})
+	}
+}
+
+// TestFlowEffectZeroFlightThroughCredit is the same through WINDOW_UPDATE
+// frames on a server: the first credit comes with nothing in flight, and the
+// cut that later lands in flight is judged.
+func TestFlowEffectZeroFlightThroughCredit(t *testing.T) {
+	h, s := queuedDownload(t)
+	for i, flight := range []int64{0, 128 << 10, 64 << 10} {
+		h.c.mu.Lock()
+		h.c.kstat.inFlight = flight
+		h.c.effect.at = time.Now().Add(-time.Second)
+		s.down.qAt = time.Time{}
+		s.down.mark = time.Now()
+		h.c.mu.Unlock()
+		cap := credit(h, s)
+		h.c.mu.Lock()
+		t.Logf("credit %d: flight=%d cap=%d reference=%g cut=%g gain=%g", i+1, flight, cap, h.c.effect.flightTop, h.c.effect.cut, h.c.effect.gain)
+		h.c.mu.Unlock()
+	}
+	h.c.mu.Lock()
+	defer h.c.mu.Unlock()
+	if h.c.effect.gain != 0 {
+		t.Fatalf("real WINDOW_UPDATE path never judges the later landed cut: %+v", h.c.effect)
 	}
 }

@@ -207,7 +207,7 @@ func (h *flowHarness) sync() {
 }
 
 // dueForPing lets the next frame boundary towards the client carry a PING.
-// Adapted to bdbac60e: the governor now sends a PING with its first SETTINGS
+// The governor sends a PING with its first SETTINGS
 // and keeps a single outstanding PING, so the earlier one is treated as timed
 // out, which is what the governor itself does after flowPingTimeout.
 func (h *flowHarness) dueForPing() {

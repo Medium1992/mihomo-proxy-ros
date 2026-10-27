@@ -302,7 +302,7 @@ func TestFlowMalformedSettingsGetStockErrors(t *testing.T) {
 	}
 }
 
-// TestFlowOversizedSettingsGetStockErrors (added for bdbac60e) sends the
+// TestFlowOversizedSettingsGetStockErrors sends the
 // oversized SETTINGS of TestFlowOversizedSettingsFailClosed to a stock and a
 // governed server: net/http rejects more than 100 settings itself, so the
 // governor's pass-through does not change what a peer observes.

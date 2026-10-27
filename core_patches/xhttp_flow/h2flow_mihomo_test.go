@@ -209,14 +209,14 @@ func TestFlowMihomoReceiveWindow(t *testing.T) {
 // No h2-flow block and no MIHOMO_XHTTP_FLOW: the governor stays off, as in
 // Xray-core-fork, and the transport keeps Go's windows.
 func TestFlowMihomoOffByDefault(t *testing.T) {
-	prev := flowEnabled
-	flowEnabled = false
-	defer func() { flowEnabled = prev }()
+	prev := flowEnabled.Load()
+	flowEnabled.Store(false)
+	defer flowEnabled.Store(prev)
 	var opts *H2FlowOptions
 	if opts.governed() {
 		t.Fatal("governor on without h2-flow or MIHOMO_XHTTP_FLOW")
 	}
-	flowEnabled = true
+	flowEnabled.Store(true)
 	if !opts.governed() {
 		t.Fatal("MIHOMO_XHTTP_FLOW=on did not turn the governor on")
 	}

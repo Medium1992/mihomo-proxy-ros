@@ -49,10 +49,21 @@ type flowEffect struct {
 	qTop      float64
 	cut       float64
 	gain      float64
+	// flight and caps are what the last note saw.
+	flight, caps float64
 }
 
-// cutBy notes bytes the controller cut from the caps against the queue.
+// cutBy notes bytes the controller cut from the caps against the queue. The
+// first cut of a measurement is judged from the last note before it: what was
+// in flight and the queue then, not their peaks since the measurement began,
+// which a drop before the cut would otherwise count for it.
 func (e *flowEffect) cutBy(bytes float64) {
+	if bytes <= 0 {
+		return
+	}
+	if e.active && e.cut == 0 {
+		e.flightTop, e.capsTop, e.qTop = e.flight, e.caps, e.queue
+	}
 	e.cut += bytes
 }
 
@@ -69,6 +80,7 @@ func (e *flowEffect) note(now time.Time, rtt, minRTT, set time.Duration, inFligh
 	// took effect read as one that did not.
 	e.queue = float64(rtt - minRTT)
 	x, c := float64(inFlight), float64(caps)
+	e.flight, e.caps = x, c
 	if e.queue <= flowEffectAbove*float64(set) {
 		if e.clear++; e.clear >= flowEffectClear {
 			e.active = false
@@ -81,7 +93,12 @@ func (e *flowEffect) note(now time.Time, rtt, minRTT, set time.Duration, inFligh
 		e.start(x, c)
 		return 1
 	}
-	e.flightTop, e.qTop = max(e.flightTop, x), max(e.qTop, e.queue)
+	// A cut is judged from the round before it, see cutBy: peaks after it,
+	// a burst of flight it did not cause or a queue that rose on, would
+	// have a fall back from them read as the cut's.
+	if e.cut == 0 {
+		e.flightTop, e.qTop = max(e.flightTop, x), max(e.qTop, e.queue)
+	}
 	// A queue that halved since the last judgement drained by the client's
 	// own cuts, this connection's or its neighbours': cuts have their gain
 	// back. Other traffic's queue at a full buffer wanders by a tenth, and
@@ -99,6 +116,14 @@ func (e *flowEffect) note(now time.Time, rtt, minRTT, set time.Duration, inFligh
 	// last one showed; without gain the controller does not cut, and the gain
 	// stays none until the queue halves or is gone.
 	if e.capsTop <= 0 {
+		return e.gain
+	}
+	// A cut taken in a round with nothing in flight has no flight to fall
+	// from: the first round after it with some is its reference, and until
+	// then it is not judged. Judged against none, it never would be, and
+	// the gain would stay where it was for the rest of the episode.
+	if e.flightTop <= 0 {
+		e.flightTop = x
 		return e.gain
 	}
 	if cut := min(e.cut/e.capsTop, 1-x/e.flightTop); cut >= flowEffectProbe {

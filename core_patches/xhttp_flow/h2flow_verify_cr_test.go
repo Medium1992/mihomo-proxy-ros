@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-// TestFlowCodeRabbitUplinkLeak (added for bdbac60e) checks CodeRabbit comment
-// 4199461853: whether TestFlowSlowUplinkHandlerBounded leaves HTTP/2 client
+// TestFlowSlowUplinkLeavesNoGoroutines checks whether
+// TestFlowSlowUplinkHandlerBounded leaves HTTP/2 client
 // goroutines behind while it runs and after its cleanup.
-func TestFlowCodeRabbitUplinkLeak(t *testing.T) {
+func TestFlowSlowUplinkLeavesNoGoroutines(t *testing.T) {
 	count := func() int {
 		buf := make([]byte, 1<<22)
 		stacks := string(buf[:runtime.Stack(buf, true)])
