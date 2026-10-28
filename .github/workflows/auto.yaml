@@ -907,3 +907,17 @@ jobs:
           package-type: 'container'
           package-version-ids: '${{ steps.analyze.outputs.safe_untagged_ids_comma }}'
           token: ${{ env.GITHUB_TOKEN }}
+
+  # GitHub switches off schedules in a public repository after 60 days
+  # without activity. Re-enabling the workflow through the API resets
+  # that timer, so the schedule survives quiet months.
+  keepalive:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Keep the schedule alive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/auto.yaml/enable"
