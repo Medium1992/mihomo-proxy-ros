@@ -151,17 +151,24 @@ RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ] && [ "$XHTTP_FLOW" = "1" ]; then \
     fi
 
 # Временная подмена utls: ветка v1.9.0-mod-meta (нативный JLS, отпечатки
-# firefox 148 и safari 26.3). Пустой UTLS_OVERRIDE_BRANCH = собирать как в go.mod.
-ARG UTLS_OVERRIDE_BRANCH=v1.9.0-mod-meta
-RUN if [ -n "$UTLS_OVERRIDE_BRANCH" ]; then set -eu; \
-      echo "Overriding github.com/metacubex/utls with branch $UTLS_OVERRIDE_BRANCH"; \
-      git clone --depth=1 -b "$UTLS_OVERRIDE_BRANCH" https://github.com/MetaCubeX/utls.git /utls; \
+# firefox 148 и safari 26.3) на зафиксированном коммите, и поверх неё
+# core_patches/utls — upstream refraction-networking/utls с Chrome 155 (он же
+# "chrome"), см. apply.sh. Патч снят с этого коммита, поэтому ветку не берём.
+# Пустой UTLS_OVERRIDE_COMMIT = собирать как в go.mod.
+ARG UTLS_OVERRIDE_COMMIT=89a07ad380e263f7c3b406a3f7beb2a70dea263c
+COPY core_patches/utls /patches/utls
+RUN if [ -n "$UTLS_OVERRIDE_COMMIT" ]; then set -eu; \
+      echo "Overriding github.com/metacubex/utls with MetaCubeX/utls $UTLS_OVERRIDE_COMMIT"; \
+      git init -q /utls; \
+      git -C /utls fetch -q --depth=1 https://github.com/MetaCubeX/utls.git "$UTLS_OVERRIDE_COMMIT"; \
+      git -C /utls checkout -q FETCH_HEAD; \
       grep -Fqx 'module github.com/metacubex/utls' /utls/go.mod \
         || { echo "unexpected module path in /utls/go.mod" >&2; exit 1; }; \
+      (cd /utls && sh /patches/utls/apply.sh); \
       go mod edit -replace github.com/metacubex/utls=/utls; \
       go list -m github.com/metacubex/utls | grep -Fq '=> /utls' \
         || { echo "utls override did not apply" >&2; exit 1; }; \
-      echo "utls: $UTLS_OVERRIDE_BRANCH $(git -C /utls rev-parse --short HEAD)"; \
+      echo "utls: MetaCubeX $(git -C /utls rev-parse --short HEAD) + core_patches/utls"; \
     else \
       echo "Using utls from go.mod as is"; \
     fi

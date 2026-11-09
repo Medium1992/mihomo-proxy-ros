@@ -1,0 +1,2908 @@
+diff --git a/alert.go b/alert.go
+index 2301c06..846c7d6 100644
+--- a/alert.go
++++ b/alert.go
+@@ -12,6 +12,8 @@ import "strconv"
+ // which wraps AlertError rather than sending a TLS alert.
+ type AlertError uint8
+ 
++var _ error = AlertError(0)
++
+ func (e AlertError) Error() string {
+ 	return alert(e).String()
+ }
+diff --git a/auth.go b/auth.go
+index f26002e..aa5d88c 100644
+--- a/auth.go
++++ b/auth.go
+@@ -13,6 +13,7 @@ import (
+ 	"crypto/rsa"
+ 	"errors"
+ 	"fmt"
++	"github.com/metacubex/utls/internal/mldsa"
+ 	"golang.org/x/exp/slices"
+ 	"hash"
+ 	"io"
+@@ -21,6 +22,9 @@ import (
+ // verifyHandshakeSignature verifies a signature against unhashed handshake contents.
+ func verifyHandshakeSignature(sigType uint8, pubkey crypto.PublicKey, hashFunc crypto.Hash, signed, sig []byte) error {
+ 	if hashFunc != directSigning {
++		if !hashFunc.Available() {
++			return fmt.Errorf("hash function unavailable: %v", hashFunc)
++		}
+ 		h := hashFunc.New()
+ 		h.Write(signed)
+ 		signed = h.Sum(nil)
+@@ -42,6 +46,14 @@ func verifyHandshakeSignature(sigType uint8, pubkey crypto.PublicKey, hashFunc c
+ 		if !ed25519.Verify(pubKey, signed, sig) {
+ 			return errors.New("Ed25519 verification failure")
+ 		}
++	case signatureMLDSA:
++		pubKey, ok := pubkey.(*mldsa.PublicKey)
++		if !ok {
++			return fmt.Errorf("expected an ML-DSA public key, got %T", pubkey)
++		}
++		if err := mldsa.Verify(pubKey, signed, sig, nil); err != nil {
++			return fmt.Errorf("ML-DSA verification failure: %w", err)
++		}
+ 	case signaturePKCS1v15:
+ 		pubKey, ok := pubkey.(*rsa.PublicKey)
+ 		if !ok {
+@@ -130,6 +142,8 @@ func typeAndHashFromSignatureScheme(signatureAlgorithm SignatureScheme) (sigType
+ 		sigType = signatureECDSA
+ 	case Ed25519:
+ 		sigType = signatureEd25519
++	case MLDSA44, MLDSA65, MLDSA87:
++		sigType = signatureMLDSA
+ 	default:
+ 		return 0, 0, fmt.Errorf("unsupported signature algorithm: %v", signatureAlgorithm)
+ 	}
+@@ -144,6 +158,8 @@ func typeAndHashFromSignatureScheme(signatureAlgorithm SignatureScheme) (sigType
+ 		hash = crypto.SHA512
+ 	case Ed25519:
+ 		hash = directSigning
++	case MLDSA44, MLDSA65, MLDSA87:
++		hash = directSigning
+ 	default:
+ 		return 0, 0, fmt.Errorf("unsupported signature algorithm: %v", signatureAlgorithm)
+ 	}
+@@ -165,6 +181,8 @@ func legacyTypeAndHashFromPublicKey(pub crypto.PublicKey) (sigType uint8, hash c
+ 		// full signature, and not even OpenSSL bothers with the
+ 		// complexity, so we can't even test it properly.
+ 		return 0, 0, fmt.Errorf("tls: Ed25519 public keys are not supported before TLS 1.2")
++	case *mldsa.PublicKey:
++		return 0, 0, fmt.Errorf("tls: ML-DSA public keys are not supported before TLS 1.3")
+ 	default:
+ 		return 0, 0, fmt.Errorf("tls: unsupported public key: %T", pub)
+ 	}
+@@ -221,6 +239,17 @@ func signatureSchemesForPublicKey(version uint16, pub crypto.PublicKey) []Signat
+ 		return sigAlgs
+ 	case ed25519.PublicKey:
+ 		return []SignatureScheme{Ed25519}
++	case *mldsa.PublicKey:
++		switch pub.Parameters() {
++		case mldsa.MLDSA44():
++			return []SignatureScheme{MLDSA44}
++		case mldsa.MLDSA65():
++			return []SignatureScheme{MLDSA65}
++		case mldsa.MLDSA87():
++			return []SignatureScheme{MLDSA87}
++		default:
++			panic("tls: internal error: unknown ML-DSA parameter set: " + pub.Parameters().String())
++		}
+ 	default:
+ 		return nil
+ 	}
+@@ -297,6 +326,8 @@ func unsupportedCertificateError(cert *Certificate) error {
+ 	case *rsa.PublicKey:
+ 		return fmt.Errorf("tls: certificate RSA key size too small for supported signature algorithms")
+ 	case ed25519.PublicKey:
++	case *mldsa.PublicKey:
++		return errors.New("tls: ML-DSA certificates require TLS 1.3")
+ 	default:
+ 		return fmt.Errorf("tls: unsupported certificate key (%T)", pub)
+ 	}
+diff --git a/cipher_suites.go b/cipher_suites.go
+index a773014..1d2b720 100644
+--- a/cipher_suites.go
++++ b/cipher_suites.go
+@@ -13,6 +13,7 @@ import (
+ 	"crypto/rc4"
+ 	"crypto/sha1"
+ 	"crypto/sha256"
++	_ "crypto/sha512" // for crypto.SHA384
+ 	"fmt"
+ 	"hash"
+ 	"runtime"
+@@ -344,25 +345,16 @@ var disabledCipherSuites = map[uint16]bool{
+ 	TLS_ECDHE_ECDSA_WITH_RC4_128_SHA: true,
+ 	TLS_ECDHE_RSA_WITH_RC4_128_SHA:   true,
+ 	TLS_RSA_WITH_RC4_128_SHA:         true,
+-}
+ 
+-// rsaKexCiphers contains the ciphers which use RSA based key exchange,
+-// which we also disable by default unless a GODEBUG is set.
+-var rsaKexCiphers = map[uint16]bool{
+-	TLS_RSA_WITH_RC4_128_SHA:        true,
++	// RSA key exchange
+ 	TLS_RSA_WITH_3DES_EDE_CBC_SHA:   true,
+ 	TLS_RSA_WITH_AES_128_CBC_SHA:    true,
+ 	TLS_RSA_WITH_AES_256_CBC_SHA:    true,
+-	TLS_RSA_WITH_AES_128_CBC_SHA256: true,
+ 	TLS_RSA_WITH_AES_128_GCM_SHA256: true,
+ 	TLS_RSA_WITH_AES_256_GCM_SHA384: true,
+-}
+ 
+-// tdesCiphers contains 3DES ciphers,
+-// which we also disable by default unless a GODEBUG is set.
+-var tdesCiphers = map[uint16]bool{
++	// 3DES
+ 	TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA: true,
+-	TLS_RSA_WITH_3DES_EDE_CBC_SHA:       true,
+ }
+ 
+ var (
+diff --git a/common.go b/common.go
+index 868c725..ffd786c 100644
+--- a/common.go
++++ b/common.go
+@@ -18,6 +18,8 @@ import (
+ 	"crypto/x509"
+ 	"errors"
+ 	"fmt"
++	fips140 "github.com/metacubex/utls/internal/fips140compat"
++	"github.com/metacubex/utls/internal/mldsa"
+ 	"golang.org/x/exp/slices"
+ 	"io"
+ 	"net"
+@@ -155,11 +157,12 @@ const (
+ 	X25519MLKEM768     CurveID = 4588
+ 	SecP256r1MLKEM768  CurveID = 4587
+ 	SecP384r1MLKEM1024 CurveID = 4589
++	MLKEM1024          CurveID = 514
+ )
+ 
+ func isTLS13OnlyKeyExchange(curve CurveID) bool {
+ 	switch curve {
+-	case X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024:
++	case X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, MLKEM1024:
+ 		return true
+ 	default:
+ 		return false
+@@ -168,7 +171,7 @@ func isTLS13OnlyKeyExchange(curve CurveID) bool {
+ 
+ func isPQKeyExchange(curve CurveID) bool {
+ 	switch curve {
+-	case X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024:
++	case X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, MLKEM1024:
+ 		return true
+ 	default:
+ 		return false
+@@ -220,11 +223,12 @@ const (
+ 	signatureECDSA
+ 	signatureEd25519
+ 	signatureEdDilithium3
++	signatureMLDSA
+ )
+ 
+ // directSigning is a standard Hash value that signals that no pre-hashing
+ // should be performed, and that the input should be signed directly. It is the
+-// hash function associated with the Ed25519 signature scheme.
++// hash function associated with the Ed25519 and ML-DSA signature schemes.
+ var directSigning crypto.Hash = 0
+ 
+ // helloRetryRequestRandom is set as the Random value of a ServerHello
+@@ -340,6 +344,11 @@ type ConnectionState struct {
+ 	JLS JLSState
+ 	// JLS END
+ 
++	// LocalCertificate is the certificate chain presented to the peer, if any,
++	// during the handshake. This field is only populated for connections which
++	// are not resumed (DidResume is false).
++	LocalCertificate [][]byte
++
+ 	// ekm is a closure exposed via ExportKeyingMaterial.
+ 	ekm func(label string, context []byte, length int) ([]byte, error)
+ 
+@@ -353,11 +362,6 @@ type ConnectionState struct {
+ // the seed. If the connection was set to allow renegotiation via
+ // Config.Renegotiation, or if the connections supports neither TLS 1.3 nor
+ // Extended Master Secret, this function will return an error.
+-//
+-// Exporting key material without Extended Master Secret or TLS 1.3 was disabled
+-// in Go 1.22 due to security issues (see the Security Considerations sections
+-// of RFC 5705 and RFC 7627), but can be re-enabled with the GODEBUG setting
+-// tlsunsafeekm=1.
+ func (cs *ConnectionState) ExportKeyingMaterial(label string, context []byte, length int) ([]byte, error) {
+ 	return cs.ekm(label, context, length)
+ }
+@@ -444,6 +448,11 @@ const (
+ 	// EdDSA algorithms.
+ 	Ed25519 SignatureScheme = 0x0807
+ 
++	// ML-DSA algorithms.
++	MLDSA44 SignatureScheme = 0x0904
++	MLDSA65 SignatureScheme = 0x0905
++	MLDSA87 SignatureScheme = 0x0906
++
+ 	// Legacy signature and hash algorithms for TLS 1.2.
+ 	PKCS1WithSHA1 SignatureScheme = 0x0201
+ 	ECDSAWithSHA1 SignatureScheme = 0x0203
+@@ -510,6 +519,9 @@ type ClientHelloInfo struct {
+ 	// for use with SupportsCertificate.
+ 	config *Config
+ 
++	// isQUIC indicates whether the connection is a QUIC connection.
++	isQUIC bool
++
+ 	// ctx is the context of the handshake that is in progress.
+ 	ctx context.Context
+ }
+@@ -583,10 +595,13 @@ const (
+ // modified. A Config may be reused; the tls package will also not
+ // modify it.
+ type Config struct {
+-	// Rand provides the source of entropy for nonces and RSA blinding.
++	// Rand provides the source of entropy for the connection.
+ 	// If Rand is nil, TLS uses the cryptographic random reader in package
+-	// crypto/rand.
+-	// The Reader must be safe for use by multiple goroutines.
++	// crypto/rand. The Reader must be safe for use by multiple goroutines.
++	//
++	// Deprecated: this should be left nil in production. Not all TLS
++	// configurations are guaranteed to use Rand. Test code can use
++	// [testing/cryptotest.SetGlobalRandom] instead.
+ 	Rand io.Reader
+ 
+ 	// Time returns the current time as the number of seconds since the epoch.
+@@ -656,7 +671,7 @@ type Config struct {
+ 	// SetSessionTicketKeys is called on the returned Config, those keys will
+ 	// be used. Otherwise, the original Config keys will be used (and possibly
+ 	// rotated if they are automatically managed). WARNING: this allows session
+-	// resumtion of connections originally established with the parent (or a
++	// resumption of connections originally established with the parent (or a
+ 	// sibling) Config, which may bypass the [Config.VerifyPeerCertificate]
+ 	// value of the returned Config.
+ 	GetConfigForClient func(*ClientHelloInfo) (*Config, error)
+@@ -781,11 +796,7 @@ type Config struct {
+ 	// the list is ignored. Note that TLS 1.3 ciphersuites are not configurable.
+ 	//
+ 	// If CipherSuites is nil, a safe default list is used. The default cipher
+-	// suites might change over time. In Go 1.22 RSA key exchange based cipher
+-	// suites were removed from the default list, but can be re-added with the
+-	// GODEBUG setting tlsrsakex=1. In Go 1.23 3DES cipher suites were removed
+-	// from the default list, but can be re-added with the GODEBUG setting
+-	// tls3des=1.
++	// suites might change over time.
+ 	CipherSuites []uint16
+ 
+ 	// PreferServerCipherSuites is a legacy field and has no effect.
+@@ -850,9 +861,6 @@ type Config struct {
+ 	//
+ 	// By default, TLS 1.2 is currently used as the minimum. TLS 1.0 is the
+ 	// minimum supported by this package.
+-	//
+-	// The server-side default can be reverted to TLS 1.0 by including the value
+-	// "tls10server=1" in the GODEBUG environment variable.
+ 	MinVersion uint16
+ 
+ 	// MaxVersion contains the maximum TLS version that is acceptable.
+@@ -872,7 +880,7 @@ type Config struct {
+ 	// or use the GODEBUG=tlsmlkem=0 environment variable.
+ 	//
+ 	// From Go 1.26, the default includes the [SecP256r1MLKEM768] and
+-	// [SecP256r1MLKEM768] hybrid post-quantum key exchanges, too. To disable
++	// [SecP384r1MLKEM1024] hybrid post-quantum key exchanges, too. To disable
+ 	// them, set CurvePreferences explicitly or use either the
+ 	// GODEBUG=tlsmlkem=0 or the GODEBUG=tlssecpmlkem=0 environment variable.
+ 	CurvePreferences []CurveID
+@@ -895,7 +903,7 @@ type Config struct {
+ 	// KeyLogWriter optionally specifies a destination for TLS master secrets
+ 	// in NSS key log format that can be used to allow external programs
+ 	// such as Wireshark to decrypt TLS connections.
+-	// See https://developer.mozilla.org/en-US/docs/Mozilla/Projects/NSS/Key_Log_Format.
++	// See https://datatracker.ietf.org/doc/draft-ietf-tls-keylogfile/.
+ 	// Use of KeyLogWriter compromises security and should only be
+ 	// used for debugging.
+ 	KeyLogWriter io.Writer
+@@ -1000,6 +1008,11 @@ type EncryptedClientHelloKey struct {
+ 	//   - DHKEM(P-384, HKDF-SHA384) (0x0011)
+ 	//   - DHKEM(P-521, HKDF-SHA512) (0x0012)
+ 	//   - DHKEM(X25519, HKDF-SHA256) (0x0020)
++	//   - ML-KEM-768 (0x0041)
++	//   - ML-KEM-1024 (0x0042)
++	//   - MLKEM768-P256 (0x0050)
++	//   - MLKEM1024-P384 (0x0051)
++	//   - MLKEM768-X25519 (0x647a)
+ 	//
+ 	// and as KDF one of
+ 	//
+@@ -1156,7 +1169,6 @@ func (c *Config) initLegacySessionTicketKeyRLocked() {
+ 	} else if !bytes.HasPrefix(c.SessionTicketKey[:], deprecatedSessionTicketKey) && len(c.sessionTicketKeys) == 0 {
+ 		c.sessionTicketKeys = []ticketKey{c.ticketKeyFromBytes(c.SessionTicketKey)}
+ 	}
+-
+ }
+ 
+ // ticketKeys returns the ticketKeys for this connection.
+@@ -1304,26 +1316,16 @@ var supportedVersions = []uint16{
+ const roleClient = true
+ const roleServer = false
+ 
+-// var tls10server = godebug.New("tls10server") // [UTLS] unsupported
+-
+ // supportedVersions returns the list of supported TLS versions, sorted from
+ // highest to lowest (and hence also in preference order).
+-func (c *Config) supportedVersions(isClient bool) []uint16 {
++func (c *Config) supportedVersions(isClient, isQUIC bool) []uint16 {
+ 	versions := make([]uint16, 0, len(supportedVersions))
+ 	for _, v := range supportedVersions {
+ 		if fips140tls.Required() && !slices.Contains(allowedSupportedVersionsFIPS, v) {
+ 			continue
+ 		}
+ 		if (c == nil || c.MinVersion == 0) && v < VersionTLS12 {
+-			// [uTLS SECTION BEGIN]
+-			// Disable unsupported godebug package
+-			// if isClient || tls10server.Value() != "1" {
+-			// 	continue
+-			// }
+-			if isClient {
+-				continue
+-			}
+-			// [uTLS SECTION END]
++			continue
+ 		}
+ 		if isClient && c.EncryptedClientHelloConfigList != nil && v < VersionTLS13 {
+ 			continue
+@@ -1334,13 +1336,16 @@ func (c *Config) supportedVersions(isClient bool) []uint16 {
+ 		if c != nil && c.MaxVersion != 0 && v > c.MaxVersion {
+ 			continue
+ 		}
++		if isQUIC && v < VersionTLS13 {
++			continue
++		}
+ 		versions = append(versions, v)
+ 	}
+ 	return versions
+ }
+ 
+-func (c *Config) maxSupportedVersion(isClient bool) uint16 {
+-	supportedVersions := c.supportedVersions(isClient)
++func (c *Config) maxSupportedVersion(isClient, isQUIC bool) uint16 {
++	supportedVersions := c.supportedVersions(isClient, isQUIC)
+ 	if len(supportedVersions) == 0 {
+ 		return 0
+ 	}
+@@ -1362,31 +1367,38 @@ func supportedVersionsFromMax(maxVersion uint16) []uint16 {
+ }
+ 
+ func (c *Config) curvePreferences(version uint16) []CurveID {
+-	curvePreferences := defaultCurvePreferences()
+-	if fips140tls.Required() {
+-		curvePreferences = slices.DeleteFunc(curvePreferences, func(x CurveID) bool {
+-			return !slices.Contains(allowedCurvePreferencesFIPS, x)
+-		})
+-	}
++	return slices.DeleteFunc(curvePreferenceOrder(), func(x CurveID) bool {
++		return !c.supportsCurve(version, x)
++	})
++}
++
++func (c *Config) supportsCurve(version uint16, x CurveID) bool {
+ 	if c != nil && len(c.CurvePreferences) != 0 {
+-		curvePreferences = slices.DeleteFunc(curvePreferences, func(x CurveID) bool {
+-			return !slices.Contains(c.CurvePreferences, x)
+-		})
++		if !slices.Contains(c.CurvePreferences, x) {
++			return false
++		}
++		// Ignore unimplemented entries in c.CurvePreferences.
++		if !slices.Contains(curvePreferenceOrder(), x) {
++			return false
++		}
++	} else {
++		if !defaultCurveEnabled(x) {
++			return false
++		}
+ 	}
+-	if version < VersionTLS13 {
+-		curvePreferences = slices.DeleteFunc(curvePreferences, isTLS13OnlyKeyExchange)
++	if fips140tls.Required() && !slices.Contains(allowedCurvePreferencesFIPS, x) {
++		return false
+ 	}
+-	return curvePreferences
+-}
+-
+-func (c *Config) supportsCurve(version uint16, curve CurveID) bool {
+-	return slices.Contains(c.curvePreferences(version), curve)
++	if version < VersionTLS13 && isTLS13OnlyKeyExchange(x) {
++		return false
++	}
++	return true
+ }
+ 
+ // mutualVersion returns the protocol version to use given the advertised
+ // versions of the peer. The highest supported version is preferred.
+-func (c *Config) mutualVersion(isClient bool, peerVersions []uint16) (uint16, bool) {
+-	supportedVersions := c.supportedVersions(isClient)
++func (c *Config) mutualVersion(isClient, isQUIC bool, peerVersions []uint16) (uint16, bool) {
++	supportedVersions := c.supportedVersions(isClient, isQUIC)
+ 	for _, v := range supportedVersions {
+ 		if slices.Contains(peerVersions, v) {
+ 			return v, true
+@@ -1472,7 +1484,7 @@ func (chi *ClientHelloInfo) SupportsCertificate(c *Certificate) error {
+ 	if config == nil {
+ 		config = &Config{}
+ 	}
+-	vers, ok := config.mutualVersion(roleServer, chi.SupportedVersions)
++	vers, ok := config.mutualVersion(roleServer, chi.isQUIC, chi.SupportedVersions)
+ 	if !ok {
+ 		return errors.New("no mutually supported protocol versions")
+ 	}
+@@ -1580,6 +1592,9 @@ func (chi *ClientHelloInfo) SupportsCertificate(c *Certificate) error {
+ 				return errors.New("connection doesn't support Ed25519")
+ 			}
+ 			ecdsaCipherSuite = true
++		case *mldsa.PublicKey:
++			// ML-DSA requires TLS 1.3, which we already excluded above.
++			return errors.New("connection doesn't support ML-DSA")
+ 		case *rsa.PublicKey:
+ 		default:
+ 			return supportsRSAFallback(unsupportedCertificateError(c))
+@@ -1693,7 +1708,10 @@ func (c *Config) writeKeyLog(label string, clientRandom, secret []byte) error {
+ 	_, err := c.KeyLogWriter.Write(logLine)
+ 	writerMutex.Unlock()
+ 
+-	return err
++	if err != nil {
++		return fmt.Errorf("tls: KeyLogWriter: %w", err)
++	}
++	return nil
+ }
+ 
+ // writerMutex protects all KeyLogWriters globally. It is rarely enabled,
+@@ -1704,8 +1722,8 @@ var writerMutex sync.Mutex
+ type Certificate struct {
+ 	Certificate [][]byte
+ 	// PrivateKey contains the private key corresponding to the public key in
+-	// Leaf. This must implement [crypto.Signer] with an RSA, ECDSA or Ed25519
+-	// PublicKey.
++	// Leaf. This must implement [crypto.Signer] with an RSA, ECDSA, Ed25519
++	// (TLS 1.2+), or ML-DSA (TLS 1.3) PublicKey.
+ 	//
+ 	// For a server up to TLS 1.2, it can also implement crypto.Decrypter with
+ 	// an RSA PublicKey.
+@@ -1841,15 +1859,21 @@ func unexpectedMessageError(wanted, got any) error {
+ var testingOnlySupportedSignatureAlgorithms []SignatureScheme
+ 
+ // supportedSignatureAlgorithms returns the supported signature algorithms for
+-// the given minimum TLS version, to advertise in ClientHello and
+-// CertificateRequest messages.
+-func supportedSignatureAlgorithms(minVers uint16) []SignatureScheme {
++// the given range of TLS versions, to advertise in ClientHello and
++// CertificateRequest messages. An algorithm is included if it is enabled at any
++// version in the range.
++func supportedSignatureAlgorithms(minVers, maxVers uint16) []SignatureScheme {
+ 	sigAlgs := defaultSupportedSignatureAlgorithms()
+ 	if testingOnlySupportedSignatureAlgorithms != nil {
+ 		sigAlgs = slices.Clone(testingOnlySupportedSignatureAlgorithms)
+ 	}
+ 	return slices.DeleteFunc(sigAlgs, func(s SignatureScheme) bool {
+-		return isDisabledSignatureAlgorithm(minVers, s, false)
++		for v := minVers; v <= maxVers; v++ {
++			if !isDisabledSignatureAlgorithm(v, s, false) {
++				return false
++			}
++		}
++		return true
+ 	})
+ }
+ 
+@@ -1858,6 +1882,18 @@ func isDisabledSignatureAlgorithm(version uint16, s SignatureScheme, isCert bool
+ 		return true
+ 	}
+ 
++	switch s {
++	case MLDSA44, MLDSA65, MLDSA87:
++		// ML-DSA is not available in FIPS 140-3 module v1.0.0.
++		if fips140.Version() == "v1.0.0" {
++			return true
++		}
++		// ML-DSA codepoints are only defined for TLS 1.3.
++		if version < VersionTLS13 {
++			return true
++		}
++	}
++
+ 	// For the _cert extension we include all algorithms, including SHA-1 and
+ 	// PKCS#1 v1.5, because it's more likely that something on our side will be
+ 	// willing to accept a *-with-SHA1 certificate (e.g. with a custom
+@@ -1887,10 +1923,15 @@ func isDisabledSignatureAlgorithm(version uint16, s SignatureScheme, isCert bool
+ 
+ // supportedSignatureAlgorithmsCert returns the supported algorithms for
+ // signatures in certificates.
+-func supportedSignatureAlgorithmsCert() []SignatureScheme {
++func supportedSignatureAlgorithmsCert(minVers, maxVers uint16) []SignatureScheme {
+ 	sigAlgs := defaultSupportedSignatureAlgorithms()
+ 	return slices.DeleteFunc(sigAlgs, func(s SignatureScheme) bool {
+-		return isDisabledSignatureAlgorithm(0, s, true)
++		for v := minVers; v <= maxVers; v++ {
++			if !isDisabledSignatureAlgorithm(v, s, true) {
++				return false
++			}
++		}
++		return true
+ 	})
+ }
+ 
+diff --git a/common_string.go b/common_string.go
+index 1e868e7..6bbaf15 100644
+--- a/common_string.go
++++ b/common_string.go
+@@ -18,6 +18,9 @@ func _() {
+ 	_ = x[ECDSAWithP384AndSHA384-1283]
+ 	_ = x[ECDSAWithP521AndSHA512-1539]
+ 	_ = x[Ed25519-2055]
++	_ = x[MLDSA44-2308]
++	_ = x[MLDSA65-2309]
++	_ = x[MLDSA87-2310]
+ 	_ = x[PKCS1WithSHA1-513]
+ 	_ = x[ECDSAWithSHA1-515]
+ }
+@@ -32,10 +35,12 @@ const (
+ 	_SignatureScheme_name_6 = "PKCS1WithSHA512"
+ 	_SignatureScheme_name_7 = "ECDSAWithP521AndSHA512"
+ 	_SignatureScheme_name_8 = "PSSWithSHA256PSSWithSHA384PSSWithSHA512Ed25519"
++	_SignatureScheme_name_9 = "MLDSA44MLDSA65MLDSA87"
+ )
+ 
+ var (
+ 	_SignatureScheme_index_8 = [...]uint8{0, 13, 26, 39, 46}
++	_SignatureScheme_index_9 = [...]uint8{0, 7, 14, 21}
+ )
+ 
+ func (i SignatureScheme) String() string {
+@@ -59,6 +64,9 @@ func (i SignatureScheme) String() string {
+ 	case 2052 <= i && i <= 2055:
+ 		i -= 2052
+ 		return _SignatureScheme_name_8[_SignatureScheme_index_8[i]:_SignatureScheme_index_8[i+1]]
++	case 2308 <= i && i <= 2310:
++		i -= 2308
++		return _SignatureScheme_name_9[_SignatureScheme_index_9[i]:_SignatureScheme_index_9[i+1]]
+ 	default:
+ 		return "SignatureScheme(" + strconv.FormatInt(int64(i), 10) + ")"
+ 	}
+@@ -74,17 +82,19 @@ func _() {
+ 	_ = x[X25519MLKEM768-4588]
+ 	_ = x[SecP256r1MLKEM768-4587]
+ 	_ = x[SecP384r1MLKEM1024-4589]
++	_ = x[MLKEM1024-514]
+ }
+ 
+ const (
+ 	_CurveID_name_0 = "CurveP256CurveP384CurveP521"
+ 	_CurveID_name_1 = "X25519"
+-	_CurveID_name_2 = "SecP256r1MLKEM768X25519MLKEM768SecP384r1MLKEM1024"
++	_CurveID_name_2 = "MLKEM1024"
++	_CurveID_name_3 = "SecP256r1MLKEM768X25519MLKEM768SecP384r1MLKEM1024"
+ )
+ 
+ var (
+ 	_CurveID_index_0 = [...]uint8{0, 9, 18, 27}
+-	_CurveID_index_2 = [...]uint8{0, 17, 31, 49}
++	_CurveID_index_3 = [...]uint8{0, 17, 31, 49}
+ )
+ 
+ func (i CurveID) String() string {
+@@ -94,9 +104,11 @@ func (i CurveID) String() string {
+ 		return _CurveID_name_0[_CurveID_index_0[i]:_CurveID_index_0[i+1]]
+ 	case i == 29:
+ 		return _CurveID_name_1
++	case i == 514:
++		return _CurveID_name_2
+ 	case 4587 <= i && i <= 4589:
+ 		i -= 4587
+-		return _CurveID_name_2[_CurveID_index_2[i]:_CurveID_index_2[i+1]]
++		return _CurveID_name_3[_CurveID_index_3[i]:_CurveID_index_3[i+1]]
+ 	default:
+ 		return "CurveID(" + strconv.FormatInt(int64(i), 10) + ")"
+ 	}
+@@ -117,8 +129,9 @@ const _ClientAuthType_name = "NoClientCertRequestClientCertRequireAnyClientCertV
+ var _ClientAuthType_index = [...]uint8{0, 12, 29, 49, 72, 98}
+ 
+ func (i ClientAuthType) String() string {
+-	if i < 0 || i >= ClientAuthType(len(_ClientAuthType_index)-1) {
++	idx := int(i) - 0
++	if i < 0 || idx >= len(_ClientAuthType_index)-1 {
+ 		return "ClientAuthType(" + strconv.FormatInt(int64(i), 10) + ")"
+ 	}
+-	return _ClientAuthType_name[_ClientAuthType_index[i]:_ClientAuthType_index[i+1]]
++	return _ClientAuthType_name[_ClientAuthType_index[idx]:_ClientAuthType_index[idx+1]]
+ }
+diff --git a/conn.go b/conn.go
+index 1bb40f7..1728343 100644
+--- a/conn.go
++++ b/conn.go
+@@ -58,6 +58,7 @@ type Conn struct {
+ 	// activeCertHandles contains the cache handles to certificates in
+ 	// peerCertificates that are used to track active references.
+ 	activeCertHandles []*activeCert
++	localCertificate  [][]byte
+ 	// verifiedChains contains the certificate chains that we built, as
+ 	// opposed to the ones presented by the server.
+ 	verifiedChains [][]*x509.Certificate
+@@ -747,7 +748,7 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
+ 		return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+ 	}
+ 
+-	if typ != recordTypeAlert && typ != recordTypeChangeCipherSpec && len(data) > 0 {
++	if (typ == recordTypeApplicationData || (typ == recordTypeHandshake && !handshakeComplete)) && len(data) > 0 {
+ 		// This is a state-advancing message: reset the retry count.
+ 		c.retryCount = 0
+ 	}
+@@ -851,29 +852,6 @@ func (c *Conn) retryReadRecord(expectChangeCipherSpec bool) error {
+ 	return c.readRecordOrCCS(expectChangeCipherSpec)
+ }
+ 
+-// atLeastReader reads from R, stopping with EOF once at least N bytes have been
+-// read. It is different from an io.LimitedReader in that it doesn't cut short
+-// the last Read call, and in that it considers an early EOF an error.
+-type atLeastReader struct {
+-	R io.Reader
+-	N int64
+-}
+-
+-func (r *atLeastReader) Read(p []byte) (int, error) {
+-	if r.N <= 0 {
+-		return 0, io.EOF
+-	}
+-	n, err := r.R.Read(p)
+-	r.N -= int64(n) // won't underflow unless len(p) >= n > 9223372036854775809
+-	if r.N > 0 && err == io.EOF {
+-		return n, io.ErrUnexpectedEOF
+-	}
+-	if r.N <= 0 && err == nil {
+-		return n, io.EOF
+-	}
+-	return n, err
+-}
+-
+ // readFromUntil reads from r into c.rawInput until c.rawInput contains
+ // at least n bytes or else returns an error.
+ func (c *Conn) readFromUntil(r io.Reader, n int) error {
+@@ -881,12 +859,9 @@ func (c *Conn) readFromUntil(r io.Reader, n int) error {
+ 		return nil
+ 	}
+ 	needs := n - c.rawInput.Len()
+-	// There might be extra input waiting on the wire. Make a best effort
+-	// attempt to fetch it so that it can be used in (*Conn).Read to
+-	// "predict" closeNotify alerts.
+-	c.rawInput.Grow(needs + bytes.MinRead)
+-	_, err := c.rawInput.ReadFrom(&atLeastReader{r, int64(needs)})
+-	return err
++	// [prizrak] The read loop lives in u_readfrom_go121.go (upstream code,
++	// needs bytes.Buffer.AvailableBuffer from Go 1.21) and u_readfrom_go120.go.
++	return readAtLeast(&c.rawInput, r, needs)
+ }
+ 
+ // sendAlertLocked sends a TLS alert message.
+@@ -1442,7 +1417,7 @@ func (c *Conn) handleKeyUpdate(keyUpdate *keyUpdateMsg) error {
+ 	}
+ 
+ 	newSecret := cipherSuite.nextTrafficSecret(c.in.trafficSecret)
+-	if err := c.setReadTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret); err != nil {
++	if err := c.setReadTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret, keyUpdate.updateRequested); err != nil {
+ 		return err
+ 	}
+ 
+@@ -1691,14 +1666,18 @@ func (c *Conn) handshakeContext(ctx context.Context) (ret error) {
+ }
+ 
+ // ConnectionState returns basic TLS details about the connection.
++//
++// The returned [ConnectionState] is only meaningful after the handshake has
++// completed, as reported by [ConnectionState.HandshakeComplete]; before then
++// its fields are not populated. The handshake is run automatically by the
++// first [Conn.Read] or [Conn.Write], or it can be triggered explicitly with
++// [Conn.Handshake].
+ func (c *Conn) ConnectionState() ConnectionState {
+ 	c.handshakeMutex.Lock()
+ 	defer c.handshakeMutex.Unlock()
+ 	return c.connectionStateLocked()
+ }
+ 
+-// var tlsunsafeekm = godebug.New("tlsunsafeekm") // [uTLS] unsupportted
+-
+ func (c *Conn) connectionStateLocked() ConnectionState {
+ 	var state ConnectionState
+ 	state.HandshakeComplete = c.isHandshakeComplete.Load()
+@@ -1712,6 +1691,7 @@ func (c *Conn) connectionStateLocked() ConnectionState {
+ 	state.ServerName = c.serverName
+ 	state.CipherSuite = c.cipherSuite
+ 	state.PeerCertificates = c.peerCertificates
++	state.LocalCertificate = c.localCertificate
+ 	state.VerifiedChains = c.verifiedChains
+ 	state.SignedCertificateTimestamps = c.scts
+ 	state.OCSPResponse = c.ocspResponse
+@@ -1725,16 +1705,7 @@ func (c *Conn) connectionStateLocked() ConnectionState {
+ 	if c.config.Renegotiation != RenegotiateNever {
+ 		state.ekm = noEKMBecauseRenegotiation
+ 	} else if c.vers != VersionTLS13 && !c.extMasterSecret {
+-		state.ekm = func(label string, context []byte, length int) ([]byte, error) {
+-			// [uTLS SECTION START]
+-			// Disabling unsupported godebug package
+-			// if tlsunsafeekm.Value() == "1" {
+-			// 	tlsunsafeekm.IncNonDefault()
+-			// 	return c.ekm(label, context, length)
+-			// }
+-			// [uTLS SECTION END]
+-			return noEKMBecauseNoEMS(label, context, length)
+-		}
++		state.ekm = noEKMBecauseNoEMS
+ 	} else {
+ 		state.ekm = c.ekm
+ 	}
+@@ -1781,12 +1752,16 @@ func (c *Conn) VerifyHostname(host string) error {
+ // setReadTrafficSecret sets the read traffic secret for the given encryption level. If
+ // being called at the same time as setWriteTrafficSecret, the caller must ensure the call
+ // to setWriteTrafficSecret happens first so any alerts are sent at the write level.
+-func (c *Conn) setReadTrafficSecret(suite *cipherSuiteTLS13, level QUICEncryptionLevel, secret []byte) error {
++func (c *Conn) setReadTrafficSecret(suite *cipherSuiteTLS13, level QUICEncryptionLevel, secret []byte, locked bool) error {
+ 	// Ensure that there are no buffered handshake messages before changing the
+ 	// read keys, since that can cause messages to be parsed that were encrypted
+ 	// using old keys which are no longer appropriate.
+ 	if c.hand.Len() != 0 {
+-		c.sendAlert(alertUnexpectedMessage)
++		if locked {
++			c.sendAlertLocked(alertUnexpectedMessage)
++		} else {
++			c.sendAlert(alertUnexpectedMessage)
++		}
+ 		return errors.New("tls: handshake buffer not empty before setting read traffic secret")
+ 	}
+ 	c.in.setTrafficSecret(suite, level, secret)
+diff --git a/defaults.go b/defaults.go
+index 807bc1f..9d58145 100644
+--- a/defaults.go
++++ b/defaults.go
+@@ -12,23 +12,26 @@ import (
+ // Defaults are collected in this file to allow distributions to more easily patch
+ // them to apply local policies.
+ 
+-// defaultCurvePreferences is the default set of supported key exchanges, as
+-// well as the preference order.
+-func defaultCurvePreferences() []CurveID {
+-	switch {
+-	// tlsmlkem=0 restores the pre-Go 1.24 default.
+-	//[uTLS] SECTION BEGIN
+-	// case tlsmlkem.Value() == "0":
+-	// 	return []CurveID{X25519, CurveP256, CurveP384, CurveP521}
+-	// // tlssecpmlkem=0 restores the pre-Go 1.26 default.
+-	// case tlssecpmlkem.Value() == "0":
+-	// 	return []CurveID{X25519MLKEM768, X25519, CurveP256, CurveP384, CurveP521}
+-	//[uTLS] SECTION END
++// defaultCurveEnabled returns whether the key exchange c is enabled by default.
++func defaultCurveEnabled(c CurveID) bool {
++	switch c {
++	case X25519, CurveP256, CurveP384, CurveP521:
++		return true
++	case X25519MLKEM768:
++		return true // [uTLS] TLS GODEBUG switches are not supported.
++	case SecP256r1MLKEM768, SecP384r1MLKEM1024:
++		return true // [uTLS] TLS GODEBUG switches are not supported.
+ 	default:
+-		return []CurveID{
+-			X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024,
+-			X25519, CurveP256, CurveP384, CurveP521,
+-		}
++		return false
++	}
++}
++
++// curvePreferenceOrder is the fixed preference order of key exchanges. It must
++// include every supported key exchange.
++func curvePreferenceOrder() []CurveID {
++	return []CurveID{
++		X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, MLKEM1024,
++		X25519, CurveP256, CurveP384, CurveP521,
+ 	}
+ }
+ 
+@@ -38,6 +41,9 @@ func defaultCurvePreferences() []CurveID {
+ // Note that in TLS 1.2, the ECDSA algorithms are not constrained to P-256, etc.
+ func defaultSupportedSignatureAlgorithms() []SignatureScheme {
+ 	return []SignatureScheme{
++		MLDSA44,
++		MLDSA65,
++		MLDSA87,
+ 		PSSWithSHA256,
+ 		ECDSAWithP256AndSHA256,
+ 		Ed25519,
+@@ -64,13 +70,7 @@ func supportedCipherSuites(aesGCMPreferred bool) []uint16 {
+ func defaultCipherSuites(aesGCMPreferred bool) []uint16 {
+ 	cipherSuites := supportedCipherSuites(aesGCMPreferred)
+ 	return slices.DeleteFunc(cipherSuites, func(c uint16) bool {
+-		return disabledCipherSuites[c] ||
+-			// [uTLS section begins]
+-			// tlsrsakex.Value() != "1" && rsaKexCiphers[c] ||
+-			// tls3des.Value() != "1" && tdesCiphers[c]
+-			rsaKexCiphers[c] ||
+-			tdesCiphers[c]
+-		// [uTLS section ends]
++		return disabledCipherSuites[c]
+ 	})
+ }
+ 
+diff --git a/defaults_fips140.go b/defaults_fips140.go
+index 1913260..57c599b 100644
+--- a/defaults_fips140.go
++++ b/defaults_fips140.go
+@@ -12,6 +12,8 @@ import (
+ 	"crypto/elliptic"
+ 	"crypto/rsa"
+ 	"crypto/x509"
++	"github.com/metacubex/utls/internal/boring"
++	"github.com/metacubex/utls/internal/mldsa"
+ )
+ 
+ // These FIPS 140-3 policies allow anything approved by SP 800-140C
+@@ -34,6 +36,7 @@ var (
+ 		X25519MLKEM768,
+ 		SecP256r1MLKEM768,
+ 		SecP384r1MLKEM1024,
++		MLKEM1024,
+ 		CurveP256,
+ 		CurveP384,
+ 		CurveP521,
+@@ -42,6 +45,9 @@ var (
+ 		PSSWithSHA256,
+ 		ECDSAWithP256AndSHA256,
+ 		Ed25519,
++		MLDSA44,
++		MLDSA65,
++		MLDSA87,
+ 		PSSWithSHA384,
+ 		PSSWithSHA512,
+ 		PKCS1WithSHA256,
+@@ -72,6 +78,9 @@ func isCertificateAllowedFIPS(c *x509.Certificate) bool {
+ 		return k.Curve == elliptic.P256() || k.Curve == elliptic.P384() || k.Curve == elliptic.P521()
+ 	case ed25519.PublicKey:
+ 		return true
++	case *mldsa.PublicKey:
++		// Only for the native module.
++		return !boring.Enabled
+ 	default:
+ 		return false
+ 	}
+diff --git a/dicttls/exttype_values.go b/dicttls/exttype_values.go
+index cb0ef40..30cbea8 100644
+--- a/dicttls/exttype_values.go
++++ b/dicttls/exttype_values.go
+@@ -67,11 +67,12 @@ const (
+ 
+ // Not IANA assigned
+ const (
+-	ExtType_next_protocol_negotiation uint16 = 13172 // https://datatracker.ietf.org/doc/html/draft-agl-tls-nextprotoneg-04
+-	ExtType_application_settings      uint16 = 17513 // https://www.ietf.org/archive/id/draft-vvv-tls-alps-01.html
+-	ExtType_application_settings_new  uint16 = 17613 // https://www.ietf.org/archive/id/draft-vvv-tls-alps-01.html
+-	ExtType_channel_id_old            uint16 = 30031 // https://datatracker.ietf.org/doc/html/draft-balfanz-tls-channelid-01
+-	ExtType_channel_id                uint16 = 30032 // https://datatracker.ietf.org/doc/html/draft-balfanz-tls-channelid-01
++	ExtType_next_protocol_negotiation uint16 = 13172  // https://datatracker.ietf.org/doc/html/draft-agl-tls-nextprotoneg-04
++	ExtType_application_settings      uint16 = 17513  // https://www.ietf.org/archive/id/draft-vvv-tls-alps-01.html
++	ExtType_application_settings_new  uint16 = 17613  // https://www.ietf.org/archive/id/draft-vvv-tls-alps-01.html
++	ExtType_channel_id_old            uint16 = 30031  // https://datatracker.ietf.org/doc/html/draft-balfanz-tls-channelid-01
++	ExtType_channel_id                uint16 = 30032  // https://datatracker.ietf.org/doc/html/draft-balfanz-tls-channelid-01
++	ExtType_trust_anchors             uint16 = 0xca34 // draft-ietf-tls-trust-anchor-ids
+ )
+ 
+ var DictExtTypeValueIndexed = map[uint16]string{
+@@ -135,11 +136,12 @@ var DictExtTypeValueIndexed = map[uint16]string{
+ 	59:    "dnssec_chain",
+ 	65281: "renegotiation_info",
+ 
+-	13172: "next_protocol_negotiation",
+-	17513: "application_settings",
+-	17613: "application_settings_new",
+-	30031: "channel_id_old",
+-	30032: "channel_id",
++	13172:  "next_protocol_negotiation",
++	17513:  "application_settings",
++	17613:  "application_settings_new",
++	30031:  "channel_id_old",
++	30032:  "channel_id",
++	0xca34: "trust_anchors",
+ }
+ 
+ var DictExtTypeNameIndexed = map[string]uint16{
+@@ -209,4 +211,5 @@ var DictExtTypeNameIndexed = map[string]uint16{
+ 	"application_settings_new":  17613,
+ 	"channel_id_old":            30031,
+ 	"channel_id":                30032,
++	"trust_anchors":             0xca34,
+ }
+diff --git a/dicttls/signaturescheme.go b/dicttls/signaturescheme.go
+index d0b9803..70e5e3d 100644
+--- a/dicttls/signaturescheme.go
++++ b/dicttls/signaturescheme.go
+@@ -38,6 +38,9 @@ const (
+ 	SigScheme_ecdsa_brainpoolP256r1tls13_sha256 uint16 = 0x081A
+ 	SigScheme_ecdsa_brainpoolP384r1tls13_sha384 uint16 = 0x081B
+ 	SigScheme_ecdsa_brainpoolP512r1tls13_sha512 uint16 = 0x081C
++	SigScheme_mldsa44                           uint16 = 0x0904
++	SigScheme_mldsa65                           uint16 = 0x0905
++	SigScheme_mldsa87                           uint16 = 0x0906
+ )
+ 
+ var DictSignatureSchemeValueIndexed = map[uint16]string{
+@@ -75,6 +78,9 @@ var DictSignatureSchemeValueIndexed = map[uint16]string{
+ 	0x081A: "ecdsa_brainpoolP256r1tls13_sha256",
+ 	0x081B: "ecdsa_brainpoolP384r1tls13_sha384",
+ 	0x081C: "ecdsa_brainpoolP512r1tls13_sha512",
++	0x0904: "mldsa44",
++	0x0905: "mldsa65",
++	0x0906: "mldsa87",
+ }
+ 
+ var DictSignatureSchemeNameIndexed = map[string]uint16{
+@@ -113,4 +119,7 @@ var DictSignatureSchemeNameIndexed = map[string]uint16{
+ 	"ecdsa_brainpoolP256r1tls13_sha256":   0x081A,
+ 	"ecdsa_brainpoolP384r1tls13_sha384":   0x081B,
+ 	"ecdsa_brainpoolP512r1tls13_sha512":   0x081C,
++	"mldsa44":                             0x0904,
++	"mldsa65":                             0x0905,
++	"mldsa87":                             0x0906,
+ }
+diff --git a/ech.go b/ech.go
+index e8ed89a..40856ce 100644
+--- a/ech.go
++++ b/ech.go
+@@ -55,7 +55,7 @@ func (e *echConfigErr) Error() string {
+ 
+ func parseECHConfig(enc []byte) (skip bool, ec echConfig, err error) {
+ 	s := cryptobyte.String(enc)
+-	ec.raw = []byte(enc)
++	ec.raw = enc
+ 	if !s.ReadUint16(&ec.Version) {
+ 		return false, echConfig{}, &echConfigErr{"version"}
+ 	}
+@@ -119,7 +119,7 @@ func parseECHConfig(enc []byte) (skip bool, ec echConfig, err error) {
+ 	return false, ec, nil
+ }
+ 
+-// parseECHConfigList parses a draft-ietf-tls-esni-18 ECHConfigList, returning a
++// parseECHConfigList parses a RFC 9849 ECHConfigList, returning a
+ // slice of parsed ECHConfigs, in the same order they were parsed, or an error
+ // if the list is malformed.
+ func parseECHConfigList(data []byte) ([]echConfig, error) {
+@@ -184,6 +184,11 @@ func pickECHConfig(list []echConfig) (*echConfig, hpke.PublicKey, hpke.KDF, hpke
+ 			if err != nil {
+ 				continue
+ 			}
++			// 0xFFFF is an export-only AEAD that cannot seal/open, making
++			// it an invalid choice for encrypting ClientHelloInner.
++			if cs.AEADID == 0xFFFF {
++				continue
++			}
+ 			aead, err := hpke.NewAEAD(cs.AEADID)
+ 			if err != nil {
+ 				continue
+@@ -218,7 +223,7 @@ func encodeInnerClientHelloReorderOuterExts(inner *clientHelloMsg, maxNameLength
+ 	} else {
+ 		paddingLen = maxNameLength + 9
+ 	}
+-	paddingLen = 31 - ((len(h) + paddingLen - 1) % 32)
++	paddingLen += 31 - ((len(h) + paddingLen - 1) % 32)
+ 
+ 	return append(h, make([]byte, paddingLen)...), nil
+ }
+@@ -581,7 +586,7 @@ func (c *Conn) processECHClientHello(outer *clientHelloMsg, echKeys []EncryptedC
+ 
+ 	for _, echKey := range echKeys {
+ 		skip, config, err := parseECHConfig(echKey.Config)
+-		if err != nil || skip {
++		if err != nil {
+ 			c.sendAlert(alertInternalError)
+ 			return nil, nil, fmt.Errorf("tls: invalid EncryptedClientHelloKey Config: %s", err)
+ 		}
+diff --git a/generate_cert.go b/generate_cert.go
+index cd4bfc5..e52693e 100644
+--- a/generate_cert.go
++++ b/generate_cert.go
+@@ -19,6 +19,7 @@ import (
+ 	"crypto/x509/pkix"
+ 	"encoding/pem"
+ 	"flag"
++	"github.com/metacubex/utls/internal/mldsa"
+ 	"log"
+ 	"math/big"
+ 	"net"
+@@ -35,6 +36,7 @@ var (
+ 	rsaBits    = flag.Int("rsa-bits", 2048, "Size of RSA key to generate. Ignored if --ecdsa-curve is set")
+ 	ecdsaCurve = flag.String("ecdsa-curve", "", "ECDSA curve to use to generate a key. Valid values are P224, P256 (recommended), P384, P521")
+ 	ed25519Key = flag.Bool("ed25519", false, "Generate an Ed25519 key")
++	mldsaKey   = flag.Bool("mldsa", false, "Generate an ML-DSA-44 key")
+ )
+ 
+ func publicKey(priv any) any {
+@@ -45,6 +47,8 @@ func publicKey(priv any) any {
+ 		return &k.PublicKey
+ 	case ed25519.PrivateKey:
+ 		return k.Public().(ed25519.PublicKey)
++	case *mldsa.PrivateKey:
++		return k.PublicKey()
+ 	default:
+ 		return nil
+ 	}
+@@ -63,6 +67,8 @@ func main() {
+ 	case "":
+ 		if *ed25519Key {
+ 			_, priv, err = ed25519.GenerateKey(rand.Reader)
++		} else if *mldsaKey {
++			priv, err = mldsa.GenerateKey(mldsa.MLDSA44())
+ 		} else {
+ 			priv, err = rsa.GenerateKey(rand.Reader, *rsaBits)
+ 		}
+@@ -81,8 +87,8 @@ func main() {
+ 		log.Fatalf("Failed to generate private key: %v", err)
+ 	}
+ 
+-	// ECDSA, ED25519 and RSA subject keys should have the DigitalSignature
+-	// KeyUsage bits set in the x509.Certificate template
++	// ECDSA, ED25519, ML-DSA, and RSA subject keys should have the
++	// DigitalSignature KeyUsage bits set in the x509.Certificate template
+ 	keyUsage := x509.KeyUsageDigitalSignature
+ 	// Only RSA subject keys should have the KeyEncipherment KeyUsage bits set. In
+ 	// the context of TLS this KeyUsage is particular to RSA key exchange and
+diff --git a/handshake_client.go b/handshake_client.go
+index 7806e5d..347e49d 100644
+--- a/handshake_client.go
++++ b/handshake_client.go
+@@ -24,6 +24,7 @@ import (
+ 
+ 	"github.com/metacubex/utls/hpke"
+ 	"github.com/metacubex/utls/internal/fips140tls"
++	"github.com/metacubex/utls/internal/mldsa"
+ 	"github.com/metacubex/utls/internal/tls13"
+ )
+ 
+@@ -62,7 +63,7 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCli
+ 		return nil, nil, nil, errors.New("tls: NextProtos values too large")
+ 	}
+ 
+-	supportedVersions := config.supportedVersions(roleClient)
++	supportedVersions := config.supportedVersions(roleClient, c.quic != nil)
+ 	if len(supportedVersions) == 0 {
+ 		return nil, nil, nil, errors.New("tls: no supported versions satisfy MinVersion and MaxVersion")
+ 	}
+@@ -123,8 +124,8 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCli
+ 	}
+ 
+ 	if maxVersion >= VersionTLS12 {
+-		hello.supportedSignatureAlgorithms = supportedSignatureAlgorithms(minVersion)
+-		hello.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithmsCert()
++		hello.supportedSignatureAlgorithms = supportedSignatureAlgorithms(minVersion, maxVersion)
++		hello.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithmsCert(minVersion, maxVersion)
+ 	}
+ 
+ 	var keyShareKeys *keySharePrivateKeys
+@@ -143,7 +144,7 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCli
+ 		}
+ 
+ 		if len(hello.supportedCurves) == 0 {
+-			return nil, nil, nil, errors.New("tls: no supported elliptic curves for ECDHE")
++			return nil, nil, nil, errors.New("tls: no supported key exchange methods (CurveIDs)")
+ 		}
+ 		// Since the order is fixed, the first one is always the one to send a
+ 		// key share for. All the PQ hybrids sort first, and produce a fallback
+@@ -151,7 +152,7 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCli
+ 		curveID := hello.supportedCurves[0]
+ 		ke, err := keyExchangeForCurveID(curveID)
+ 		if err != nil {
+-			return nil, nil, nil, errors.New("tls: CurvePreferences includes unsupported curve")
++			return nil, nil, nil, errors.New("tls: internal error: supportsCurve accepted unimplemented curve")
+ 		}
+ 		keyShareKeys, hello.keyShares, err = ke.keyShares(config.rand())
+ 		if err != nil {
+@@ -347,7 +348,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
+ 	// If we are negotiating a protocol version that's lower than what we
+ 	// support, check for the server downgrade canaries.
+ 	// See RFC 8446, Section 4.1.3.
+-	maxVers := c.config.maxSupportedVersion(roleClient)
++	maxVers := c.config.maxSupportedVersion(roleClient, c.quic != nil)
+ 	tls12Downgrade := string(serverHello.random[24:]) == downgradeCanaryTLS12
+ 	tls11Downgrade := string(serverHello.random[24:]) == downgradeCanaryTLS11
+ 	if maxVers == VersionTLS13 && c.vers <= VersionTLS12 && (tls12Downgrade || tls11Downgrade) ||
+@@ -470,16 +471,19 @@ func (c *Conn) loadSession(hello *clientHelloMsg) (
+ 				// application from a faulty ClientSessionCache implementation.
+ 				return nil, nil, nil, nil
+ 			}
+-			opts := x509.VerifyOptions{
+-				CurrentTime: c.config.time(),
+-				Roots:       c.config.RootCAs,
+-				KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+-			}
+-			if !anyValidVerifiedChain(session.verifiedChains, opts) {
+-				// No valid chains, delete the entry.
+-				c.config.ClientSessionCache.Put(cacheKey, nil)
+-				return nil, nil, nil, nil
+-			}
++		}
++		opts := x509.VerifyOptions{
++			CurrentTime: c.config.time(),
++			Roots:       c.config.RootCAs,
++			KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
++		}
++		if c.config.InsecureSkipTimeVerify {
++			opts.CurrentTime = session.peerCertificates[0].NotAfter
++		}
++		if !anyValidVerifiedChain(session.verifiedChains, opts) {
++			// No valid chains, delete the entry.
++			c.config.ClientSessionCache.Put(cacheKey, nil)
++			return nil, nil, nil, nil
+ 		}
+ 		// [UTLS SECTION END]
+ 	}
+@@ -493,7 +497,7 @@ func (c *Conn) loadSession(hello *clientHelloMsg) (
+ 
+ 		// FIPS 140-3 requires the use of Extended Master Secret.
+ 		if !session.extMasterSecret && fips140tls.Required() {
+-			return nil, nil, nil, nil
++			return nil, nil, nil, nil // [uTLS] fips140ems is unsupported.
+ 		}
+ 
+ 		hello.sessionTicket = session.ticket
+@@ -572,7 +576,7 @@ func (c *Conn) pickTLSVersion(serverHello *serverHelloMsg) error {
+ 		peerVersion = serverHello.supportedVersion
+ 	}
+ 
+-	vers, ok := c.config.mutualVersion(roleClient, []uint16{peerVersion})
++	vers, ok := c.config.mutualVersion(roleClient, c.quic != nil, []uint16{peerVersion})
+ 	if !ok {
+ 		c.sendAlert(alertProtocolVersion)
+ 		return fmt.Errorf("tls: server selected unsupported protocol version %x", peerVersion)
+@@ -691,17 +695,6 @@ func (hs *clientHandshakeState) pickCipherSuite() error {
+ 		return errors.New("tls: server chose an unconfigured cipher suite")
+ 	}
+ 
+-	// [UTLS SECTION START]
+-	// if hs.c.config.CipherSuites == nil && !fips140tls.Required() && rsaKexCiphers[hs.suite.id] {
+-	// 	tlsrsakex.Value() // ensure godebug is initialized
+-	// 	tlsrsakex.IncNonDefault()
+-	// }
+-	// if hs.c.config.CipherSuites == nil && !fips140tls.Required() && tdesCiphers[hs.suite.id] {
+-	// 	tls3des.Value() // ensure godebug is initialized
+-	// 	tls3des.IncNonDefault()
+-	// }
+-	// [UTLS SECTION END]
+-
+ 	hs.c.cipherSuite = hs.suite.id
+ 	return nil
+ }
+@@ -803,6 +796,10 @@ func (hs *clientHandshakeState) doFullHandshake() error {
+ 		}
+ 	}
+ 
++	if chainToSend != nil {
++		hs.c.localCertificate = chainToSend.Certificate
++	}
++
+ 	shd, ok := msg.(*serverHelloDoneMsg)
+ 	if !ok {
+ 		c.sendAlert(alertUnexpectedMessage)
+@@ -837,6 +834,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
+ 			hs.finishedHash.Sum())
+ 	} else {
+ 		if fips140tls.Required() {
++			// [uTLS] fips140ems is unsupported; retain mandatory EMS.
+ 			c.sendAlert(alertHandshakeFailure)
+ 			return errors.New("tls: FIPS 140-3 requires the use of Extended Master Secret")
+ 		}
+@@ -1274,7 +1272,11 @@ func (c *Conn) verifyServerCertificate(certificates [][]byte) error {
+ 
+ 	switch certs[0].PublicKey.(type) {
+ 	case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey:
+-		break
++	case *mldsa.PublicKey:
++		if c.vers < VersionTLS13 {
++			c.sendAlert(alertIllegalParameter)
++			return errors.New("tls: server's certificate uses ML-DSA, which requires TLS 1.3")
++		}
+ 	default:
+ 		c.sendAlert(alertUnsupportedCertificate)
+ 		return fmt.Errorf("tls: server's certificate contains an unsupported type of public key: %T", certs[0].PublicKey)
+diff --git a/handshake_client_tls13.go b/handshake_client_tls13.go
+index 76a93d9..799631d 100644
+--- a/handshake_client_tls13.go
++++ b/handshake_client_tls13.go
+@@ -58,7 +58,8 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
+ 	}
+ 
+ 	// Consistency check on the presence of a keyShare and its parameters.
+-	if hs.keyShareKeys == nil || hs.keyShareKeys.ecdhe == nil || len(hs.hello.keyShares) == 0 {
++	if hs.keyShareKeys == nil || (hs.keyShareKeys.ecdhe == nil && hs.keyShareKeys.mlkem == nil) ||
++		len(hs.hello.keyShares) == 0 {
+ 		return c.sendAlert(alertInternalError)
+ 	}
+ 
+@@ -349,7 +350,7 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
+ 		ke, err := keyExchangeForCurveID(curveID)
+ 		if err != nil {
+ 			c.sendAlert(alertInternalError)
+-			return errors.New("tls: CurvePreferences includes unsupported curve")
++			return errors.New("tls: internal error: supportsCurve accepted unimplemented curve")
+ 		}
+ 		hs.keyShareKeys, hello.keyShares, err = ke.keyShares(c.config.rand())
+ 		if err != nil {
+@@ -588,7 +589,16 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
+ 		c.sendAlert(alertInternalError)
+ 		return err
+ 	}
+-	sharedKey, err := ke.clientSharedSecret(hs.keyShareKeys, hs.serverHello.serverShare.data)
++	// [uTLS] SECTION START
++	keyShareKeys := hs.keyShareKeys
++	if key, ok := keyShareKeys.ecdheFallback[hs.serverHello.serverShare.group]; ok {
++		// The server selected a classical key share sent after the first.
++		selected := *keyShareKeys
++		selected.ecdhe = key
++		keyShareKeys = &selected
++	}
++	sharedKey, err := ke.clientSharedSecret(keyShareKeys, hs.serverHello.serverShare.data)
++	// [uTLS] SECTION END
+ 	if err != nil {
+ 		c.sendAlert(alertIllegalParameter)
+ 		return errors.New("tls: invalid server key share")
+@@ -605,7 +615,7 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
+ 	clientSecret := handshakeSecret.ClientHandshakeTrafficSecret(hs.transcript)
+ 	c.setWriteTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, clientSecret)
+ 	serverSecret := handshakeSecret.ServerHandshakeTrafficSecret(hs.transcript)
+-	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, serverSecret); err != nil {
++	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, serverSecret, false); err != nil {
+ 		return err
+ 	}
+ 
+@@ -808,7 +818,7 @@ func (hs *clientHandshakeStateTLS13) readServerCertificate() error {
+ 	// See RFC 8446, Section 4.4.3.
+ 	// We don't use hs.hello.supportedSignatureAlgorithms because it might
+ 	// include PKCS#1 v1.5 and SHA-1 if the ClientHello also supported TLS 1.2.
+-	if !isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, supportedSignatureAlgorithms(c.vers)) ||
++	if !isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, supportedSignatureAlgorithms(c.vers, c.vers)) ||
+ 		!isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, signatureSchemesForPublicKey(c.vers, c.peerCertificates[0].PublicKey)) {
+ 		c.sendAlert(alertIllegalParameter)
+ 		return errors.New("tls: certificate used with invalid signature algorithm")
+@@ -866,7 +876,7 @@ func (hs *clientHandshakeStateTLS13) readServerFinished() error {
+ 
+ 	hs.trafficSecret = hs.masterSecret.ClientApplicationTrafficSecret(hs.transcript)
+ 	serverSecret := hs.masterSecret.ServerApplicationTrafficSecret(hs.transcript)
+-	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelApplication, serverSecret); err != nil {
++	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelApplication, serverSecret, false); err != nil {
+ 		return err
+ 	}
+ 
+@@ -910,6 +920,10 @@ func (hs *clientHandshakeStateTLS13) sendClientCertificate() error {
+ 		return err
+ 	}
+ 
++	if cert != nil {
++		hs.c.localCertificate = cert.Certificate
++	}
++
+ 	certMsg := new(certificateMsgTLS13)
+ 
+ 	certMsg.certificate = *cert
+diff --git a/handshake_messages.go b/handshake_messages.go
+index 5a1020f..19ecdcd 100644
+--- a/handshake_messages.go
++++ b/handshake_messages.go
+@@ -5,6 +5,7 @@
+ package tls
+ 
+ import (
++	"bytes"
+ 	"errors"
+ 	"fmt"
+ 	"golang.org/x/exp/slices"
+@@ -341,7 +342,8 @@ func (m *clientHelloMsg) marshalMsgReorderOuterExts(echInner bool, outerExts []u
+ 			})
+ 		})
+ 	}
+-	if len(m.pskIdentities) > 0 { // pre_shared_key must be the last extension
++	// pre_shared_key must be the last extension
++	if len(m.pskIdentities) > 0 && (echInner || len(m.encryptedClientHello) == 0 || bytes.Equal(m.encryptedClientHello, []byte{byte(innerECHExt)})) {
+ 		// RFC 8446, Section 4.2.11
+ 		exts.AddUint16(extensionPreSharedKey)
+ 		exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+diff --git a/handshake_server.go b/handshake_server.go
+index 1f394b0..9740a52 100644
+--- a/handshake_server.go
++++ b/handshake_server.go
+@@ -14,6 +14,7 @@ import (
+ 	"crypto/x509"
+ 	"errors"
+ 	"fmt"
++	"github.com/metacubex/utls/internal/mldsa"
+ 	"hash"
+ 	"io"
+ 	"time"
+@@ -189,7 +190,7 @@ func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, *echServer
+ 	} else if len(clientVersions) == 0 {
+ 		clientVersions = supportedVersionsFromMax(clientHello.vers)
+ 	}
+-	c.vers, ok = c.config.mutualVersion(roleServer, clientVersions)
++	c.vers, ok = c.config.mutualVersion(roleServer, c.quic != nil, clientVersions)
+ 	if !ok {
+ 		c.sendAlert(alertProtocolVersion)
+ 		return nil, nil, fmt.Errorf("tls: client offered only unsupported versions: %x", clientVersions)
+@@ -210,14 +211,6 @@ func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, *echServer
+ 		return nil, nil, errors.New("tls: Encrypted Client Hello cannot be used pre-TLS 1.3")
+ 	}
+ 
+-	// [UTLS SECTION BEGIN]
+-	// Disable unsupported godebug package
+-	// if c.config.MinVersion == 0 && c.vers < VersionTLS12 {
+-	// 	tls10server.Value() // ensure godebug is initialized
+-	// 	tls10server.IncNonDefault()
+-	// }
+-	// [UTLS SECTION END]
+-
+ 	return clientHello, ech, nil
+ }
+ 
+@@ -244,7 +237,7 @@ func (hs *serverHandshakeState) processClientHello() error {
+ 	hs.hello.random = make([]byte, 32)
+ 	serverRandom := hs.hello.random
+ 	// Downgrade protection canaries. See RFC 8446, Section 4.1.3.
+-	maxVers := c.config.maxSupportedVersion(roleServer)
++	maxVers := c.config.maxSupportedVersion(roleServer, c.quic != nil)
+ 	if maxVers >= VersionTLS12 && c.vers < maxVers || testingOnlyForceDowngradeCanary {
+ 		if c.vers == VersionTLS12 {
+ 			copy(serverRandom[24:], downgradeCanaryTLS12)
+@@ -288,6 +281,7 @@ func (hs *serverHandshakeState) processClientHello() error {
+ 		}
+ 		return err
+ 	}
++
+ 	if hs.clientHello.scts {
+ 		hs.hello.scts = hs.cert.SignedCertificateTimestamps
+ 	}
+@@ -315,6 +309,11 @@ func (hs *serverHandshakeState) processClientHello() error {
+ 			hs.ecSignOk = true
+ 		case *rsa.PublicKey:
+ 			hs.rsaSignOk = true
++		case *mldsa.PublicKey:
++			// ML-DSA can only be used with TLS 1.3.
++			c.sendAlert(alertInternalError)
++			return fmt.Errorf("tls: ML-DSA certificates require TLS 1.3, but client negotiated %s",
++				VersionName(c.vers))
+ 		default:
+ 			c.sendAlert(alertInternalError)
+ 			return fmt.Errorf("tls: unsupported signing key type (%T)", priv.Public())
+@@ -411,22 +410,10 @@ func (hs *serverHandshakeState) pickCipherSuite() error {
+ 	}
+ 	c.cipherSuite = hs.suite.id
+ 
+-	// [UTLS SECTION BEGIN]
+-	// Disable unsupported godebug package
+-	// if c.config.CipherSuites == nil && !fips140tls.Required() && rsaKexCiphers[hs.suite.id] {
+-	// 	tlsrsakex.Value() // ensure godebug is initialized
+-	// 	tlsrsakex.IncNonDefault()
+-	// }
+-	// if c.config.CipherSuites == nil && !fips140tls.Required() && tdesCiphers[hs.suite.id] {
+-	// 	tls3des.Value() // ensure godebug is initialized
+-	// 	tls3des.IncNonDefault()
+-	// }
+-	// [UTLS SECTION END]
+-
+ 	for _, id := range hs.clientHello.cipherSuites {
+ 		if id == TLS_FALLBACK_SCSV {
+ 			// The client is doing a fallback connection. See RFC 7507.
+-			if hs.clientHello.vers < c.config.maxSupportedVersion(roleServer) {
++			if hs.clientHello.vers < c.config.maxSupportedVersion(roleServer, c.quic != nil) {
+ 				c.sendAlert(alertInappropriateFallback)
+ 				return errors.New("tls: client using inappropriate protocol fallback")
+ 			}
+@@ -551,7 +538,7 @@ func (hs *serverHandshakeState) checkForResumption() error {
+ 		return errors.New("tls: session supported extended_master_secret but client does not")
+ 	}
+ 	if !sessionState.extMasterSecret && fips140tls.Required() {
+-		// FIPS 140-3 requires the use of Extended Master Secret.
++		// [uTLS] fips140ems is unsupported; retain mandatory EMS.
+ 		return nil
+ 	}
+ 
+@@ -629,6 +616,10 @@ func (hs *serverHandshakeState) doFullHandshake() error {
+ 
+ 	certMsg := new(certificateMsg)
+ 	certMsg.certificates = hs.cert.Certificate
++	// Set localCertificate here, rather than at certificate selection time, so
++	// that it is only populated when a certificate is actually presented to the
++	// peer, and not on resumed connections.
++	c.localCertificate = hs.cert.Certificate
+ 	if _, err := hs.c.writeHandshakeRecord(certMsg, &hs.finishedHash); err != nil {
+ 		return err
+ 	}
+@@ -667,7 +658,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
+ 		}
+ 		if c.vers >= VersionTLS12 {
+ 			certReq.hasSignatureAlgorithm = true
+-			certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms(c.vers)
++			certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms(c.vers, c.vers)
+ 		}
+ 
+ 		// An empty list of certificateAuthorities signals to
+@@ -747,6 +738,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
+ 			hs.finishedHash.Sum())
+ 	} else {
+ 		if fips140tls.Required() {
++			// [uTLS] fips140ems is unsupported; retain mandatory EMS.
+ 			c.sendAlert(alertHandshakeFailure)
+ 			return errors.New("tls: FIPS 140-3 requires the use of Extended Master Secret")
+ 		}
+@@ -1013,6 +1005,11 @@ func (c *Conn) processCertsFromClient(certificate Certificate) error {
+ 	if len(certs) > 0 {
+ 		switch certs[0].PublicKey.(type) {
+ 		case *ecdsa.PublicKey, *rsa.PublicKey, ed25519.PublicKey:
++		case *mldsa.PublicKey:
++			if c.vers < VersionTLS13 {
++				c.sendAlert(alertIllegalParameter)
++				return errors.New("tls: client certificate uses ML-DSA, which requires TLS 1.3")
++			}
+ 		default:
+ 			c.sendAlert(alertUnsupportedCertificate)
+ 			return fmt.Errorf("tls: client certificate contains an unsupported public key of type %T", certs[0].PublicKey)
+@@ -1035,6 +1032,10 @@ func clientHelloInfo(ctx context.Context, c *Conn, clientHello *clientHelloMsg)
+ 		supportedVersions = supportedVersionsFromMax(clientHello.vers)
+ 	}
+ 
++	conn := c.conn
++	if c.quic != nil {
++		conn = c.quic.clientHelloInfoConn
++	}
+ 	return &ClientHelloInfo{
+ 		CipherSuites:      clientHello.cipherSuites,
+ 		ServerName:        clientHello.serverName,
+@@ -1044,9 +1045,10 @@ func clientHelloInfo(ctx context.Context, c *Conn, clientHello *clientHelloMsg)
+ 		SupportedProtos:   clientHello.alpnProtocols,
+ 		SupportedVersions: supportedVersions,
+ 		Extensions:        clientHello.extensions,
+-		Conn:              c.conn,
++		Conn:              conn,
+ 		HelloRetryRequest: c.didHRR,
+ 		config:            c.config,
++		isQUIC:            c.quic != nil,
+ 		ctx:               ctx,
+ 	}
+ }
+diff --git a/handshake_server_tls13.go b/handshake_server_tls13.go
+index 833d11d..8af770e 100644
+--- a/handshake_server_tls13.go
++++ b/handshake_server_tls13.go
+@@ -134,7 +134,7 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
+ 		if id == TLS_FALLBACK_SCSV {
+ 			// Use c.vers instead of max(supported_versions) because an attacker
+ 			// could defeat this by adding an arbitrary high version otherwise.
+-			if c.vers < c.config.maxSupportedVersion(roleServer) {
++			if c.vers < c.config.maxSupportedVersion(roleServer, c.quic != nil) {
+ 				c.sendAlert(alertInappropriateFallback)
+ 				return errors.New("tls: client using inappropriate protocol fallback")
+ 			}
+@@ -263,7 +263,7 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
+ 	ke, err := keyExchangeForCurveID(selectedGroup)
+ 	if err != nil {
+ 		c.sendAlert(alertInternalError)
+-		return errors.New("tls: CurvePreferences includes unsupported curve")
++		return errors.New("tls: internal error: supportsCurve accepted unimplemented curve")
+ 	}
+ 	hs.sharedKey, hs.hello.serverShare, err = ke.serverSharedSecret(c.config.rand(), clientKeyShare.data)
+ 	if err != nil {
+@@ -512,6 +512,9 @@ func (hs *serverHandshakeStateTLS13) pickCertificate() error {
+ 		}
+ 		return err
+ 	}
++	if certificate != nil {
++		hs.c.localCertificate = certificate.Certificate
++	}
+ 	hs.sigAlg, err = selectSignatureScheme(c.vers, certificate, hs.clientHello.supportedSignatureAlgorithms)
+ 	if err != nil {
+ 		// getCertificate returned a certificate that is unsupported or
+@@ -787,7 +790,7 @@ func (hs *serverHandshakeStateTLS13) sendServerParameters() error {
+ 	serverSecret := hs.handshakeSecret.ServerHandshakeTrafficSecret(hs.transcript)
+ 	c.setWriteTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, serverSecret)
+ 	clientSecret := hs.handshakeSecret.ClientHandshakeTrafficSecret(hs.transcript)
+-	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, clientSecret); err != nil {
++	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, clientSecret, false); err != nil {
+ 		return err
+ 	}
+ 
+@@ -867,8 +870,8 @@ func (hs *serverHandshakeStateTLS13) sendServerCertificate() error {
+ 		certReq := new(certificateRequestMsgTLS13)
+ 		certReq.ocspStapling = true
+ 		certReq.scts = true
+-		certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms(c.vers)
+-		certReq.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithmsCert()
++		certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms(c.vers, c.vers)
++		certReq.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithmsCert(c.vers, c.vers)
+ 		if c.config.ClientCAs != nil {
+ 			certReq.certificateAuthorities = c.config.ClientCAs.Subjects()
+ 		}
+@@ -1117,7 +1120,7 @@ func (hs *serverHandshakeStateTLS13) readClientCertificate() error {
+ 		// See RFC 8446, Section 4.4.3.
+ 		// We don't use certReq.supportedSignatureAlgorithms because it would
+ 		// require keeping the certificateRequestMsgTLS13 around in the hs.
+-		if !isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, supportedSignatureAlgorithms(c.vers)) ||
++		if !isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, supportedSignatureAlgorithms(c.vers, c.vers)) ||
+ 			!isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, signatureSchemesForPublicKey(c.vers, c.peerCertificates[0].PublicKey)) {
+ 			c.sendAlert(alertIllegalParameter)
+ 			return errors.New("tls: client certificate used with invalid signature algorithm")
+@@ -1171,7 +1174,7 @@ func (hs *serverHandshakeStateTLS13) readClientFinished() error {
+ 		return errors.New("tls: invalid client finished hash")
+ 	}
+ 
+-	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret); err != nil {
++	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret, false); err != nil {
+ 		return err
+ 	}
+ 
+diff --git a/internal/cryptotest/fips140.go b/internal/cryptotest/fips140.go
+new file mode 100644
+index 0000000..f9d40b0
+--- /dev/null
++++ b/internal/cryptotest/fips140.go
+@@ -0,0 +1,41 @@
++// Copyright 2025 The Go Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++package cryptotest
++
++import (
++	fips140 "github.com/metacubex/utls/internal/fips140compat"
++	"strconv"
++	"strings"
++	"testing"
++)
++
++// MustMinimumFIPS140ModuleVersion skips the test if compiled against a lower
++// minor version of the FIPS 140-3 module than min (such as "v1.26.0").
++func MustMinimumFIPS140ModuleVersion(tb testing.TB, min string) {
++	tb.Helper()
++	if fips140.Version() == "latest" {
++		return
++	}
++	if parseFIPS140MinorVersion(tb, fips140.Version()) < parseFIPS140MinorVersion(tb, min) {
++		tb.Skipf("test requires FIPS 140-3 module %s or later", min)
++	}
++}
++
++func parseFIPS140MinorVersion(tb testing.TB, version string) int {
++	tb.Helper()
++	v, ok := strings.CutPrefix(version, "v1.")
++	if !ok {
++		tb.Fatalf("unexpected FIPS 140 version format: %q", version)
++	}
++	v, _, ok = strings.Cut(v, ".")
++	if !ok {
++		tb.Fatalf("unexpected FIPS 140 version format: %q", version)
++	}
++	i, err := strconv.Atoi(v)
++	if err != nil {
++		tb.Fatalf("unexpected FIPS 140 version format %q: %v", version, err)
++	}
++	return i
++}
+diff --git a/internal/fips140compat/fips140_go126.go b/internal/fips140compat/fips140_go126.go
+new file mode 100644
+index 0000000..fac4504
+--- /dev/null
++++ b/internal/fips140compat/fips140_go126.go
+@@ -0,0 +1,17 @@
++// Copyright 2026 The uTLS Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++//go:build go1.26
++
++// Package fips140 stands in for crypto/fips140 so the module builds with
++// Go 1.20. From Go 1.26 it forwards to the standard library.
++package fips140
++
++import "crypto/fips140"
++
++// Version forwards to crypto/fips140.Version.
++func Version() string { return fips140.Version() }
++
++// WithoutEnforcement forwards to crypto/fips140.WithoutEnforcement.
++func WithoutEnforcement(f func()) { fips140.WithoutEnforcement(f) }
+diff --git a/internal/fips140compat/fips140_old.go b/internal/fips140compat/fips140_old.go
+new file mode 100644
+index 0000000..fbb6973
+--- /dev/null
++++ b/internal/fips140compat/fips140_old.go
+@@ -0,0 +1,15 @@
++// Copyright 2026 The uTLS Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++//go:build !go1.26
++
++// Package fips140 stands in for crypto/fips140 so the module builds with
++// Go 1.20. Before Go 1.26 there is no FIPS 140-3 enforcement to lift.
++package fips140
++
++// Version reports no FIPS 140-3 module version.
++func Version() string { return "" }
++
++// WithoutEnforcement runs f.
++func WithoutEnforcement(f func()) { f() }
+diff --git a/internal/mldsa/mldsa_go127.go b/internal/mldsa/mldsa_go127.go
+new file mode 100644
+index 0000000..285605e
+--- /dev/null
++++ b/internal/mldsa/mldsa_go127.go
+@@ -0,0 +1,32 @@
++// Copyright 2026 The uTLS Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++//go:build go1.27
++
++// Package mldsa stands in for crypto/mldsa so the module builds with Go 1.20.
++// From Go 1.27 its types are aliases of the standard library ones, so the keys
++// crypto/x509 returns match the type switches in the TLS code.
++package mldsa
++
++import "crypto/mldsa"
++
++// Supported reports whether ML-DSA certificates can be used.
++const Supported = true
++
++type (
++	PublicKey  = mldsa.PublicKey
++	PrivateKey = mldsa.PrivateKey
++	Parameters = mldsa.Parameters
++	Options    = mldsa.Options
++)
++
++func MLDSA44() Parameters { return mldsa.MLDSA44() }
++func MLDSA65() Parameters { return mldsa.MLDSA65() }
++func MLDSA87() Parameters { return mldsa.MLDSA87() }
++
++func GenerateKey(params Parameters) (*PrivateKey, error) { return mldsa.GenerateKey(params) }
++
++func Verify(pk *PublicKey, message, signature []byte, opts *Options) error {
++	return mldsa.Verify(pk, message, signature, opts)
++}
+diff --git a/internal/mldsa/mldsa_stub.go b/internal/mldsa/mldsa_stub.go
+new file mode 100644
+index 0000000..154dc8d
+--- /dev/null
++++ b/internal/mldsa/mldsa_stub.go
+@@ -0,0 +1,58 @@
++// Copyright 2026 The uTLS Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++//go:build !go1.27
++
++// Package mldsa stands in for crypto/mldsa so the module builds with Go 1.20.
++// Before Go 1.27 the standard library has no ML-DSA: crypto/x509 never returns
++// these key types, so the TLS code paths that switch on them are unreachable
++// and every operation here reports that ML-DSA is unavailable.
++package mldsa
++
++import (
++	"crypto"
++	"errors"
++	"io"
++)
++
++// Supported reports whether ML-DSA certificates can be used.
++const Supported = false
++
++var errUnsupported = errors.New("mldsa: ML-DSA certificates require Go 1.27 or later")
++
++// Parameters names an ML-DSA parameter set.
++type Parameters struct{ name string }
++
++func (p Parameters) String() string { return p.name }
++
++func MLDSA44() Parameters { return Parameters{"ML-DSA-44"} }
++func MLDSA65() Parameters { return Parameters{"ML-DSA-65"} }
++func MLDSA87() Parameters { return Parameters{"ML-DSA-87"} }
++
++// Options mirrors crypto/mldsa.Options.
++type Options struct {
++	Context string
++}
++
++// PublicKey is never produced before Go 1.27.
++type PublicKey struct{ params Parameters }
++
++func (pk *PublicKey) Parameters() Parameters { return pk.params }
++
++func (pk *PublicKey) Equal(x crypto.PublicKey) bool { return false }
++
++// PrivateKey is never produced before Go 1.27.
++type PrivateKey struct{ pub PublicKey }
++
++func (sk *PrivateKey) PublicKey() *PublicKey { return &sk.pub }
++
++func (sk *PrivateKey) Public() crypto.PublicKey { return &sk.pub }
++
++func (sk *PrivateKey) Sign(io.Reader, []byte, crypto.SignerOpts) ([]byte, error) {
++	return nil, errUnsupported
++}
++
++func GenerateKey(Parameters) (*PrivateKey, error) { return nil, errUnsupported }
++
++func Verify(*PublicKey, []byte, []byte, *Options) error { return errUnsupported }
+diff --git a/internal/testenv/testenv.go b/internal/testenv/testenv.go
+index 938c1ed..66c63b5 100644
+--- a/internal/testenv/testenv.go
++++ b/internal/testenv/testenv.go
+@@ -11,10 +11,18 @@
+ package testenv
+ 
+ import (
++	"os"
+ 	"runtime"
+ 	"testing"
+ )
+ 
++// SetGODEBUG appends v to the GODEBUG environment variable for the
++// duration of the test.
++func SetGODEBUG(t testing.TB, v string) {
++	t.Helper()
++	t.Setenv("GODEBUG", os.Getenv("GODEBUG")+","+v)
++}
++
+ // MustHaveExternalNetwork checks that the current system can use
+ // external (non-localhost) networks.
+ // If not, MustHaveExternalNetwork calls t.Skip with an explanation.
+diff --git a/key_agreement.go b/key_agreement.go
+index f9a642a..7e603f4 100644
+--- a/key_agreement.go
++++ b/key_agreement.go
+@@ -168,7 +168,7 @@ func (ka *ecdheKeyAgreement) generateServerKeyExchange(config *Config, cert *Cer
+ 		return nil, errors.New("tls: no supported elliptic curves offered")
+ 	}
+ 	if _, ok := curveForCurveID(ka.curveID); !ok {
+-		return nil, errors.New("tls: CurvePreferences includes unsupported curve")
++		return nil, errors.New("tls: internal error: supportsCurve accepted unimplemented curve")
+ 	}
+ 
+ 	key, err := generateECDHEKey(config.rand(), ka.curveID)
+@@ -295,6 +295,10 @@ func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHell
+ 		if len(sig) < 2 {
+ 			return errServerKeyExchange
+ 		}
++		switch ka.signatureAlgorithm {
++		case MLDSA44, MLDSA65, MLDSA87:
++			return errors.New("tls: server selected ML-DSA with TLS version < 1.3")
++		}
+ 	}
+ 	sigLen := int(sig[0])<<8 | int(sig[1])
+ 	if sigLen+2 != len(sig) {
+diff --git a/key_schedule.go b/key_schedule.go
+index 6cc1a0f..cd4f30f 100644
+--- a/key_schedule.go
++++ b/key_schedule.go
+@@ -8,6 +8,7 @@ import (
+ 	"crypto/ecdh"
+ 	"crypto/hmac"
+ 	"errors"
++	fips140 "github.com/metacubex/utls/internal/fips140compat"
+ 	"hash"
+ 	"io"
+ 
+@@ -55,6 +56,12 @@ type keySharePrivateKeys struct {
+ 	mlkem mlkem.Decapsulator
+ 
+ 	mlkemEcdhe *ecdh.PrivateKey // [uTLS] seperate ecdhe key for pq keyshare in line with Chrome, instead of reusing ecdhe key like stdlib
++
++	// [uTLS] ecdheFallback keeps the private keys of the classical key shares
++	// after the first one, by group. A spec may send several (Firefox sends
++	// X25519 and P-256); ecdhe holds only the first, and a server may select
++	// any of them.
++	ecdheFallback map[CurveID]*ecdh.PrivateKey
+ }
+ 
+ // A keyExchange implements a TLS 1.3 KEM.
+@@ -75,16 +82,16 @@ type keyExchange interface {
+ }
+ 
+ func keyExchangeForCurveID(id CurveID) (keyExchange, error) {
+-	newMLKEMPrivateKey768 := func(b []byte) (mlkem.Decapsulator, error) {
+-		return mlkem.NewDecapsulationKey768(b)
++	mlkemGenerateKey768 := func() (mlkem.Decapsulator, error) {
++		return mlkem.GenerateKey768()
+ 	}
+-	newMLKEMPrivateKey1024 := func(b []byte) (mlkem.Decapsulator, error) {
+-		return mlkem.NewDecapsulationKey1024(b)
++	mlkemGenerateKey1024 := func() (mlkem.Decapsulator, error) {
++		return mlkem.GenerateKey1024()
+ 	}
+-	newMLKEMPublicKey768 := func(b []byte) (mlkem.Encapsulator, error) {
++	mlkemNewPublicKey768 := func(b []byte) (mlkem.Encapsulator, error) {
+ 		return mlkem.NewEncapsulationKey768(b)
+ 	}
+-	newMLKEMPublicKey1024 := func(b []byte) (mlkem.Encapsulator, error) {
++	mlkemNewPublicKey1024 := func(b []byte) (mlkem.Encapsulator, error) {
+ 		return mlkem.NewEncapsulationKey1024(b)
+ 	}
+ 	switch id {
+@@ -99,26 +106,54 @@ func keyExchangeForCurveID(id CurveID) (keyExchange, error) {
+ 	case X25519MLKEM768:
+ 		return &hybridKeyExchange{id, ecdhKeyExchange{X25519, ecdh.X25519()},
+ 			32, mlkem.EncapsulationKeySize768, mlkem.CiphertextSize768,
+-			newMLKEMPrivateKey768, newMLKEMPublicKey768}, nil
++			mlkemGenerateKey768, mlkemNewPublicKey768}, nil
+ 	case SecP256r1MLKEM768:
+ 		return &hybridKeyExchange{id, ecdhKeyExchange{CurveP256, ecdh.P256()},
+ 			65, mlkem.EncapsulationKeySize768, mlkem.CiphertextSize768,
+-			newMLKEMPrivateKey768, newMLKEMPublicKey768}, nil
++			mlkemGenerateKey768, mlkemNewPublicKey768}, nil
+ 	case SecP384r1MLKEM1024:
+ 		return &hybridKeyExchange{id, ecdhKeyExchange{CurveP384, ecdh.P384()},
+ 			97, mlkem.EncapsulationKeySize1024, mlkem.CiphertextSize1024,
+-			newMLKEMPrivateKey1024, newMLKEMPublicKey1024}, nil
+-	//[uTLS] SECTION START
++			mlkemGenerateKey1024, mlkemNewPublicKey1024}, nil
++	// [uTLS] Keep the legacy Kyber draft group and its wire ordering.
+ 	case X25519Kyber768Draft00:
+ 		return &hybridKeyExchange{id, ecdhKeyExchange{X25519, ecdh.X25519()},
+ 			32, mlkem.EncapsulationKeySize768, mlkem.CiphertextSize768,
+-			newMLKEMPrivateKey768, newMLKEMPublicKey768}, nil
+-	//[uTLS] SECTION END
++			mlkemGenerateKey768, mlkemNewPublicKey768}, nil
++	case MLKEM1024:
++		return &mlkem1024KeyExchange{}, nil
+ 	default:
+ 		return nil, errors.New("tls: unsupported key exchange")
+ 	}
+ }
+ 
++type mlkem1024KeyExchange struct{}
++
++func (ke *mlkem1024KeyExchange) keyShares(_ io.Reader) (*keySharePrivateKeys, []keyShare, error) {
++	priv, err := mlkem.GenerateKey1024()
++	if err != nil {
++		return nil, nil, err
++	}
++	return &keySharePrivateKeys{mlkem: priv}, []keyShare{{MLKEM1024, priv.EncapsulationKey().Bytes()}}, nil
++}
++
++func (ke *mlkem1024KeyExchange) serverSharedSecret(_ io.Reader, clientKeyShare []byte) ([]byte, keyShare, error) {
++	peerKey, err := mlkem.NewEncapsulationKey1024(clientKeyShare)
++	if err != nil {
++		return nil, keyShare{}, err
++	}
++	sharedKey, keyShareData := peerKey.Encapsulate()
++	return sharedKey, keyShare{MLKEM1024, keyShareData}, nil
++}
++
++func (ke *mlkem1024KeyExchange) clientSharedSecret(priv *keySharePrivateKeys, serverKeyShare []byte) ([]byte, error) {
++	sharedKey, err := priv.mlkem.Decapsulate(serverKeyShare)
++	if err != nil {
++		return nil, err
++	}
++	return sharedKey, nil
++}
++
+ type ecdhKeyExchange struct {
+ 	id    CurveID
+ 	curve ecdh.Curve
+@@ -186,20 +221,23 @@ type hybridKeyExchange struct {
+ 	mlkemPublicKeySize  int
+ 	mlkemCiphertextSize int
+ 
+-	newMLKEMPrivateKey func([]byte) (mlkem.Decapsulator, error)
+-	newMLKEMPublicKey  func([]byte) (mlkem.Encapsulator, error)
++	mlkemGenerateKey  func() (mlkem.Decapsulator, error)
++	mlkemNewPublicKey func([]byte) (mlkem.Encapsulator, error)
+ }
+ 
+ func (ke *hybridKeyExchange) keyShares(rand io.Reader) (*keySharePrivateKeys, []keyShare, error) {
+-	priv, ecdhShares, err := ke.ecdh.keyShares(rand)
++	var (
++		priv       *keySharePrivateKeys
++		ecdhShares []keyShare
++		err        error
++	)
++	fips140.WithoutEnforcement(func() { // Hybrid of ML-KEM, which is Approved.
++		priv, ecdhShares, err = ke.ecdh.keyShares(rand)
++	})
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+-	seed := make([]byte, mlkem.SeedSize)
+-	if _, err := io.ReadFull(rand, seed); err != nil {
+-		return nil, nil, err
+-	}
+-	priv.mlkem, err = ke.newMLKEMPrivateKey(seed)
++	priv.mlkem, err = ke.mlkemGenerateKey()
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+@@ -227,11 +265,18 @@ func (ke *hybridKeyExchange) serverSharedSecret(rand io.Reader, clientKeyShare [
+ 		ecdhShareData = clientKeyShare[:ke.ecdhElementSize]
+ 		mlkemShareData = clientKeyShare[ke.ecdhElementSize:]
+ 	}
+-	ecdhSharedSecret, ks, err := ke.ecdh.serverSharedSecret(rand, ecdhShareData)
++	var (
++		ecdhSharedSecret []byte
++		ks               keyShare
++		err              error
++	)
++	fips140.WithoutEnforcement(func() { // Hybrid of ML-KEM, which is Approved.
++		ecdhSharedSecret, ks, err = ke.ecdh.serverSharedSecret(rand, ecdhShareData)
++	})
+ 	if err != nil {
+ 		return nil, keyShare{}, err
+ 	}
+-	mlkemPeerKey, err := ke.newMLKEMPublicKey(mlkemShareData)
++	mlkemPeerKey, err := ke.mlkemNewPublicKey(mlkemShareData)
+ 	if err != nil {
+ 		return nil, keyShare{}, err
+ 	}
+@@ -265,10 +310,15 @@ func (ke *hybridKeyExchange) clientSharedSecret(priv *keySharePrivateKeys, serve
+ 		ecdhShareData = serverKeyShare[:ke.ecdhElementSize]
+ 		mlkemShareData = serverKeyShare[ke.ecdhElementSize:]
+ 	}
+-	//[uTLS] SECTION START
+-	useSeperateEcdhe := ke.id == X25519Kyber768Draft00 || priv.mlkemEcdhe != nil
+-	ecdhSharedSecret, err := ke.ecdh.clientSharedSecretChooseEcdhe(priv, ecdhShareData, useSeperateEcdhe)
+-	//[uTLS] SECTION END
++	var (
++		ecdhSharedSecret []byte
++		err              error
++	)
++	fips140.WithoutEnforcement(func() { // Hybrid of ML-KEM, which is Approved.
++		// [uTLS] Browser presets can use independent hybrid/classical keys.
++		useSeperateEcdhe := ke.id == X25519Kyber768Draft00 || priv.mlkemEcdhe != nil
++		ecdhSharedSecret, err = ke.ecdh.clientSharedSecretChooseEcdhe(priv, ecdhShareData, useSeperateEcdhe)
++	})
+ 	if err != nil {
+ 		return nil, err
+ 	}
+diff --git a/prf.go b/prf.go
+index 18f8396..cc36399 100644
+--- a/prf.go
++++ b/prf.go
+@@ -249,7 +249,7 @@ func noEKMBecauseRenegotiation(label string, context []byte, length int) ([]byte
+ // Master Secret is not negotiated and thus we wish to fail all key-material
+ // export requests.
+ func noEKMBecauseNoEMS(label string, context []byte, length int) ([]byte, error) {
+-	return nil, errors.New("crypto/tls: ExportKeyingMaterial is unavailable when neither TLS 1.3 nor Extended Master Secret are negotiated; override with GODEBUG=tlsunsafeekm=1")
++	return nil, errors.New("crypto/tls: ExportKeyingMaterial is unavailable when neither TLS 1.3 nor Extended Master Secret are negotiated")
+ }
+ 
+ // ekmFromMasterSecret generates exported keying material as defined in RFC 5705.
+diff --git a/quic.go b/quic.go
+index 204c4c4..a61e918 100644
+--- a/quic.go
++++ b/quic.go
+@@ -8,6 +8,7 @@ import (
+ 	"context"
+ 	"errors"
+ 	"fmt"
++	"net"
+ )
+ 
+ // QUICEncryptionLevel represents a QUIC encryption level used to transmit
+@@ -56,6 +57,9 @@ type QUICConfig struct {
+ 	// stored in the client session cache.
+ 	// The application should use [QUICConn.StoreSession] to store sessions.
+ 	EnableSessionEvents bool
++
++	// ClientHelloInfoConn is the net.Conn to use for the ClientHelloInfo.Conn field.
++	ClientHelloInfoConn net.Conn
+ }
+ 
+ // A QUICEventKind is a type of operation on a QUIC connection.
+@@ -176,20 +180,17 @@ type quicState struct {
+ 	transportParams []byte // to send to the peer
+ 
+ 	enableSessionEvents bool
++	clientHelloInfoConn net.Conn
+ }
+ 
+ // QUICClient returns a new TLS client side connection using QUICTransport as the
+ // underlying transport. The config cannot be nil.
+-//
+-// The config's MinVersion must be at least TLS 1.3.
+ func QUICClient(config *QUICConfig) *QUICConn {
+ 	return newQUICConn(Client(nil, config.TLSConfig), config)
+ }
+ 
+ // QUICServer returns a new TLS server side connection using QUICTransport as the
+ // underlying transport. The config cannot be nil.
+-//
+-// The config's MinVersion must be at least TLS 1.3.
+ func QUICServer(config *QUICConfig) *QUICConn {
+ 	return newQUICConn(Server(nil, config.TLSConfig), config)
+ }
+@@ -199,6 +200,7 @@ func newQUICConn(conn *Conn, config *QUICConfig) *QUICConn {
+ 		signalc:             make(chan struct{}),
+ 		blockedc:            make(chan struct{}),
+ 		enableSessionEvents: config.EnableSessionEvents,
++		clientHelloInfoConn: config.ClientHelloInfoConn,
+ 	}
+ 	conn.quic.events = conn.quic.eventArr[:0]
+ 	return &QUICConn{
+@@ -215,9 +217,6 @@ func (q *QUICConn) Start(ctx context.Context) error {
+ 		return quicError(errors.New("tls: Start called more than once"))
+ 	}
+ 	q.conn.quic.started = true
+-	if q.conn.config.MinVersion < VersionTLS13 {
+-		return quicError(errors.New("tls: Config MinVersion must be at least TLS 1.3"))
+-	}
+ 	go q.conn.HandshakeContext(ctx)
+ 	if _, ok := <-q.conn.quic.blockedc; !ok {
+ 		return q.conn.handshakeErr
+diff --git a/tls.go b/tls.go
+index ac979a1..8759c63 100644
+--- a/tls.go
++++ b/tls.go
+@@ -33,6 +33,7 @@ import (
+ 	"encoding/pem"
+ 	"errors"
+ 	"fmt"
++	"github.com/metacubex/utls/internal/mldsa"
+ 	"net"
+ 	"os"
+ 	"strings"
+@@ -111,6 +112,8 @@ func Listen(network, laddr string, config *Config) (net.Listener, error) {
+ 
+ type timeoutError struct{}
+ 
++var _ error = timeoutError{}
++
+ func (timeoutError) Error() string   { return "tls: DialWithDialer timed out" }
+ func (timeoutError) Timeout() bool   { return true }
+ func (timeoutError) Temporary() bool { return true }
+@@ -238,10 +241,6 @@ func (d *Dialer) DialContext(ctx context.Context, network, addr string) (net.Con
+ // files. The files must contain PEM encoded data. The certificate file may
+ // contain intermediate certificates following the leaf certificate to form a
+ // certificate chain. On successful return, Certificate.Leaf will be populated.
+-//
+-// Before Go 1.23 Certificate.Leaf was left nil, and the parsed certificate was
+-// discarded. This behavior can be re-enabled by setting "x509keypairleaf=0"
+-// in the GODEBUG environment variable.
+ func LoadX509KeyPair(certFile, keyFile string) (Certificate, error) {
+ 	certPEMBlock, err := os.ReadFile(certFile)
+ 	if err != nil {
+@@ -254,14 +253,8 @@ func LoadX509KeyPair(certFile, keyFile string) (Certificate, error) {
+ 	return X509KeyPair(certPEMBlock, keyPEMBlock)
+ }
+ 
+-// var x509keypairleaf = godebug.New("x509keypairleaf") [uTLS]
+-
+ // X509KeyPair parses a public/private key pair from a pair of
+ // PEM encoded data. On successful return, Certificate.Leaf will be populated.
+-//
+-// Before Go 1.23 Certificate.Leaf was left nil, and the parsed certificate was
+-// discarded. This behavior can be re-enabled by setting "x509keypairleaf=0"
+-// in the GODEBUG environment variable.
+ func X509KeyPair(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
+ 	fail := func(err error) (Certificate, error) { return Certificate{}, err }
+ 
+@@ -315,14 +308,7 @@ func X509KeyPair(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
+ 	if err != nil {
+ 		return fail(err)
+ 	}
+-
+-	// [uTLS section begins]
+-	// if x509keypairleaf.Value() != "0" {
+-	// 	cert.Leaf = x509Cert
+-	// } else {
+-	// 	x509keypairleaf.IncNonDefault()
+-	// }
+-	// [uTLS section ends]
++	cert.Leaf = x509Cert
+ 
+ 	cert.PrivateKey, err = parsePrivateKey(keyDERBlock.Bytes)
+ 	if err != nil {
+@@ -354,6 +340,14 @@ func X509KeyPair(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
+ 		if !priv.Public().(ed25519.PublicKey).Equal(pub) {
+ 			return fail(errors.New("tls: private key does not match public key"))
+ 		}
++	case *mldsa.PublicKey:
++		priv, ok := cert.PrivateKey.(*mldsa.PrivateKey)
++		if !ok {
++			return fail(errors.New("tls: private key type does not match public key type"))
++		}
++		if !priv.PublicKey().Equal(pub) {
++			return fail(errors.New("tls: private key does not match public key"))
++		}
+ 	default:
+ 		return fail(errors.New("tls: unknown public key algorithm"))
+ 	}
+@@ -365,20 +359,21 @@ func X509KeyPair(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
+ // PKCS #1 private keys by default, while OpenSSL 1.0.0 generates PKCS #8 keys.
+ // OpenSSL ecparam generates SEC1 EC private keys for ECDSA. We try all three.
+ func parsePrivateKey(der []byte) (crypto.PrivateKey, error) {
+-	if key, err := x509.ParsePKCS1PrivateKey(der); err == nil {
+-		return key, nil
++	key, err := x509.ParsePKCS8PrivateKey(der)
++	pkcs8Err := err // Return the PKCS#8 error if all parsing attempts fail.
++	if err != nil {
++		key, err = x509.ParsePKCS1PrivateKey(der)
+ 	}
+-	if key, err := x509.ParsePKCS8PrivateKey(der); err == nil {
+-		switch key := key.(type) {
+-		case *rsa.PrivateKey, *ecdsa.PrivateKey, ed25519.PrivateKey:
+-			return key, nil
+-		default:
+-			return nil, errors.New("tls: found unknown private key type in PKCS#8 wrapping")
+-		}
++	if err != nil {
++		key, err = x509.ParseECPrivateKey(der)
+ 	}
+-	if key, err := x509.ParseECPrivateKey(der); err == nil {
++	if err != nil {
++		return nil, fmt.Errorf("tls: failed to parse private key: %w", pkcs8Err)
++	}
++	switch key := key.(type) {
++	case *rsa.PrivateKey, *ecdsa.PrivateKey, ed25519.PrivateKey, *mldsa.PrivateKey:
+ 		return key, nil
++	default:
++		return nil, errors.New("tls: found unknown private key type in PKCS#8 wrapping")
+ 	}
+-
+-	return nil, errors.New("tls: failed to parse private key")
+ }
+diff --git a/u_chrome155.go b/u_chrome155.go
+new file mode 100644
+index 0000000..c41b1c8
+--- /dev/null
++++ b/u_chrome155.go
+@@ -0,0 +1,38 @@
++package tls
++
++// chrome155TrustAnchorIDs returns the Chrome Root Store IDs advertised by a fresh
++// Google Chrome 155.0.8059.40 (macOS) connection. Chrome encodes the IDs in
++// lexicographic order. Return fresh slices because ClientHelloSpec is mutable.
++// Source: https://chromium.googlesource.com/chromium/src/+/refs/tags/155.0.8059.40/net/data/ssl/chrome_root_store/root_store.textproto
++func chrome155TrustAnchorIDs() [][]byte {
++	return [][]byte{
++		{0x82, 0xdf, 0x13, 0x02, 0x01},
++		{0x82, 0xdf, 0x13, 0x02, 0x06},
++		{0x82, 0xdf, 0x13, 0x02, 0x0d},
++		{0x82, 0xdf, 0x13, 0x02, 0x0e},
++		{0x82, 0xdf, 0x13, 0x02, 0x0f},
++		{0x82, 0xdf, 0x13, 0x02, 0x12},
++		{0x82, 0xdf, 0x13, 0x02, 0x13},
++		{0x82, 0xdf, 0x13, 0x02, 0x14},
++		{0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x07},
++		{0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x08},
++		{0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x09},
++		{0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x0a},
++		{0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x0b},
++		{0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x0c},
++		{0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x0d},
++		{0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x12},
++		{0x83, 0x9a, 0x64, 0x8c, 0x9b, 0x2d, 0x01, 0x13},
++		{0xd6, 0x79, 0x09, 0x01},
++		{0xd6, 0x79, 0x09, 0x04},
++		{0xd6, 0x79, 0x09, 0x05},
++		{0xd6, 0x79, 0x09, 0x06},
++		{0xd6, 0x79, 0x09, 0x07},
++		{0xd6, 0x79, 0x09, 0x08},
++		{0xd6, 0x79, 0x09, 0x0a},
++		{0xd6, 0x79, 0x09, 0x0b},
++		{0xd6, 0x79, 0x09, 0x0c},
++		{0xd6, 0x79, 0x09, 0x0d},
++		{0xd6, 0x79, 0x09, 0x0f},
++	}
++}
+diff --git a/u_common.go b/u_common.go
+index 770507c..564a3b2 100644
+--- a/u_common.go
++++ b/u_common.go
+@@ -41,6 +41,7 @@ const (
+ 	utlsFakeExtensionCustom             uint16 = 1234   // not IANA assigned, for ALPS
+ 	utlsExtensionECH                    uint16 = 0xfe0d // draft-ietf-tls-esni-17
+ 	utlsExtensionECHOuterExtensions     uint16 = 0xfd00 // draft-ietf-tls-esni-17
++	utlsExtensionTrustAnchors           uint16 = 0xca34 // draft-ietf-tls-trust-anchor-ids
+ 
+ 	// extensions with 'fake' prefix break connection, if server echoes them back
+ 	fakeExtensionEncryptThenMAC       uint16 = 22
+@@ -613,7 +614,7 @@ var (
+ 	HelloFirefox_120  = ClientHelloID{helloFirefox, "120", nil, nil}
+ 	HelloFirefox_148  = ClientHelloID{helloFirefox, "148", nil, nil}
+ 
+-	HelloChrome_Auto        = HelloChrome_133
++	HelloChrome_Auto        = HelloChrome_155
+ 	HelloChrome_58          = ClientHelloID{helloChrome, "58", nil, nil}
+ 	HelloChrome_62          = ClientHelloID{helloChrome, "62", nil, nil}
+ 	HelloChrome_70          = ClientHelloID{helloChrome, "70", nil, nil}
+@@ -645,6 +646,9 @@ var (
+ 	HelloChrome_131 = ClientHelloID{helloChrome, "131", nil, nil}
+ 	// Chrome w/ New ALPS codepoint
+ 	HelloChrome_133 = ClientHelloID{helloChrome, "133", nil, nil}
++	// Chrome 155.0.8059.40 on macOS, with ML-DSA signatures and a snapshot of
++	// the Chrome Root Store trust anchor IDs. See testdata/chrome155_clienthello.md.
++	HelloChrome_155 = ClientHelloID{helloChrome, "155", nil, nil}
+ 
+ 	HelloIOS_Auto = HelloIOS_14
+ 	HelloIOS_11_1 = ClientHelloID{helloIOS, "111", nil, nil} // legacy "111" means 11.1
+diff --git a/u_conn.go b/u_conn.go
+index 08c044d..c84131f 100644
+--- a/u_conn.go
++++ b/u_conn.go
+@@ -38,7 +38,7 @@ type UConn struct {
+ 
+ 	HandshakeState PubClientHandshakeState
+ 
+-	greaseSeed [ssl_grease_last_index]uint16
++	greaseSeed [ssl_grease_seed_count]uint16
+ 
+ 	omitSNIExtension bool
+ 
+@@ -523,6 +523,7 @@ func (uconn *UConn) computeAndUpdateOuterECHExtension(inner *clientHelloMsg, ech
+ 		return fmt.Errorf("extension satisfying EncryptedClientHelloExtension not present")
+ 	}
+ 	oldExt := uconn.Extensions[echExtIdx]
++	defer func() { uconn.Extensions[echExtIdx] = oldExt }()
+ 
+ 	uconn.Extensions[echExtIdx] = &GenericExtension{
+ 		Id:   extensionEncryptedClientHello,
+@@ -552,13 +553,21 @@ func (uconn *UConn) computeAndUpdateOuterECHExtension(inner *clientHelloMsg, ech
+ 		return err
+ 	}
+ 
+-	uconn.Extensions[echExtIdx] = oldExt
+ 	return nil
+ 
+ }
+ 
+ func (uconn *UConn) MarshalClientHello() error {
+ 	if len(uconn.config.EncryptedClientHelloConfigList) > 0 {
++		// Real PSKs must only appear in ClientHelloInner. The custom PSK
++		// controller patches binders in the outer hello, so reject this
++		// combination until it supports the inner transcript. GREASE ECH
++		// does not enter this path and can still be combined with PSK.
++		for _, ext := range uconn.Extensions {
++			if psk, ok := ext.(PreSharedKeyExtension); ok && psk.Len() > 0 {
++				return errors.New("tls: PSK resumption with a custom ECH ClientHello is not supported")
++			}
++		}
+ 		inner, _, ech, err := uconn.makeClientHello()
+ 		if err != nil {
+ 			return err
+@@ -572,7 +581,9 @@ func (uconn *UConn) MarshalClientHello() error {
+ 
+ 		ech.innerHello = inner
+ 
+-		uconn.computeAndUpdateOuterECHExtension(inner, ech, true)
++		if err := uconn.computeAndUpdateOuterECHExtension(inner, ech, true); err != nil {
++			return err
++		}
+ 
+ 		uconn.echCtx = ech
+ 		return nil
+diff --git a/u_handshake_client.go b/u_handshake_client.go
+index 790a003..ece41ca 100644
+--- a/u_handshake_client.go
++++ b/u_handshake_client.go
+@@ -70,6 +70,7 @@ func (hs *clientHandshakeStateTLS13) decompressCert(m utlsCompressedCertificateM
+ 
+ 	switch CertCompressionAlgo(m.algorithm) {
+ 	case CertCompressionBrotli:
++		// [prizrak] keep andybalholm/brotli: go-brrr needs Go 1.22.
+ 		decompressed = brotli.NewReader(compressed)
+ 
+ 	case CertCompressionZlib:
+@@ -101,8 +102,8 @@ func (hs *clientHandshakeStateTLS13) decompressCert(m utlsCompressedCertificateM
+ 	rawMsg[2] = uint8(m.uncompressedLength >> 8)
+ 	rawMsg[3] = uint8(m.uncompressedLength)
+ 
+-	n, err := decompressed.Read(rawMsg[4:])
+-	if err != nil && !errors.Is(err, io.EOF) {
++	n, err := io.ReadFull(decompressed, rawMsg[4:])
++	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+ 		c.sendAlert(alertBadCertificate)
+ 		return nil, err
+ 	}
+@@ -113,6 +114,24 @@ func (hs *clientHandshakeStateTLS13) decompressCert(m utlsCompressedCertificateM
+ 		c.sendAlert(alertBadCertificate)
+ 		return nil, fmt.Errorf("decompressed len (%d) does not match specified len (%d)", n, m.uncompressedLength)
+ 	}
++	// Read through the end of the stream to detect excess output and terminal
++	// decoder errors that may be deferred until after the last output byte.
++	var extra [1]byte
++	n, err = io.ReadFull(decompressed, extra[:])
++	if n != 0 {
++		c.sendAlert(alertBadCertificate)
++		return nil, fmt.Errorf("decompressed len exceeds specified len (%d)", m.uncompressedLength)
++	}
++	if !errors.Is(err, io.EOF) {
++		c.sendAlert(alertBadCertificate)
++		return nil, err
++	}
++	// A decoder can stop at the end of its stream without consuming the rest
++	// of the compressed certificate message.
++	if compressed.Len() != 0 {
++		c.sendAlert(alertBadCertificate)
++		return nil, errors.New("trailing data after compressed certificate stream")
++	}
+ 	certMsg := new(certificateMsgTLS13)
+ 	if !certMsg.unmarshal(rawMsg) {
+ 		return nil, c.sendAlert(alertUnexpectedMessage)
+@@ -189,7 +208,7 @@ func (c *Conn) makeClientHelloForApplyPreset() (*clientHelloMsg, *keySharePrivat
+ 		return nil, nil, nil, errors.New("tls: NextProtos values too large")
+ 	}
+ 
+-	supportedVersions := config.supportedVersions(roleClient)
++	supportedVersions := config.supportedVersions(roleClient, c.quic != nil)
+ 	if len(supportedVersions) == 0 {
+ 		return nil, nil, nil, errors.New("tls: no supported versions satisfy MinVersion and MaxVersion")
+ 	}
+@@ -250,8 +269,8 @@ func (c *Conn) makeClientHelloForApplyPreset() (*clientHelloMsg, *keySharePrivat
+ 	}
+ 
+ 	if maxVersion >= VersionTLS12 {
+-		hello.supportedSignatureAlgorithms = supportedSignatureAlgorithms(minVersion)
+-		hello.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithmsCert()
++		hello.supportedSignatureAlgorithms = supportedSignatureAlgorithms(minVersion, maxVersion)
++		hello.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithmsCert(minVersion, maxVersion)
+ 	}
+ 
+ 	var keyShareKeys *keySharePrivateKeys
+@@ -270,7 +289,7 @@ func (c *Conn) makeClientHelloForApplyPreset() (*clientHelloMsg, *keySharePrivat
+ 		}
+ 
+ 		if len(hello.supportedCurves) == 0 {
+-			return nil, nil, nil, errors.New("tls: no supported elliptic curves for ECDHE")
++			return nil, nil, nil, errors.New("tls: no supported key exchange methods (CurveIDs)")
+ 		}
+ 		// curveID := hello.supportedCurves[0]
+ 		// keyShareKeys = &keySharePrivateKeys{curveID: curveID}
+@@ -543,7 +562,7 @@ func (c *UConn) clientHandshake(ctx context.Context) (err error) {
+ 	// If we are negotiating a protocol version that's lower than what we
+ 	// support, check for the server downgrade canaries.
+ 	// See RFC 8446, Section 4.1.3.
+-	maxVers := c.config.maxSupportedVersion(roleClient)
++	maxVers := c.config.maxSupportedVersion(roleClient, c.quic != nil)
+ 	tls12Downgrade := string(serverHello.random[24:]) == downgradeCanaryTLS12
+ 	tls11Downgrade := string(serverHello.random[24:]) == downgradeCanaryTLS11
+ 	if maxVers == VersionTLS13 && c.vers <= VersionTLS12 && (tls12Downgrade || tls11Downgrade) ||
+diff --git a/u_parrots.go b/u_parrots.go
+index 425ab6d..a20f671 100644
+--- a/u_parrots.go
++++ b/u_parrots.go
+@@ -964,6 +964,84 @@ func utlsIdToSpec(id ClientHelloID) (ClientHelloSpec, error) {
+ 				&UtlsGREASEExtension{},
+ 			}),
+ 		}, nil
++	case HelloChrome_155:
++		return ClientHelloSpec{
++			CipherSuites: []uint16{
++				GREASE_PLACEHOLDER,
++				TLS_AES_128_GCM_SHA256,
++				TLS_AES_256_GCM_SHA384,
++				TLS_CHACHA20_POLY1305_SHA256,
++				TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
++				TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
++				TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
++				TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
++				TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
++				TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
++				TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
++				TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
++				TLS_RSA_WITH_AES_128_GCM_SHA256,
++				TLS_RSA_WITH_AES_256_GCM_SHA384,
++				TLS_RSA_WITH_AES_128_CBC_SHA,
++				TLS_RSA_WITH_AES_256_CBC_SHA,
++			},
++			CompressionMethods: []byte{
++				0x00, // compressionNone
++			},
++			Extensions: ShuffleChromeTLSExtensions([]TLSExtension{
++				&UtlsGREASEExtension{},
++				&SNIExtension{},
++				&ExtendedMasterSecretExtension{},
++				&RenegotiationInfoExtension{Renegotiation: RenegotiateOnceAsClient},
++				&SupportedCurvesExtension{[]CurveID{
++					GREASE_PLACEHOLDER,
++					X25519MLKEM768,
++					X25519,
++					CurveP256,
++					CurveP384,
++				}},
++				&SupportedPointsExtension{SupportedPoints: []byte{
++					0x00, // pointFormatUncompressed
++				}},
++				&SessionTicketExtension{},
++				&ALPNExtension{AlpnProtocols: []string{"h2", "http/1.1"}},
++				&StatusRequestExtension{},
++				&SignatureAlgorithmsExtension{SupportedSignatureAlgorithms: []SignatureScheme{
++					GREASE_PLACEHOLDER,
++					MLDSA44,
++					MLDSA65,
++					MLDSA87,
++					ECDSAWithP256AndSHA256,
++					PSSWithSHA256,
++					PKCS1WithSHA256,
++					ECDSAWithP384AndSHA384,
++					PSSWithSHA384,
++					PKCS1WithSHA384,
++					PSSWithSHA512,
++					PKCS1WithSHA512,
++				}},
++				&SCTExtension{},
++				&KeyShareExtension{[]KeyShare{
++					{Group: CurveID(GREASE_PLACEHOLDER), Data: []byte{0}},
++					{Group: X25519MLKEM768},
++					{Group: X25519},
++				}},
++				&PSKKeyExchangeModesExtension{[]uint8{
++					PskModeDHE,
++				}},
++				&SupportedVersionsExtension{[]uint16{
++					GREASE_PLACEHOLDER,
++					VersionTLS13,
++					VersionTLS12,
++				}},
++				&UtlsCompressCertExtension{[]CertCompressionAlgo{
++					CertCompressionBrotli,
++				}},
++				&ApplicationSettingsExtensionNew{SupportedProtocols: []string{"h2"}},
++				&TrustAnchorsExtension{TrustAnchorIDs: chrome155TrustAnchorIDs()},
++				BoringGREASEECH(),
++				&UtlsGREASEExtension{},
++			}),
++		}, nil
+ 	case HelloFirefox_55, HelloFirefox_56:
+ 		return ClientHelloSpec{
+ 			TLSVersMax: VersionTLS12,
+@@ -3064,7 +3142,7 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+ 	}
+ 
+ 	// Currently, GREASE is assumed to come from BoringSSL
+-	grease_bytes := make([]byte, 2*ssl_grease_last_index)
++	grease_bytes := make([]byte, 2*ssl_grease_seed_count)
+ 	grease_extensions_seen := 0
+ 	_, err = io.ReadFull(uconn.config.rand(), grease_bytes)
+ 	if err != nil {
+@@ -3073,7 +3151,7 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+ 	for i := range uconn.greaseSeed {
+ 		uconn.greaseSeed[i] = binary.LittleEndian.Uint16(grease_bytes[2*i : 2*i+2])
+ 	}
+-	if GetBoringGREASEValue(uconn.greaseSeed, ssl_grease_extension1) == GetBoringGREASEValue(uconn.greaseSeed, ssl_grease_extension2) {
++	if getBoringGREASEValue(uconn.greaseSeed[:], ssl_grease_extension1) == getBoringGREASEValue(uconn.greaseSeed[:], ssl_grease_extension2) {
+ 		uconn.greaseSeed[ssl_grease_extension2] ^= 0x1010
+ 	}
+ 
+@@ -3081,7 +3159,7 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+ 	copy(hello.CipherSuites, p.CipherSuites)
+ 	for i := range hello.CipherSuites {
+ 		if isGREASEUint16(hello.CipherSuites[i]) { // just in case the user set a GREASE value instead of unGREASEd
+-			hello.CipherSuites[i] = GetBoringGREASEValue(uconn.greaseSeed, ssl_grease_cipher)
++			hello.CipherSuites[i] = getBoringGREASEValue(uconn.greaseSeed[:], ssl_grease_cipher)
+ 		}
+ 	}
+ 
+@@ -3117,9 +3195,9 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+ 		case *UtlsGREASEExtension:
+ 			switch grease_extensions_seen {
+ 			case 0:
+-				ext.Value = GetBoringGREASEValue(uconn.greaseSeed, ssl_grease_extension1)
++				ext.Value = getBoringGREASEValue(uconn.greaseSeed[:], ssl_grease_extension1)
+ 			case 1:
+-				ext.Value = GetBoringGREASEValue(uconn.greaseSeed, ssl_grease_extension2)
++				ext.Value = getBoringGREASEValue(uconn.greaseSeed[:], ssl_grease_extension2)
+ 				ext.Body = []byte{0}
+ 			default:
+ 				return errors.New("at most 2 grease extensions are supported")
+@@ -3128,7 +3206,13 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+ 		case *SupportedCurvesExtension:
+ 			for i := range ext.Curves {
+ 				if isGREASEUint16(uint16(ext.Curves[i])) {
+-					ext.Curves[i] = CurveID(GetBoringGREASEValue(uconn.greaseSeed, ssl_grease_group))
++					ext.Curves[i] = CurveID(getBoringGREASEValue(uconn.greaseSeed[:], ssl_grease_group))
++				}
++			}
++		case *SignatureAlgorithmsExtension:
++			for i, scheme := range ext.SupportedSignatureAlgorithms {
++				if isGREASEUint16(uint16(scheme)) {
++					ext.SupportedSignatureAlgorithms[i] = SignatureScheme(getBoringGREASEValue(uconn.greaseSeed[:], ssl_grease_signature_algorithm))
+ 				}
+ 			}
+ 		case *KeyShareExtension:
+@@ -3137,7 +3221,7 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+ 			for i := range ext.KeyShares {
+ 				curveID := ext.KeyShares[i].Group
+ 				if isGREASEUint16(uint16(curveID)) { // just in case the user set a GREASE value instead of unGREASEd
+-					ext.KeyShares[i].Group = CurveID(GetBoringGREASEValue(uconn.greaseSeed, ssl_grease_group))
++					ext.KeyShares[i].Group = CurveID(getBoringGREASEValue(uconn.greaseSeed[:], ssl_grease_group))
+ 					continue
+ 				}
+ 				if len(ext.KeyShares[i].Data) > 1 {
+@@ -3146,7 +3230,17 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+ 
+ 				isHybridReuse := len(ext.KeyShares[i].Data) == 1 && ext.KeyShares[i].Data[0] == keyShareHybridReuseMarker
+ 				isClassicalReuse := len(ext.KeyShares[i].Data) == 1 && ext.KeyShares[i].Data[0] == keyShareClassicalReuseMarker
+-				if curveID == X25519MLKEM768 || curveID == X25519Kyber768Draft00 {
++				if curveID == MLKEM1024 {
++					if isHybridReuse || isClassicalReuse {
++						return errors.New("keyshare reuse is not supported for MLKEM1024")
++					}
++					mlkemKey, err := mlkem.GenerateKey1024()
++					if err != nil {
++						return err
++					}
++					ext.KeyShares[i].Data = mlkemKey.EncapsulationKey().Bytes()
++					uconn.HandshakeState.State13.KeyShareKeys.Mlkem = mlkemKey
++				} else if curveID == X25519MLKEM768 || curveID == X25519Kyber768Draft00 {
+ 					if isClassicalReuse {
+ 						return fmt.Errorf("hybrid keyshare reuse mismatch: classical marker is invalid for hybrid group %v", curveID)
+ 					}
+@@ -3203,6 +3297,8 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+ 							// only do this once for the first non-grease curve
+ 							uconn.HandshakeState.State13.KeyShareKeys.Ecdhe = reusedKey
+ 							preferredCurveIsSet = true
++						} else {
++							uconn.HandshakeState.State13.KeyShareKeys.addEcdheFallback(curveID, reusedKey)
+ 						}
+ 						continue
+ 					}
+@@ -3218,13 +3314,16 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+ 						// only do this once for the first non-grease curve
+ 						uconn.HandshakeState.State13.KeyShareKeys.Ecdhe = ecdheKey
+ 						preferredCurveIsSet = true
++					} else {
++						// keep it: the server may select this key share
++						uconn.HandshakeState.State13.KeyShareKeys.addEcdheFallback(curveID, ecdheKey)
+ 					}
+ 				}
+ 			}
+ 		case *SupportedVersionsExtension:
+ 			for i := range ext.Versions {
+ 				if isGREASEUint16(ext.Versions[i]) { // just in case the user set a GREASE value instead of unGREASEd
+-					ext.Versions[i] = GetBoringGREASEValue(uconn.greaseSeed, ssl_grease_version)
++					ext.Versions[i] = getBoringGREASEValue(uconn.greaseSeed[:], ssl_grease_version)
+ 				}
+ 			}
+ 		case *NPNExtension:
+diff --git a/u_public.go b/u_public.go
+index 0b7f08a..74d61f5 100644
+--- a/u_public.go
++++ b/u_public.go
+@@ -911,9 +911,19 @@ func (kpk *kemPrivateKey) ToPublic() *KemPrivateKey {
+ 
+ type KeySharePrivateKeys struct {
+ 	// CurveID    CurveID
+-	Ecdhe      *ecdh.PrivateKey
+-	Mlkem      mlkem.Decapsulator
+-	MlkemEcdhe *ecdh.PrivateKey
++	Ecdhe         *ecdh.PrivateKey
++	Mlkem         mlkem.Decapsulator
++	MlkemEcdhe    *ecdh.PrivateKey
++	EcdheFallback map[CurveID]*ecdh.PrivateKey // [uTLS] keys of the classical key shares after the first, by group
++}
++
++// [uTLS] addEcdheFallback keeps the private key of a classical key share
++// sent after the first one.
++func (ksp *KeySharePrivateKeys) addEcdheFallback(curveID CurveID, key *ecdh.PrivateKey) {
++	if ksp.EcdheFallback == nil {
++		ksp.EcdheFallback = make(map[CurveID]*ecdh.PrivateKey)
++	}
++	ksp.EcdheFallback[curveID] = key
+ }
+ 
+ func (ksp *KeySharePrivateKeys) ToPrivate() *keySharePrivateKeys {
+@@ -922,9 +932,10 @@ func (ksp *KeySharePrivateKeys) ToPrivate() *keySharePrivateKeys {
+ 	}
+ 	return &keySharePrivateKeys{
+ 		// curveID:    ksp.CurveID,
+-		ecdhe:      ksp.Ecdhe,
+-		mlkem:      ksp.Mlkem,
+-		mlkemEcdhe: ksp.MlkemEcdhe,
++		ecdhe:         ksp.Ecdhe,
++		mlkem:         ksp.Mlkem,
++		mlkemEcdhe:    ksp.MlkemEcdhe,
++		ecdheFallback: ksp.EcdheFallback,
+ 	}
+ }
+ 
+@@ -934,8 +945,9 @@ func (ksp *keySharePrivateKeys) ToPublic() *KeySharePrivateKeys {
+ 	}
+ 	return &KeySharePrivateKeys{
+ 		// CurveID:    ksp.curveID,
+-		Ecdhe:      ksp.ecdhe,
+-		Mlkem:      ksp.mlkem,
+-		MlkemEcdhe: ksp.mlkemEcdhe,
++		Ecdhe:         ksp.ecdhe,
++		Mlkem:         ksp.mlkem,
++		MlkemEcdhe:    ksp.mlkemEcdhe,
++		EcdheFallback: ksp.ecdheFallback,
+ 	}
+ }
+diff --git a/u_quic.go b/u_quic.go
+index a615985..975ca31 100644
+--- a/u_quic.go
++++ b/u_quic.go
+@@ -20,10 +20,8 @@ type UQUICConn struct {
+ 	sessionTicketSent bool
+ }
+ 
+-// QUICClient returns a new TLS client side connection using QUICTransport as the
++// UQUICClient returns a new TLS client side connection using QUICTransport as the
+ // underlying transport. The config cannot be nil.
+-//
+-// The config's MinVersion must be at least TLS 1.3.
+ func UQUICClient(config *QUICConfig, clientHelloID ClientHelloID) *UQUICConn {
+ 	return newUQUICConn(UClient(nil, config.TLSConfig, clientHelloID), config)
+ }
+@@ -33,6 +31,7 @@ func newUQUICConn(uconn *UConn, config *QUICConfig) *UQUICConn {
+ 		signalc:             make(chan struct{}),
+ 		blockedc:            make(chan struct{}),
+ 		enableSessionEvents: config.EnableSessionEvents,
++		clientHelloInfoConn: config.ClientHelloInfoConn,
+ 	}
+ 	uconn.quic.events = uconn.quic.eventArr[:0]
+ 	return &UQUICConn{
+@@ -49,9 +48,6 @@ func (q *UQUICConn) Start(ctx context.Context) error {
+ 		return quicError(errors.New("tls: Start called more than once"))
+ 	}
+ 	q.conn.quic.started = true
+-	if q.conn.config.MinVersion < VersionTLS13 {
+-		return quicError(errors.New("tls: Config MinVersion must be at least TLS 1.3"))
+-	}
+ 	go q.conn.HandshakeContext(ctx)
+ 	if _, ok := <-q.conn.quic.blockedc; !ok {
+ 		return q.conn.handshakeErr
+diff --git a/u_readfrom_go120.go b/u_readfrom_go120.go
+new file mode 100644
+index 0000000..3d33114
+--- /dev/null
++++ b/u_readfrom_go120.go
+@@ -0,0 +1,47 @@
++// Copyright 2010 The Go Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++//go:build !go1.21
++
++package tls
++
++import (
++	"bytes"
++	"io"
++)
++
++// atLeastReader reads from R, stopping with EOF once at least N bytes have been
++// read. It is different from an io.LimitedReader in that it doesn't cut short
++// the last Read call, and in that it considers an early EOF an error.
++type atLeastReader struct {
++	R io.Reader
++	N int64
++}
++
++func (r *atLeastReader) Read(p []byte) (int, error) {
++	if r.N <= 0 {
++		return 0, io.EOF
++	}
++	n, err := r.R.Read(p)
++	r.N -= int64(n) // won't underflow unless len(p) >= n > 9223372036854775809
++	if r.N > 0 && err == io.EOF {
++		return n, io.ErrUnexpectedEOF
++	}
++	if r.N <= 0 && err == nil {
++		return n, io.EOF
++	}
++	return n, err
++}
++
++// readAtLeast reads from r into buf until needs more bytes have arrived.
++// bytes.Buffer.AvailableBuffer needs Go 1.21, so this keeps the pre-Go 1.27
++// atLeastReader form of (*Conn).readFromUntil.
++func readAtLeast(buf *bytes.Buffer, r io.Reader, needs int) error {
++	// There might be extra input waiting on the wire. Make a best effort
++	// attempt to fetch it so that it can be used in (*Conn).Read to
++	// "predict" closeNotify alerts.
++	buf.Grow(needs + bytes.MinRead)
++	_, err := buf.ReadFrom(&atLeastReader{r, int64(needs)})
++	return err
++}
+diff --git a/u_readfrom_go121.go b/u_readfrom_go121.go
+new file mode 100644
+index 0000000..4a0c39d
+--- /dev/null
++++ b/u_readfrom_go121.go
+@@ -0,0 +1,45 @@
++// Copyright 2010 The Go Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++//go:build go1.21
++
++package tls
++
++import (
++	"bytes"
++	"io"
++)
++
++// readAtLeast reads from r into buf until needs more bytes have arrived.
++// It is the loop of upstream (*Conn).readFromUntil.
++func readAtLeast(buf *bytes.Buffer, r io.Reader, needs int) error {
++	// There might be extra input waiting on the wire. Make a best effort
++	// attempt to fetch it so that it can be used in (*Conn).Read to
++	// "predict" closeNotify alerts.
++	// TODO(dmo): we use bytes.MinRead here because we used the buffer
++	// ReadFrom mechanism to avoid allocations, but we've hoisted this
++	// loop for performance. We really should use our own heuristic here
++	// for how much to read ahead.
++	buf.Grow(needs + bytes.MinRead)
++	for {
++		b := buf.AvailableBuffer()[:buf.Available()]
++		n, err := r.Read(b)
++		// This write is just to update the internal state of the
++		// rawInput bytes.Buffer. It cannot fail.
++		buf.Write(b[:n])
++		needs -= n
++		if needs <= 0 {
++			if err == io.EOF {
++				err = nil
++			}
++			return err
++		}
++		if err == io.EOF {
++			return io.ErrUnexpectedEOF
++		}
++		if err != nil {
++			return err
++		}
++	}
++}
+diff --git a/u_tls_extensions.go b/u_tls_extensions.go
+index 77ee10c..8efe37b 100644
+--- a/u_tls_extensions.go
++++ b/u_tls_extensions.go
+@@ -79,6 +79,8 @@ func ExtensionFromID(id uint16) TLSExtension {
+ 		return &FakeChannelIDExtension{}
+ 	case utlsExtensionECH:
+ 		return &GREASEEncryptedClientHelloExtension{}
++	case utlsExtensionTrustAnchors:
++		return &TrustAnchorsExtension{}
+ 	case extensionRenegotiationInfo:
+ 		return &RenegotiationInfoExtension{}
+ 	default:
+@@ -966,9 +968,14 @@ const (
+ 	ssl_grease_extension2
+ 	ssl_grease_version
+ 	ssl_grease_ticket_extension
+-	ssl_grease_last_index = ssl_grease_ticket_extension
++	ssl_grease_ech_config_id
++	ssl_grease_signature_algorithm
++	ssl_grease_seed_count
+ )
+ 
++// Preserve the array size accepted by the exported GetBoringGREASEValue helper.
++const ssl_grease_last_index = ssl_grease_ticket_extension
++
+ // it is responsibility of user not to generate multiple grease extensions with same value
+ type UtlsGREASEExtension struct {
+ 	Value uint16
+@@ -981,6 +988,10 @@ func (e *UtlsGREASEExtension) writeToUConn(uc *UConn) error {
+ 
+ // will panic if ssl_grease_last_index[index] is out of bounds.
+ func GetBoringGREASEValue(greaseSeed [ssl_grease_last_index]uint16, index int) uint16 {
++	return getBoringGREASEValue(greaseSeed[:], index)
++}
++
++func getBoringGREASEValue(greaseSeed []uint16, index int) uint16 {
+ 	// GREASE value is back from deterministic to random.
+ 	// https://github.com/google/boringssl/blob/a365138ac60f38b64bfc608b493e0f879845cb88/ssl/handshake_client.c#L530
+ 	ret := uint16(greaseSeed[index])
+diff --git a/u_trust_anchors.go b/u_trust_anchors.go
+new file mode 100644
+index 0000000..4fc9fb4
+--- /dev/null
++++ b/u_trust_anchors.go
+@@ -0,0 +1,103 @@
++package tls
++
++import (
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++
++	"golang.org/x/crypto/cryptobyte"
++)
++
++// TrustAnchorsExtension implements the draft trust_anchors ClientHello extension
++// (0xca34). Each TrustAnchorID contains 1 to 255 bytes; an empty list is valid.
++// The IDs are advertised to the server and do not change Config.RootCAs.
++type TrustAnchorsExtension struct {
++	TrustAnchorIDs [][]byte `json:"trust_anchor_ids"`
++}
++
++func (e *TrustAnchorsExtension) writeToUConn(_ *UConn) error {
++	return nil
++}
++
++func (e *TrustAnchorsExtension) Len() int {
++	n := 6 // Extension header and RequestedTrustAnchorList length.
++	for _, id := range e.TrustAnchorIDs {
++		n += 1 + len(id)
++	}
++	return n
++}
++
++func (e *TrustAnchorsExtension) validate() error {
++	listLen := 0
++	for _, id := range e.TrustAnchorIDs {
++		if len(id) == 0 || len(id) > 255 {
++			return fmt.Errorf("tls: trust anchor ID length %d is outside 1..255", len(id))
++		}
++		listLen += 1 + len(id)
++		// The extension_data length also includes the two-byte list length.
++		if listLen > (1<<16)-3 {
++			return errors.New("tls: trust anchors extension data exceeds 65535 bytes")
++		}
++	}
++	return nil
++}
++
++func (e *TrustAnchorsExtension) Read(b []byte) (int, error) {
++	if err := e.validate(); err != nil {
++		return 0, err
++	}
++	if len(b) < e.Len() {
++		return 0, io.ErrShortBuffer
++	}
++	listLen := e.Len() - 6
++	b[0] = byte(utlsExtensionTrustAnchors >> 8)
++	b[1] = byte(utlsExtensionTrustAnchors & 0xff)
++	b[2] = byte((2 + listLen) >> 8)
++	b[3] = byte(2 + listLen)
++	b[4] = byte(listLen >> 8)
++	b[5] = byte(listLen)
++	offset := 6
++	for _, id := range e.TrustAnchorIDs {
++		b[offset] = byte(len(id))
++		offset++
++		offset += copy(b[offset:], id)
++	}
++	return offset, io.EOF
++}
++
++func (e *TrustAnchorsExtension) Write(b []byte) (int, error) {
++	if len(b) > (1<<16)-1 {
++		return 0, errors.New("tls: trust anchors extension data exceeds 65535 bytes")
++	}
++	extData := cryptobyte.String(b)
++	var list cryptobyte.String
++	if !extData.ReadUint16LengthPrefixed(&list) || !extData.Empty() {
++		return 0, errors.New("tls: unable to read trust anchors extension data")
++	}
++	ids := make([][]byte, 0)
++	for !list.Empty() {
++		var id cryptobyte.String
++		if !list.ReadUint8LengthPrefixed(&id) || id.Empty() {
++			return 0, errors.New("tls: unable to read trust anchor ID")
++		}
++		ids = append(ids, append([]byte(nil), id...))
++	}
++	e.TrustAnchorIDs = ids
++	return len(b), nil
++}
++
++func (e *TrustAnchorsExtension) UnmarshalJSON(data []byte) error {
++	var value struct {
++		TrustAnchorIDs [][]byte `json:"trust_anchor_ids"`
++	}
++	if err := json.Unmarshal(data, &value); err != nil {
++		return err
++	}
++	parsed := TrustAnchorsExtension{TrustAnchorIDs: value.TrustAnchorIDs}
++	if err := parsed.validate(); err != nil {
++		return err
++	}
++	e.TrustAnchorIDs = parsed.TrustAnchorIDs
++	return nil
++}
