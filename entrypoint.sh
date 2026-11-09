@@ -79,6 +79,9 @@ TPROXY="${TPROXY:-true}"
 LOG_LEVEL="${LOG_LEVEL:-error}"
 EXTERNAL_UI_URL="${EXTERNAL_UI_URL:-https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip}"
 UI_SECRET="${UI_SECRET:-}"
+# Пусто — ключ не пишется, mihomo берёт свои 15 с.
+KEEP_ALIVE_IDLE="${KEEP_ALIVE_IDLE:-}"
+KEEP_ALIVE_INTERVAL="${KEEP_ALIVE_INTERVAL:-}"
 CONFIG_DIR="/root/.config/mihomo"
 AWG_DIR="$CONFIG_DIR/awg"
 TRUSTTUNNEL_DIR="$CONFIG_DIR/trusttunnel"
@@ -193,6 +196,8 @@ export TPROXY
 export LOG_LEVEL
 export EXTERNAL_UI_URL
 export UI_SECRET
+export KEEP_ALIVE_IDLE
+export KEEP_ALIVE_INTERVAL
 export FAKE_IP_RANGE
 export FAKE_IP_TTL
 export DNS_DEFAULT_NAMESERVER
@@ -3337,6 +3342,20 @@ tun_stack_supported() {
 }
 
 # ------------------- CONFIG -------------------
+# keep-alive-idle / keep-alive-interval из KEEP_ALIVE_IDLE / KEEP_ALIVE_INTERVAL,
+# в секундах. Вывод идёт в конфиг, поэтому предупреждения — в stderr.
+keep_alive_config() {
+  for _ka in "KEEP_ALIVE_IDLE keep-alive-idle" "KEEP_ALIVE_INTERVAL keep-alive-interval"; do
+    set -- $_ka
+    eval "_ka_val=\${$1}"
+    [ -n "$_ka_val" ] || continue
+    case "$_ka_val" in
+      0*|*[!0-9]*) log "WARNING: $1=$_ka_val is not a positive number of seconds, ignored" >&2; continue ;;
+    esac
+    echo "$2: $_ka_val"
+  done
+}
+
 config_file_mihomo() {
   echo "Generating $CONFIG_YAML"
   mkdir -p "$CONFIG_DIR"
@@ -3358,6 +3377,7 @@ unified-delay: true
 ipv6: false
 geodata-mode: true
 find-process-mode: off
+$(keep_alive_config)
 profile:
   store-selected: true
 listeners:

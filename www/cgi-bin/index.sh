@@ -835,7 +835,7 @@ EOF
 <details class="overview-map">
   <summary>Как переменные превращаются в конфиг</summary>
   <div class="map">
-    <article><b>Ядро</b><span>LOG_LEVEL, UI_SECRET, TPROXY, SNIFFER*, DNS_MODE, FAKE_IP_*</span></article>
+    <article><b>Ядро</b><span>LOG_LEVEL, UI_SECRET, KEEP_ALIVE_*, TPROXY, SNIFFER*, DNS_MODE, FAKE_IP_*</span></article>
     <article><b>Прокси-провайдеры</b><span>LINK*, SUB_LINK*, SOCKS*, mounted AWG и proxies_mount</span></article>
     <article><b>DPI</b><span>BYEDPI_CMD*, ZAPRET_CMD*, ZAPRET2_CMD*, packets и WireGuard dst</span></article>
     <article><b>Прокси-группы</b><span>GLOBAL_*, DNS_*, GROUP и переменные вида NAME_GEOSITE/USE/TYPE</span></article>
@@ -904,6 +904,15 @@ EOF
     <div class="grid">
 EOF
   select_field LOG_LEVEL "Уровень логов" "Уровень <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/#log-level\" target=\"_blank\" rel=\"noopener\">log-level</a> mihomo. <code>debug</code> пишет много — включайте только на время разбора проблемы." error "silent error warning info debug"
+  cat <<'EOF'
+    </div>
+  </section>
+  <section class="group-sec">
+    <div class="group-sec-head"><b>TCP keep-alive</b></div>
+    <div class="grid">
+EOF
+  field KEEP_ALIVE_IDLE "Keep-alive idle" "Секунды простоя до первой пробы, <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/\" target=\"_blank\" rel=\"noopener\">keep-alive-idle</a>. Пусто — 15 с по умолчанию mihomo; у Xray по умолчанию 45." "15" number ""
+  field KEEP_ALIVE_INTERVAL "Keep-alive interval" "Секунды между пробами, <a class=\"doc-link\" href=\"https://wiki.metacubex.one/ru/config/general/\" target=\"_blank\" rel=\"noopener\">keep-alive-interval</a>. После 9 проб без ответа соединение закрывается. Пусто — 15 с; у Xray 45." "15" number ""
   cat <<'EOF'
     </div>
   </section>

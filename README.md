@@ -220,6 +220,8 @@ Example: `SNIFFER_SKIP_SRC_ADDRESS=192.168.88.10/32,10.10.0.0/16` and `SNIFFER_S
 | `LOG_LEVEL` | `error` | mihomo log level: `silent`/`error`/`warning`/`info`/`debug`. [Docs](https://wiki.metacubex.one/en/config/general/#_5). |
 | `EXTERNAL_UI_URL` | [MetaCube zip](https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip) | Source zip for the panel served on `:9090`. [Docs](https://wiki.metacubex.one/en/config/general/#url). |
 | `UI_SECRET` | — | Secret for the external controller (port `9090`). Empty = no auth (LAN-only setups). |
+| `KEEP_ALIVE_IDLE` | — | mihomo `keep-alive-idle`: seconds a TCP connection idles before the first keep-alive probe. Empty = mihomo's 15 s (Xray uses 45 s). [Docs](https://wiki.metacubex.one/en/config/general/). |
+| `KEEP_ALIVE_INTERVAL` | — | mihomo `keep-alive-interval`: seconds between keep-alive probes; the connection is dropped after 9 unanswered. Empty = 15 s (Xray uses 45 s). |
 
 The «Mihomo dashboard» button carries the controller address and the secret in the link itself; MetaCubeXD, Zashboard and Yacd-meta all connect from it. On top of that the container writes the address into MetaCubeXD's `ui/config.js` (`defaultBackendURL: location.origin`) once the core is up, which covers opening `:9090/ui/` directly instead of using the button. The secret cannot travel that way -- only the link carries it.
 

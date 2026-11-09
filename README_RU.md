@@ -220,6 +220,8 @@ FAKE_IP_FILTER2=SRC-IP-CIDR,10.10.0.0/16,real-ip
 | `LOG_LEVEL` | `error` | Уровень логов mihomo: `silent`/`error`/`warning`/`info`/`debug`. [Docs](https://wiki.metacubex.one/ru/config/general/#_5). |
 | `EXTERNAL_UI_URL` | [ссылка](https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip) | ZIP-источник для панели mihomo на `:9090`. [Docs](https://wiki.metacubex.one/ru/config/general/#url). |
 | `UI_SECRET` | — | Секрет для external-controller (порт `9090`). Пусто = без авторизации (только LAN). |
+| `KEEP_ALIVE_IDLE` | — | `keep-alive-idle` mihomo: сколько секунд TCP-соединение простаивает до первой keep-alive пробы. Пусто = 15 с mihomo (у Xray 45 с). [Docs](https://wiki.metacubex.one/ru/config/general/). |
+| `KEEP_ALIVE_INTERVAL` | — | `keep-alive-interval` mihomo: секунды между пробами; после 9 проб без ответа соединение закрывается. Пусто = 15 с (у Xray 45 с). |
 
 Кнопка «Панель Mihomo» передаёт адрес контроллера и секрет прямо в ссылке — так подключаются и MetaCubeXD, и Zashboard, и Yacd-meta. Дополнительно контейнер после старта ядра прописывает адрес в `ui/config.js` панели MetaCubeXD (`defaultBackendURL: location.origin`): это нужно, если панель открыли прямым заходом на `:9090/ui/`, минуя кнопку. Секрет таким способом не передать — его несёт только ссылка.
 
