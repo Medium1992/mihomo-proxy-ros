@@ -706,7 +706,9 @@ jobs:
             local file="telegram-images/mihomo-proxy-ros-${name}-${mihomo}${suffix}.tar.gz"
 
             retry docker pull --platform "${platform}" "${image}"
-            docker save "${image}" | gzip -9 > "${file}"
+            # С хранилищем образов containerd save без --platform выгружает
+            # все платформы тега, а скачана только одна.
+            docker save --platform "${platform}" "${image}" | gzip -9 > "${file}"
             docker image rm "${image}" || true
           }
 
