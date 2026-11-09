@@ -669,12 +669,23 @@ jobs:
             local method="$1"
             shift
 
-            response=$(curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${method}" "$@")
-            echo "$response" | grep -q '"ok":true' || {
-              echo "Telegram API call failed:"
-              echo "$response"
-              exit 1
-            }
+            # 429 приходит, когда несколько сборок шлют файлы в чат одновременно:
+            # ждём, сколько просит Telegram, и повторяем.
+            local attempt retry_after
+            for attempt in 1 2 3 4 5; do
+              response=$(curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${method}" "$@")
+              if echo "$response" | grep -q '"ok":true'; then
+                return 0
+              fi
+              retry_after=$(echo "$response" | grep -o '"retry_after":[0-9]*' | cut -d: -f2 || true)
+              [ -n "${retry_after}" ] || break
+              echo "Telegram rate limit, retrying ${method} in $((retry_after + 1))s..."
+              sleep "$((retry_after + 1))"
+            done
+
+            echo "Telegram API call failed:"
+            echo "$response"
+            exit 1
           }
 
           retry() {
