@@ -155,9 +155,11 @@ RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ] && [ "$XHTTP_FLOW" = "1" ]; then \
 # дозванивается сам, и на холодном пуле или при рукопожатии, заблокированном
 # после ClientHello, выходит TCP-соединение на сессию мимо max-connections
 # (как XTLS/Xray-core#6797). Склейка по образцу x/net CL 845005, плюс срок на
-# dial, которого на этом пути не было. Код — в core_patches/xhttp_dial, в
-# апстриме меняется одна строка transport/xhttp/client.go. Тесты гоняет CI до
-# сборки и в альфе при поломке передаёт сюда XHTTP_DIAL=0.
+# dial, которого на этом пути не было. Заодно тело packet-up получает GetBody,
+# чтобы net/http повторял POST'ы, отбитые сервером с малым лимитом потоков.
+# Код — в core_patches/xhttp_dial, в апстриме меняется по строке в
+# transport/xhttp/client.go и config.go. Тесты гоняет CI до сборки и в альфе
+# при поломке передаёт сюда XHTTP_DIAL=0.
 ARG XHTTP_DIAL=1
 COPY core_patches/xhttp_dial /patches/xhttp_dial
 RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ] && [ "$XHTTP_DIAL" = "1" ]; then \
