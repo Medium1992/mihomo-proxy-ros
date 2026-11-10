@@ -33,7 +33,9 @@ import (
 //   - повторный поиск соединения тем же запросом (соединение его не
 //     приняло) за удачным ведущим не встаёт, а дозванивается сразу;
 //   - за ведущим, который дозванивается дольше coalescedDialStale, не ждут:
-//     новый запрос или один из ждущих дозванивается сам.
+//     новый запрос или один из ждущих дозванивается сам;
+//   - если ведущий дозванивается вдвое дольше обычного для этого клиента,
+//     один из ждущих начинает запасной dial (coalescedHedgeMin).
 
 // coalescedDialRetry — сколько ждущий ждёт соединения после того, как ведущий
 // дозвонился и его RoundTrip вернулся, и сколько удачный ведущий держит место.
@@ -67,6 +69,21 @@ var coalescedDialTimeout = 5 * time.Second
 // рукопожатия REALITY на медленном мобильном канале (0,6–0,9 с): меньший
 // давал бы там лишние dial'ы.
 var coalescedDialStale = time.Second
+
+// coalescedHedgeMin — нижняя граница срока запасного dial'а. Потерянный SYN
+// или ClientHello ядро повторит только через секунду, и весь холодный залп
+// ждал бы этого повтора, а сток в это время шёл бы по соседним dial'ам.
+// Поэтому, если ведущий дозванивается вдвое дольше сглаженного времени
+// рукопожатия (dialHistory), один из ждущих начинает запасной dial, а
+// остальные встают за ним; соединение того, кто успеет первым, net/http
+// раздаст всем. Нижняя граница — чтобы на быстром канале шум не давал лишних
+// dial'ов, верхняя — coalescedDialStale: дальше работает уже то правило.
+// Запасной dial бывает только у обычного ведущего: у самого запасного и у
+// ведущих после coalescedDialStale его нет, так что одновременно идут не
+// больше двух dial'ов, а под блокировкой их по-прежнему не больше одного
+// нового в coalescedDialStale. Без истории (первый dial клиента) срок не
+// угадываем, запасного dial'а нет.
+var coalescedHedgeMin = 250 * time.Millisecond
 
 var errCoalescedDialAbandoned = errors.New("xhttp: coalesced dial abandoned")
 
@@ -134,14 +151,62 @@ type leaderDial struct {
 	err     error
 	rtDonec chan struct{} // donec RoundTrip, ради которого dial начат
 	started time.Time     // когда начат dial
-	guard   *guardedDial
-	refs    int // под coalescingTransport.mu: RoundTrip'ы, которые этот dial ждут
+	// hedgeable — обычный ведущий: ему положен запасной dial. Нет у
+	// запасного и у ведущих, начатых после ухода от прежнего.
+	hedgeable bool
+	guard     *guardedDial
+	refs      int // под coalescingTransport.mu: RoundTrip'ы, которые этот dial ждут
 }
 
 type coalescingTransport struct {
 	*http.Transport
+	hist    *dialHistory
 	mu      sync.Mutex
 	leaders map[string]*leaderDial // по адресу, как ключ пула net/http
+}
+
+// dialHistory — сглаженное время удачного dial'а по адресам, общее для всех
+// транспортов одной фабрики, то есть одного клиента XHTTP и одного
+// направления. Холодный залп — это как раз свежие транспорты, и замер внутри
+// транспорта не набрался бы никогда. Глобальным его делать нельзя: адрес —
+// это хост из URL, и прокси за одним CDN-хостом на разных серверах смешали бы
+// замеры. Сглаживание как у SRTT в TCP (вес 1/8): один медленный dial, скажем
+// после смены сети, не растягивает срок сразу, а новая сеть подтягивается за
+// несколько рукопожатий.
+type dialHistory struct {
+	mu   sync.Mutex
+	srtt map[string]time.Duration
+}
+
+func (h *dialHistory) observe(addr string, d time.Duration) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.srtt == nil {
+		h.srtt = make(map[string]time.Duration)
+	}
+	if old, ok := h.srtt[addr]; ok {
+		d = old + (d-old)/8
+	}
+	h.srtt[addr] = d
+}
+
+// hedgeAfter — через сколько после начала dial'а ведущего начинать запасной.
+// ok = false — истории нет или срок не меньше coalescedDialStale.
+func (h *dialHistory) hedgeAfter(addr string) (d time.Duration, ok bool) {
+	if h == nil {
+		return 0, false
+	}
+	h.mu.Lock()
+	srtt, ok := h.srtt[addr]
+	h.mu.Unlock()
+	if !ok {
+		return 0, false
+	}
+	d = 2 * srtt
+	if d < coalescedHedgeMin {
+		d = coalescedHedgeMin
+	}
+	return d, d < coalescedDialStale
 }
 
 // CoalesceDials оборачивает фабрику так, что у её HTTP/2-транспортов dial'ы
@@ -151,13 +216,14 @@ func CoalesceDials(mk TransportMaker) TransportMaker {
 	if mk == nil {
 		return nil
 	}
+	hist := &dialHistory{}
 	return func() http.RoundTripper {
 		rt := mk()
 		t, ok := rt.(*http.Transport)
 		if !ok || t.DialTLSContext == nil || t.Protocols == nil || !t.Protocols.UnencryptedHTTP2() {
 			return rt
 		}
-		c := &coalescingTransport{Transport: t}
+		c := &coalescingTransport{Transport: t, hist: hist}
 		dial := t.DialTLSContext
 		t.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return c.dial(ctx, dial, network, addr)
@@ -189,6 +255,9 @@ func (c *coalescingTransport) dial(ctx context.Context, dial func(context.Contex
 	if done {
 		return nil, errCoalescedDialAbandoned
 	}
+	// Пока этот запрос не уходил от ведущего, его dial обычный; ушёл —
+	// запасной или после повисшего, и запасного ему уже не положено.
+	hedgeable := true
 	for {
 		c.mu.Lock()
 		l := c.leaders[addr]
@@ -201,7 +270,7 @@ func (c *coalescingTransport) dial(ctx context.Context, dial func(context.Contex
 		}
 		if l == nil {
 			g, gctx := newGuardedDial(ctx)
-			l = &leaderDial{dialc: make(chan struct{}), rtDonec: rt.donec, started: time.Now(), guard: g, refs: 1}
+			l = &leaderDial{dialc: make(chan struct{}), rtDonec: rt.donec, started: time.Now(), hedgeable: hedgeable, guard: g, refs: 1}
 			if c.leaders == nil {
 				c.leaders = make(map[string]*leaderDial)
 			}
@@ -216,20 +285,29 @@ func (c *coalescingTransport) dial(ctx context.Context, dial func(context.Contex
 		if !again {
 			return conn, err
 		}
-		// Соединение ведущего нам не досталось или он повис: снимаем его,
-		// чтобы на следующем круге стать ведущим самим, а не ждать его снова.
-		// Если его уже сменил другой, встаём за новым.
+		// Соединение ведущего нам не досталось, он повис или пора запасному:
+		// снимаем его, чтобы на следующем круге стать ведущим самим, а не
+		// ждать его снова. Если его уже сменил другой, встаём за новым.
+		// Сам ведущий при этом дозванивается дальше.
 		c.unlead(l, addr)
+		hedgeable = false
 	}
 }
 
 // follow ждёт ведущего l. again — ведущий дозвонился, а соединение нашему
-// запросу так и не досталось, или ведущий повис: пора дозваниваться самим.
+// запросу так и не досталось, ведущий повис или пора запасному dial'у: пора
+// дозваниваться самим.
 func (c *coalescingTransport) follow(ctx context.Context, l *leaderDial, rt *dialRoundTrip, gotConnc chan struct{}, addr string) (conn net.Conn, err error, again bool) {
 	defer c.release(l, addr)
 	dialc, rtDonec := l.dialc, l.rtDonec
 	var retry <-chan time.Time
-	stale := time.NewTimer(time.Until(l.started.Add(coalescedDialStale)))
+	wait := coalescedDialStale
+	if l.hedgeable {
+		if d, ok := c.hist.hedgeAfter(addr); ok {
+			wait = d
+		}
+	}
+	stale := time.NewTimer(time.Until(l.started.Add(wait)))
 	defer stale.Stop()
 	// Канал, а не stale.C в select: при go 1.20 в go.mod остановленный таймер
 	// может оставить в канале значение.
@@ -293,6 +371,7 @@ func (c *coalescingTransport) lead(ctx context.Context, l *leaderDial, rt *dialR
 		close(l.dialc)
 		return conn, err
 	}
+	c.hist.observe(addr, time.Since(l.started))
 	close(l.dialc)
 	// Удачный ведущий остаётся на месте ещё coalescedDialRetry: net/http
 	// кладёт соединение в пул уже после возврата из dial'а, после настройки
