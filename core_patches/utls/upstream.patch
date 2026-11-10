@@ -2196,7 +2196,7 @@ index 0000000..c41b1c8
 +	}
 +}
 diff --git a/u_common.go b/u_common.go
-index 770507c..564a3b2 100644
+index 770507c..8038a18 100644
 --- a/u_common.go
 +++ b/u_common.go
 @@ -41,6 +41,7 @@ const (
@@ -2207,16 +2207,27 @@ index 770507c..564a3b2 100644
  
  	// extensions with 'fake' prefix break connection, if server echoes them back
  	fakeExtensionEncryptThenMAC       uint16 = 22
-@@ -613,7 +614,7 @@ var (
+@@ -602,7 +603,7 @@ var (
+ 	HelloRandomizedNoALPN = ClientHelloID{helloRandomizedNoALPN, helloAutoVers, nil, nil}
+ 
+ 	// The rest will will parrot given browser.
+-	HelloFirefox_Auto = HelloFirefox_148
++	HelloFirefox_Auto = HelloFirefox_156
+ 	HelloFirefox_55   = ClientHelloID{helloFirefox, "55", nil, nil}
+ 	HelloFirefox_56   = ClientHelloID{helloFirefox, "56", nil, nil}
+ 	HelloFirefox_63   = ClientHelloID{helloFirefox, "63", nil, nil}
+@@ -612,8 +613,9 @@ var (
+ 	HelloFirefox_105  = ClientHelloID{helloFirefox, "105", nil, nil}
  	HelloFirefox_120  = ClientHelloID{helloFirefox, "120", nil, nil}
  	HelloFirefox_148  = ClientHelloID{helloFirefox, "148", nil, nil}
++	HelloFirefox_156  = ClientHelloID{helloFirefox, "156", nil, nil}
  
 -	HelloChrome_Auto        = HelloChrome_133
 +	HelloChrome_Auto        = HelloChrome_155
  	HelloChrome_58          = ClientHelloID{helloChrome, "58", nil, nil}
  	HelloChrome_62          = ClientHelloID{helloChrome, "62", nil, nil}
  	HelloChrome_70          = ClientHelloID{helloChrome, "70", nil, nil}
-@@ -645,6 +646,9 @@ var (
+@@ -645,6 +647,9 @@ var (
  	HelloChrome_131 = ClientHelloID{helloChrome, "131", nil, nil}
  	// Chrome w/ New ALPS codepoint
  	HelloChrome_133 = ClientHelloID{helloChrome, "133", nil, nil}
@@ -2368,7 +2379,7 @@ index 790a003..ece41ca 100644
  	tls11Downgrade := string(serverHello.random[24:]) == downgradeCanaryTLS11
  	if maxVers == VersionTLS13 && c.vers <= VersionTLS12 && (tls12Downgrade || tls11Downgrade) ||
 diff --git a/u_parrots.go b/u_parrots.go
-index 425ab6d..a20f671 100644
+index 425ab6d..4370ace 100644
 --- a/u_parrots.go
 +++ b/u_parrots.go
 @@ -964,6 +964,84 @@ func utlsIdToSpec(id ClientHelloID) (ClientHelloSpec, error) {
@@ -2456,7 +2467,190 @@ index 425ab6d..a20f671 100644
  	case HelloFirefox_55, HelloFirefox_56:
  		return ClientHelloSpec{
  			TLSVersMax: VersionTLS12,
-@@ -3064,7 +3142,7 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+@@ -1589,6 +1667,133 @@ func utlsIdToSpec(id ClientHelloID) (ClientHelloSpec, error) {
+ 				},
+ 			},
+ 		}, nil
++	// Firefox 156: no ECDSA CBC suites and FFDHE groups, session_ticket and
++	// psk_key_exchange_modes added. Matches Firefox 160 captures.
++	case HelloFirefox_156:
++		return ClientHelloSpec{
++			TLSVersMin: VersionTLS12,
++			TLSVersMax: VersionTLS13,
++			CipherSuites: []uint16{
++				TLS_AES_128_GCM_SHA256,
++				TLS_CHACHA20_POLY1305_SHA256,
++				TLS_AES_256_GCM_SHA384,
++				TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
++				TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
++				TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
++				TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
++				TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
++				TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
++				TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
++				TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
++				TLS_RSA_WITH_AES_128_GCM_SHA256,
++				TLS_RSA_WITH_AES_256_GCM_SHA384,
++				TLS_RSA_WITH_AES_128_CBC_SHA,
++				TLS_RSA_WITH_AES_256_CBC_SHA,
++			},
++			CompressionMethods: []uint8{
++				0x0, // no compression
++			},
++			Extensions: []TLSExtension{
++				&SNIExtension{},
++				&ExtendedMasterSecretExtension{},
++				&RenegotiationInfoExtension{
++					Renegotiation: RenegotiateOnceAsClient,
++				},
++				&SupportedCurvesExtension{
++					Curves: []CurveID{
++						X25519MLKEM768,
++						X25519,
++						CurveP256,
++						CurveP384,
++						CurveP521,
++					},
++				},
++				&SupportedPointsExtension{
++					SupportedPoints: []uint8{
++						0x0, // uncompressed
++					},
++				},
++				&SessionTicketExtension{},
++				&ALPNExtension{
++					AlpnProtocols: []string{
++						"h2",
++						"http/1.1",
++					},
++				},
++				&StatusRequestExtension{},
++				&FakeDelegatedCredentialsExtension{
++					SupportedSignatureAlgorithms: []SignatureScheme{
++						ECDSAWithP256AndSHA256,
++						ECDSAWithP384AndSHA384,
++						ECDSAWithP521AndSHA512,
++						ECDSAWithSHA1,
++					},
++				},
++				&SCTExtension{},
++				&KeyShareExtension{
++					KeyShares: append(
++						ReuseHybridAndClassicalKeyShares(
++							KeyShare{
++								Group: X25519MLKEM768,
++							},
++							KeyShare{
++								Group: X25519,
++							},
++						),
++						KeyShare{
++							Group: CurveP256,
++						},
++					),
++				},
++				&SupportedVersionsExtension{
++					Versions: []uint16{
++						VersionTLS13,
++						VersionTLS12,
++					},
++				},
++				&SignatureAlgorithmsExtension{
++					SupportedSignatureAlgorithms: []SignatureScheme{
++						ECDSAWithP256AndSHA256,
++						ECDSAWithP384AndSHA384,
++						ECDSAWithP521AndSHA512,
++						PSSWithSHA256,
++						PSSWithSHA384,
++						PSSWithSHA512,
++						PKCS1WithSHA256,
++						PKCS1WithSHA384,
++						PKCS1WithSHA512,
++						ECDSAWithSHA1,
++						PKCS1WithSHA1,
++					},
++				},
++				&PSKKeyExchangeModesExtension{
++					Modes: []uint8{
++						PskModeDHE,
++					},
++				},
++				&FakeRecordSizeLimitExtension{
++					Limit: 0x4001,
++				},
++				&UtlsCompressCertExtension{[]CertCompressionAlgo{
++					CertCompressionZlib,
++					CertCompressionBrotli,
++					CertCompressionZstd,
++				}},
++				&GREASEEncryptedClientHelloExtension{
++					CandidateCipherSuites: []HPKESymmetricCipherSuite{
++						{
++							KdfId:  dicttls.HKDF_SHA256,
++							AeadId: dicttls.AEAD_AES_128_GCM,
++						},
++						{
++							KdfId:  dicttls.HKDF_SHA256,
++							AeadId: dicttls.AEAD_CHACHA20_POLY1305,
++						},
++					},
++					CandidatePayloadLens: []uint16{224}, // +16: 240
++				},
++			},
++		}, nil
+ 	case HelloIOS_11_1:
+ 		return ClientHelloSpec{
+ 			TLSVersMax: VersionTLS12,
+@@ -2942,35 +3147,29 @@ func utlsIdToSpec(id ClientHelloID) (ClientHelloSpec, error) {
+ //
+ // This feature was first introduced by Chrome 106.
+ func ShuffleChromeTLSExtensions(exts []TLSExtension) []TLSExtension {
+-	// unshufCheck checks if the exts[idx] is a GREASE/padding/pre_shared_key extension,
+-	// and returns true on success. For these extensions are considered positionally invariant.
+-	var skipShuf = func(idx int, exts []TLSExtension) bool {
+-		switch exts[idx].(type) {
++	// GREASE, padding and pre_shared_key keep their places; the rest are
++	// permuted uniformly among themselves, as BoringSSL does. Skipping the
++	// swaps that touch a fixed extension instead would leave the extensions
++	// next to them in place twice as often as the others.
++	var movable []int
++	for i, ext := range exts {
++		switch ext.(type) {
+ 		case *UtlsGREASEExtension, *UtlsPaddingExtension, PreSharedKeyExtension:
+-			return true
+ 		default:
+-			return false
++			movable = append(movable, i)
+ 		}
+ 	}
++	swap := func(i, j int) {
++		exts[movable[i]], exts[movable[j]] = exts[movable[j]], exts[movable[i]]
++	}
+ 
+-	// Shuffle other extensions
+ 	randInt64, err := crand.Int(crand.Reader, big.NewInt(math.MaxInt64))
+ 	if err != nil {
+ 		// warning: random could be deterministic
+-		rand.Shuffle(len(exts), func(i, j int) {
+-			if skipShuf(i, exts) || skipShuf(j, exts) {
+-				return // do not shuffle some of the extensions
+-			}
+-			exts[i], exts[j] = exts[j], exts[i]
+-		})
++		rand.Shuffle(len(movable), swap)
+ 		fmt.Println("Warning: failed to use a cryptographically secure random number generator. The shuffle can be deterministic.")
+ 	} else {
+-		rand.New(rand.NewSource(randInt64.Int64())).Shuffle(len(exts), func(i, j int) {
+-			if skipShuf(i, exts) || skipShuf(j, exts) {
+-				return // do not shuffle some of the extensions
+-			}
+-			exts[i], exts[j] = exts[j], exts[i]
+-		})
++		rand.New(rand.NewSource(randInt64.Int64())).Shuffle(len(movable), swap)
+ 	}
+ 
+ 	return exts
+@@ -3064,7 +3263,7 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
  	}
  
  	// Currently, GREASE is assumed to come from BoringSSL
@@ -2465,7 +2659,7 @@ index 425ab6d..a20f671 100644
  	grease_extensions_seen := 0
  	_, err = io.ReadFull(uconn.config.rand(), grease_bytes)
  	if err != nil {
-@@ -3073,7 +3151,7 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+@@ -3073,7 +3272,7 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
  	for i := range uconn.greaseSeed {
  		uconn.greaseSeed[i] = binary.LittleEndian.Uint16(grease_bytes[2*i : 2*i+2])
  	}
@@ -2474,7 +2668,7 @@ index 425ab6d..a20f671 100644
  		uconn.greaseSeed[ssl_grease_extension2] ^= 0x1010
  	}
  
-@@ -3081,7 +3159,7 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+@@ -3081,7 +3280,7 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
  	copy(hello.CipherSuites, p.CipherSuites)
  	for i := range hello.CipherSuites {
  		if isGREASEUint16(hello.CipherSuites[i]) { // just in case the user set a GREASE value instead of unGREASEd
@@ -2483,7 +2677,7 @@ index 425ab6d..a20f671 100644
  		}
  	}
  
-@@ -3117,9 +3195,9 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+@@ -3117,9 +3316,9 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
  		case *UtlsGREASEExtension:
  			switch grease_extensions_seen {
  			case 0:
@@ -2495,7 +2689,7 @@ index 425ab6d..a20f671 100644
  				ext.Body = []byte{0}
  			default:
  				return errors.New("at most 2 grease extensions are supported")
-@@ -3128,7 +3206,13 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+@@ -3128,7 +3327,13 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
  		case *SupportedCurvesExtension:
  			for i := range ext.Curves {
  				if isGREASEUint16(uint16(ext.Curves[i])) {
@@ -2510,7 +2704,7 @@ index 425ab6d..a20f671 100644
  				}
  			}
  		case *KeyShareExtension:
-@@ -3137,7 +3221,7 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+@@ -3137,7 +3342,7 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
  			for i := range ext.KeyShares {
  				curveID := ext.KeyShares[i].Group
  				if isGREASEUint16(uint16(curveID)) { // just in case the user set a GREASE value instead of unGREASEd
@@ -2519,7 +2713,7 @@ index 425ab6d..a20f671 100644
  					continue
  				}
  				if len(ext.KeyShares[i].Data) > 1 {
-@@ -3146,7 +3230,17 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+@@ -3146,7 +3351,17 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
  
  				isHybridReuse := len(ext.KeyShares[i].Data) == 1 && ext.KeyShares[i].Data[0] == keyShareHybridReuseMarker
  				isClassicalReuse := len(ext.KeyShares[i].Data) == 1 && ext.KeyShares[i].Data[0] == keyShareClassicalReuseMarker
@@ -2538,7 +2732,7 @@ index 425ab6d..a20f671 100644
  					if isClassicalReuse {
  						return fmt.Errorf("hybrid keyshare reuse mismatch: classical marker is invalid for hybrid group %v", curveID)
  					}
-@@ -3203,6 +3297,8 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+@@ -3203,6 +3418,8 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
  							// only do this once for the first non-grease curve
  							uconn.HandshakeState.State13.KeyShareKeys.Ecdhe = reusedKey
  							preferredCurveIsSet = true
@@ -2547,7 +2741,7 @@ index 425ab6d..a20f671 100644
  						}
  						continue
  					}
-@@ -3218,13 +3314,16 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
+@@ -3218,13 +3435,16 @@ func (uconn *UConn) ApplyPreset(p *ClientHelloSpec) error {
  						// only do this once for the first non-grease curve
  						uconn.HandshakeState.State13.KeyShareKeys.Ecdhe = ecdheKey
  						preferredCurveIsSet = true

@@ -171,7 +171,7 @@ RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ] && [ "$XHTTP_DIAL" = "1" ]; then \
 # Временная подмена utls: ветка v1.9.0-mod-meta (нативный JLS, отпечатки
 # firefox 148 и safari 26.3) на зафиксированном коммите, и поверх неё
 # core_patches/utls — upstream refraction-networking/utls с Chrome 155 (он же
-# "chrome"), см. apply.sh. Патч снят с этого коммита, поэтому ветку не берём.
+# "chrome") и наш Firefox 156 ("firefox"), см. apply.sh. Патч снят с этого коммита, поэтому ветку не берём.
 # Пустой UTLS_OVERRIDE_COMMIT = собирать как в go.mod.
 ARG UTLS_OVERRIDE_COMMIT=89a07ad380e263f7c3b406a3f7beb2a70dea263c
 COPY core_patches/utls /patches/utls

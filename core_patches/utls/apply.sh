@@ -11,6 +11,17 @@
 # (refraction-networking/utls#402). andybalholm/brotli остаётся вместо
 # go-brrr апстрима: тот требует Go 1.22, а модуль держит go 1.20.
 #
+# Своё сверху апстрима:
+#   - отпечаток Firefox 156 (он же HelloFirefox_Auto, "firefox"): без
+#     ECDSA CBC и FFDHE, с session_ticket и psk_key_exchange_modes. Сверен
+#     по захватам Firefox 160: совпадают шифры, порядок и содержимое всех
+#     расширений, кроме случайных, и длина hello;
+#   - равномерная перестановка расширений Chrome. ShuffleChromeTLSExtensions
+#     пропускал обмены с GREASE, и крайние в спецификации расширения
+#     оставались с краю вдвое чаще: SNI первым в 11% hello вместо 6%.
+#     Теперь подвижные расширения переставляются между собой, как в
+#     BoringSSL.
+#
 # В патче только исходники: без тестов, testdata, CI и документации.
 # Когда MetaCubeX сольёт апстрим сам, патч удаляется, а Dockerfile-release
 # возвращается на их ветку.
@@ -24,4 +35,6 @@ git apply "$dir/upstream.patch"
 
 grep -Fq 'HelloChrome_Auto        = HelloChrome_155' u_common.go \
   || { echo "utls: Chrome 155 is not HelloChrome_Auto after the patch" >&2; exit 1; }
+grep -Fq 'HelloFirefox_Auto = HelloFirefox_156' u_common.go \
+  || { echo "utls: Firefox 156 is not HelloFirefox_Auto after the patch" >&2; exit 1; }
 echo "utls: refraction-networking/utls a13c59f on top of MetaCubeX 89a07ad"
