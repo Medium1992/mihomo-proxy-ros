@@ -150,6 +150,46 @@ func TestCoalesceDialsHedgeQuietOnHealthyPath(t *testing.T) {
 	}
 }
 
+// Запасной dial сразу получает отказ (сброс, закрытый порт), а застрявший
+// ведущий через 600 мс дозванивается. Вставшие за запасным не падают с его
+// ошибкой, а дожидаются ведущего, как без запасного. Ждущие уходят к
+// запасному разом, и кто дошёл, когда он уже упал, второго не начинает:
+// отказ получил бы и он, и так по dial'у на ждущего.
+func TestCoalesceDialsFailedHedgeFallsBackToLeader(t *testing.T) {
+	addr := okServer(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := ln.Addr().String()
+	ln.Close()
+	var d dialCounter
+	mk := hedgeFactory(t, &d, func(n int64) string {
+		if n <= 2 {
+			return addr
+		}
+		return refused
+	}, func(n int64) time.Duration {
+		if n == 2 {
+			return 600 * time.Millisecond
+		}
+		return 0
+	})
+	if err := roundTrip(mk(), context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	failed, took := burst(mk(), 30, 5*time.Second)
+	if failed != 0 {
+		t.Fatalf("%d of 30 requests failed with the hedge's error", failed)
+	}
+	if took >= coalescedDialStale {
+		t.Fatalf("burst took %v: waited past the leader's dial", took)
+	}
+	if got := d.dials.Load(); got != 3 {
+		t.Fatalf("%d dials, want warm-up, the slow leader and the refused hedge", got)
+	}
+}
+
 // Блокировка у клиента с историей: запасной dial один на ведущего, дальше
 // правило coalescedDialStale, и сокетов единицы, а не по одному на запрос.
 func TestCoalesceDialsHedgeBoundedOnBlackhole(t *testing.T) {
