@@ -30,8 +30,10 @@ import (
 //   - удачный ведущий остаётся на месте ещё coalescedDialRetry: запрос,
 //     пришедший, пока net/http настраивает h2 и ещё не положил соединение в
 //     пул, иначе дозвонился бы сам;
-//   - повторный getConn того же запроса (соединение его не приняло) за
-//     удачным ведущим не встаёт, а дозванивается сразу.
+//   - повторный поиск соединения тем же запросом (соединение его не
+//     приняло) за удачным ведущим не встаёт, а дозванивается сразу;
+//   - за ведущим, который дозванивается дольше coalescedDialStale, не ждут:
+//     новый запрос или один из ждущих дозванивается сам.
 
 // coalescedDialRetry — сколько ждущий ждёт соединения после того, как ведущий
 // дозвонился и его RoundTrip вернулся, и сколько удачный ведущий держит место.
@@ -52,6 +54,20 @@ const coalescedDialRetry = 250 * time.Millisecond
 // снятия блокировки ждали бы его, вместо того чтобы дозвониться заново.
 var coalescedDialTimeout = 5 * time.Second
 
+// coalescedDialStale — дольше этого рукопожатие на рабочем пути не идёт, и
+// ведущий, скорее всего, повис: блокировка после ClientHello помнит поток, и
+// снятие блокировки его не оживит. За таким ведущим не ждут: первый из ждущих,
+// заметивший срок, дозванивается сам, остальные встают за ним, а запрос,
+// пришедший позже, замечает срок сразу. Иначе залп страницы, начатый во время
+// блокировки, держал бы повисший dial до coalescedDialTimeout, и сессии,
+// пришедшие уже после снятия блокировки, ждали бы его. Удачный новый dial
+// кладёт соединение в пул, и его получают и те, кто ждал старого ведущего.
+// Пока путь заблокирован, на адрес идёт не больше одного нового dial'а в
+// coalescedDialStale, и каждый расходует одного ждущего. Срок больше
+// рукопожатия REALITY на медленном мобильном канале (0,6–0,9 с): меньший
+// давал бы там лишние dial'ы.
+var coalescedDialStale = time.Second
+
 var errCoalescedDialAbandoned = errors.New("xhttp: coalesced dial abandoned")
 
 type dialRoundTripKey struct{}
@@ -61,30 +77,39 @@ type dialRoundTripKey struct{}
 type dialRoundTrip struct {
 	mu       sync.Mutex
 	done     bool
-	attempts int           // сколько раз net/http звал dial ради этого RoundTrip
+	getConns int           // сколько раз net/http искал соединение ради этого RoundTrip
 	donec    chan struct{} // закрыт, когда RoundTrip вернулся
-	gotConnc chan struct{} // закрыт, когда запрос получил соединение
+	gotConnc chan struct{} // закрыт, когда последний поиск соединения закончился
 }
 
-// startDial вызывается в начале каждого dial'а этого RoundTrip (net/http
-// повторяет getConn, если h2-соединение не приняло запрос). done — RoundTrip
-// уже вернулся, дозваниваться не для кого.
+// getConn вызывается хуком GetConn в начале каждого поиска соединения
+// (net/http ищет заново, если h2-соединение не приняло запрос). Поиски одного
+// запроса идут друг за другом, и новый значит, что прошлый уже получил
+// соединение: его dial, если он ещё ждёт ведущего, больше не нужен.
 //
-// Новый getConn значит, что прошлый уже получил соединение, и его dial,
-// если он ещё ждёт ведущего, больше не нужен: закрываем ему канал, иначе он
-// не дождался бы GotConn и дозвонился бы впустую.
-func (s *dialRoundTrip) startDial() (gotConnc chan struct{}, retried bool, done bool) {
+// Отмечать поиск здесь, а не в dial'е: dial net/http запускает в своей
+// горутине, и dial прошлого поиска может начаться позже dial'а нового.
+func (s *dialRoundTrip) getConn() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.done {
-		return nil, false, true
-	}
 	if s.gotConnc != nil {
 		close(s.gotConnc)
 	}
 	s.gotConnc = make(chan struct{})
-	s.attempts++
-	return s.gotConnc, s.attempts > 1, false
+	s.getConns++
+}
+
+// startDial вызывается в начале каждого dial'а этого RoundTrip. done —
+// дозваниваться не для кого: RoundTrip вернулся или последний поиск уже
+// получил соединение, а dial опоздал. retried — соединение запрос уже
+// получал, и оно его не приняло.
+func (s *dialRoundTrip) startDial() (gotConnc chan struct{}, retried bool, done bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.done || s.gotConnc == nil {
+		return nil, false, true
+	}
+	return s.gotConnc, s.getConns > 1, false
 }
 
 func (s *dialRoundTrip) gotConn() {
@@ -108,6 +133,7 @@ type leaderDial struct {
 	dialc   chan struct{} // закрыт, когда dial вернулся; err к этому моменту записан
 	err     error
 	rtDonec chan struct{} // donec RoundTrip, ради которого dial начат
+	started time.Time     // когда начат dial
 	guard   *guardedDial
 	refs    int // под coalescingTransport.mu: RoundTrip'ы, которые этот dial ждут
 }
@@ -144,9 +170,10 @@ func (c *coalescingTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	rt := &dialRoundTrip{donec: make(chan struct{})}
 	defer rt.finish()
 	ctx := context.WithValue(req.Context(), dialRoundTripKey{}, rt)
-	// WithClientTrace добавляет хук к уже стоящему трейсу, а не заменяет его:
+	// WithClientTrace добавляет хуки к уже стоящему трейсу, а не заменяет его:
 	// GotConn клиента XHTTP по-прежнему вызывается.
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GetConn: func(string) { rt.getConn() },
 		GotConn: func(httptrace.GotConnInfo) { rt.gotConn() },
 	})
 	return c.Transport.RoundTrip(req.WithContext(ctx))
@@ -174,7 +201,7 @@ func (c *coalescingTransport) dial(ctx context.Context, dial func(context.Contex
 		}
 		if l == nil {
 			g, gctx := newGuardedDial(ctx)
-			l = &leaderDial{dialc: make(chan struct{}), rtDonec: rt.donec, guard: g, refs: 1}
+			l = &leaderDial{dialc: make(chan struct{}), rtDonec: rt.donec, started: time.Now(), guard: g, refs: 1}
 			if c.leaders == nil {
 				c.leaders = make(map[string]*leaderDial)
 			}
@@ -189,18 +216,24 @@ func (c *coalescingTransport) dial(ctx context.Context, dial func(context.Contex
 		if !again {
 			return conn, err
 		}
-		// Соединение ведущего нам не досталось: снимаем его, чтобы на
-		// следующем круге стать ведущим самим, а не ждать его снова.
+		// Соединение ведущего нам не досталось или он повис: снимаем его,
+		// чтобы на следующем круге стать ведущим самим, а не ждать его снова.
+		// Если его уже сменил другой, встаём за новым.
 		c.unlead(l, addr)
 	}
 }
 
 // follow ждёт ведущего l. again — ведущий дозвонился, а соединение нашему
-// запросу так и не досталось: пора дозваниваться самим.
+// запросу так и не досталось, или ведущий повис: пора дозваниваться самим.
 func (c *coalescingTransport) follow(ctx context.Context, l *leaderDial, rt *dialRoundTrip, gotConnc chan struct{}, addr string) (conn net.Conn, err error, again bool) {
 	defer c.release(l, addr)
 	dialc, rtDonec := l.dialc, l.rtDonec
 	var retry <-chan time.Time
+	stale := time.NewTimer(time.Until(l.started.Add(coalescedDialStale)))
+	defer stale.Stop()
+	// Канал, а не stale.C в select: при go 1.20 в go.mod остановленный таймер
+	// может оставить в канале значение.
+	staleC := stale.C
 	for {
 		if dialc == nil && rtDonec == nil && retry == nil {
 			// Ведущий дозвонился и его RoundTrip вернулся, а нашему
@@ -215,6 +248,15 @@ func (c *coalescingTransport) follow(ctx context.Context, l *leaderDial, rt *dia
 				return nil, l.err, false
 			}
 			dialc = nil
+			staleC = nil
+		case <-staleC:
+			staleC = nil
+			select {
+			case <-l.dialc:
+				// Dial закончился на самом сроке: разбираем его как обычно.
+			default:
+				return nil, nil, true
+			}
 		case <-rtDonec:
 			rtDonec = nil
 		case <-retry:

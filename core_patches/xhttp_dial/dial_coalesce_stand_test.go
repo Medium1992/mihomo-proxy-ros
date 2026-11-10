@@ -357,3 +357,59 @@ func TestCoalesceDialsStandAborts(t *testing.T) {
 		t.Fatalf("%d connections, want 2", got)
 	}
 }
+
+// Страница начала грузиться во время блокировки, сессии идут одна за другой,
+// и блокировка снимается посреди залпа. Повисший ведущий не держит залп:
+// сессии, пришедшие после снятия, проходят все, а новое соединение получают
+// и часть сессий, начатых ещё во время блокировки. Сокетов при этом единицы.
+func TestCoalesceDialsStandBlockDuringPage(t *testing.T) {
+	leakCheck(t)
+	setDialTimeout(t, 3*time.Second)
+	relay := newStandRelay(t, standServer(t, "stream-one"))
+	client := standClient(t, relay.addr(), "stream-one", &ReuseConfig{MaxConnections: "2"}, nil)
+	relay.blocked.Store(true)
+
+	const n = 48
+	var unblocked atomic.Int64
+	time.AfterFunc(1200*time.Millisecond, func() {
+		unblocked.Store(time.Now().UnixNano())
+		relay.blocked.Store(false)
+	})
+	var wg sync.WaitGroup
+	var during, after, afterOK atomic.Int64
+	var firstErr atomic.Value
+	for i := 0; i < n; i++ {
+		time.Sleep(40 * time.Millisecond)
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			blocked := unblocked.Load() == 0
+			err := echoSession(client, 4*time.Second, 1<<10, i)
+			switch {
+			case blocked && err == nil:
+				during.Add(1)
+			case !blocked:
+				after.Add(1)
+				if err == nil {
+					afterOK.Add(1)
+				} else {
+					firstErr.CompareAndSwap(nil, err)
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	if after.Load() == 0 {
+		t.Fatal("no session started after unblock")
+	}
+	if afterOK.Load() != after.Load() {
+		t.Fatalf("%d of %d sessions started after unblock failed: %v", after.Load()-afterOK.Load(), after.Load(), firstErr.Load())
+	}
+	if during.Load() == 0 {
+		t.Fatal("no session started during the block got the new connection")
+	}
+	if got := relay.peak.Load(); got > 6 {
+		t.Fatalf("%d sockets open at once, want a few", got)
+	}
+	t.Logf("started during block and passed: %d; after unblock: %d of %d; connections %d", during.Load(), afterOK.Load(), after.Load(), relay.accepted.Load())
+}

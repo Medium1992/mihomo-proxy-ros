@@ -134,6 +134,12 @@ func setDialTimeout(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { coalescedDialTimeout = old })
 }
 
+func setDialStale(t *testing.T, d time.Duration) {
+	old := coalescedDialStale
+	coalescedDialStale = d
+	t.Cleanup(func() { coalescedDialStale = old })
+}
+
 // roundTripTimeout — потолок для запроса без своего срока: тест с
 // поломанной склейкой должен упасть, а не повиснуть.
 const roundTripTimeout = 10 * time.Second
@@ -569,5 +575,80 @@ func TestCoalesceDialsPublicationWindow(t *testing.T) {
 	}
 	if got := dials.Load(); got != 1 {
 		t.Fatalf("request in the publication window made its own dial: %d dials, want 1", got)
+	}
+}
+
+// Ведущий повис: пока он моложе coalescedDialStale, за ним ждут. Потом один
+// из ждущих дозванивается сам, остальные встают за ним; так раз в срок, пока
+// ждущие не кончатся. Ни один dial не обрывается, пока его ждут, и все сокеты
+// закрываются, когда ждать некому.
+func TestCoalesceDialsStaleLeader(t *testing.T) {
+	setDialTimeout(t, 3*time.Second)
+	setDialStale(t, 300*time.Millisecond)
+	addr := blackholeServer(t)
+	var d dialCounter
+	rt := coalescedTestTransport(t, addr, &d, 0)
+
+	var wg sync.WaitGroup
+	start := func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			roundTrip(rt, ctx)
+		}()
+	}
+	start()
+	waitFor(t, "the leader to dial", time.Second, func() bool { return d.dials.Load() == 1 })
+	begin := time.Now()
+	start()
+	start()
+	time.Sleep(150 * time.Millisecond)
+	if got := d.dials.Load(); got != 1 && time.Since(begin) < 250*time.Millisecond {
+		t.Fatalf("waiters behind a fresh leader dialed: %d dials", got)
+	}
+	waitFor(t, "a waiter to replace the stale leader", time.Second, func() bool { return d.dials.Load() == 2 })
+	waitFor(t, "the last waiter to replace the next one", time.Second, func() bool { return d.dials.Load() == 3 })
+	wg.Wait()
+	if got := d.dials.Load(); got != 3 {
+		t.Fatalf("%d dials for three requests, want 3", got)
+	}
+	waitFor(t, "abandoned dials to close", time.Second, func() bool { return d.open.Load() == 0 })
+}
+
+// Запрос получил соединение, оно его не приняло, и net/http ищет заново.
+// Dial прошлого поиска net/http запускает в своей горутине, и он может
+// начаться уже после dial'а нового: ожидание нового он не трогает. Dial,
+// опоздавший к уже нашедшему соединение поиску, не нужен никому.
+func TestCoalesceDialsLateDialOfEarlierGetConn(t *testing.T) {
+	rt := &dialRoundTrip{donec: make(chan struct{})}
+	rt.getConn()
+	rt.gotConn()
+	rt.getConn()
+	c2, retried, done := rt.startDial()
+	if done || !retried {
+		t.Fatalf("dial of the second getConn: done=%v retried=%v, want a retried dial", done, retried)
+	}
+	if _, _, done := rt.startDial(); done {
+		t.Fatal("a late dial of the first getConn was refused while the second still waits")
+	}
+	select {
+	case <-c2:
+		t.Fatal("a late dial of the first getConn released the second getConn's dial")
+	default:
+	}
+	rt.gotConn()
+	select {
+	case <-c2:
+	default:
+		t.Fatal("GotConn did not release the dial")
+	}
+	if _, _, done := rt.startDial(); !done {
+		t.Fatal("a dial after the last getConn got a connection was not refused")
+	}
+	rt.finish()
+	if _, _, done := rt.startDial(); !done {
+		t.Fatal("a dial after RoundTrip returned was not refused")
 	}
 }
