@@ -767,10 +767,10 @@ function routerSrcCommands(was, now, q, addr) {
       " comment=\"MihomoSrc_local\" place-before=$b}; " +
       ":if ([:len [/ip firewall mangle find comment=\"MihomoSrc_bcast\"]] = 0) do={" + base + " action=accept dst-address-type=broadcast,multicast" +
       " comment=\"MihomoSrc_bcast\" place-before=$b}; " +
-      ":foreach p in={\"tcp\";\"udp\"} do={:if ([:len [/ip firewall mangle find comment=(\"MihomoSrc_\" . $p)]] = 0) do={" + base +
-      " action=mark-connection dst-address-type=!local protocol=$p new-connection-mark=$m comment=(\"MihomoSrc_\" . $p) place-before=$b}}}");
+      ":foreach p in={\"tcp\";\"udp\"} do={:if ([:len [/ip firewall mangle find comment=\"SrcMarkConnAddressList\" protocol=$p]] = 0) do={" + base +
+      " action=mark-connection dst-address-type=!local protocol=$p new-connection-mark=$m comment=\"SrcMarkConnAddressList\" place-before=$b}}}");
   } else if (was.size && !now.size) {
-    out.push("/ip firewall mangle remove [find comment=\"MihomoSrc_local\" or comment=\"MihomoSrc_bcast\" or comment=\"MihomoSrc_tcp\" or comment=\"MihomoSrc_udp\"]");
+    out.push("/ip firewall mangle remove [find comment=\"MihomoSrc_local\" or comment=\"MihomoSrc_bcast\" or comment=\"SrcMarkConnAddressList\"]");
     out.push("/ip firewall address-list remove [find list=" + bypass + " comment=\"MihomoSrc\"]");
   }
   return out;

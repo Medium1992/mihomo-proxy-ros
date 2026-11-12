@@ -72,7 +72,7 @@
 :put "Removed address lists"
 
 # mangle
-/ip/firewall/mangle/remove [find where comment="YT_MSS" or comment="Accept_no_mark" or comment="AcceptInWAN&Containers" or comment="RoutingToMihomo1" or comment="RoutingToMihomo2" or comment="MarkConnAddressList" or comment="Discord_RTC" or comment="Discord_WebRTC" or comment="MihomoSrc_local" or comment="MihomoSrc_bcast" or comment="MihomoSrc_tcp" or comment="MihomoSrc_udp"]
+/ip/firewall/mangle/remove [find where comment="YT_MSS" or comment="Accept_no_mark" or comment="AcceptInWAN&Containers" or comment="RoutingToMihomo1" or comment="RoutingToMihomo2" or comment="MarkConnAddressList" or comment="Discord_RTC" or comment="Discord_WebRTC" or comment="MihomoSrc_local" or comment="MihomoSrc_bcast" or comment="SrcMarkConnAddressList"]
 :put "Removed mangle rules"
 
 # routes and routing table
