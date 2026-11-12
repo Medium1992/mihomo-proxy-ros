@@ -440,8 +440,15 @@ func TestCoalesceDialsStandBlockDuringPage(t *testing.T) {
 // позже, проходят.
 func TestCoalesceDialsStandRecoveryUnderLoad(t *testing.T) {
 	leakCheck(t)
+	// Снятие на 2 с приходится прямо перед заменой повисших попыток (лучшая
+	// фаза), на 2,4 с — сразу после неё (худшая: ждём следующую замену).
+	for _, block := range []time.Duration{2 * time.Second, 2400 * time.Millisecond} {
+		t.Run(block.String(), func(t *testing.T) { standRecoveryUnderLoad(t, block) })
+	}
+}
+
+func standRecoveryUnderLoad(t *testing.T, block time.Duration) {
 	const xmux = 3
-	const block = 2 * time.Second
 	const total = 9 * time.Second
 	relay := newStandRelay(t, standServer(t, "stream-one"))
 	relay.delay.Store(int64(250 * time.Millisecond))
@@ -508,10 +515,11 @@ func TestCoalesceDialsStandRecoveryUnderLoad(t *testing.T) {
 	if afterFailed > 0 {
 		t.Fatalf("%d of %d sessions started after unblock failed", afterFailed, after)
 	}
-	// Срок сессии, а не срок попытки из кода: попытка, живущая дольше
-	// сессии, держала бы рабочий путь закрытым и после снятия блокировки.
-	if got := firstOK - block; got > 5*time.Second {
-		t.Fatalf("first session passed %v after unblock, want within the 5s session bound", got)
+	// В худшей фазе путь открывается со следующей заменой попытки: 2 с и
+	// рукопожатие. Граница — числом, а не из срока в коде: попытка, живущая
+	// дольше, держала бы рабочий путь закрытым и после снятия блокировки.
+	if got := firstOK - block; got > 3*time.Second {
+		t.Fatalf("first session passed %v after unblock, want within 3s", got)
 	}
 	// Повисшие попытки сменяют друг друга, а не копятся: на транспорт одна
 	// повисшая и одно рабочее соединение, пока реле замечает закрытие.

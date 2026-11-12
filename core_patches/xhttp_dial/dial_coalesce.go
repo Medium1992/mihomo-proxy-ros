@@ -103,6 +103,13 @@ var errCoalescedDialAbandoned = errors.New("xhttp: coalesced dial abandoned")
 
 type dialAttemptKey struct{}
 
+// dialLeg — один из dial'ов попытки (ведущий или запасной), как его видит
+// DialTCPUp через контекст.
+type dialLeg struct {
+	a    *dialAttempt
+	lost atomic.Bool // TCP установлен вторым: этот dial уступил другому
+}
+
 // dialAttempt — ход одной попытки ведущего: её запасной dial и сроки.
 type dialAttempt struct {
 	start  time.Time
@@ -144,15 +151,18 @@ func (secondConn) Write([]byte) (int, error) { return 0, errCoalescedSecondTCP }
 // рукопожатия: к серверу идёт одно рукопожатие. Вне склейки соединение не
 // меняется.
 func DialTCPUp(ctx context.Context, conn net.Conn) net.Conn {
-	a, ok := ctx.Value(dialAttemptKey{}).(*dialAttempt)
+	leg, ok := ctx.Value(dialAttemptKey{}).(*dialLeg)
 	if !ok {
 		return conn
 	}
-	if !a.markUp() {
+	if !leg.a.markUp() {
+		// Без TLS wrapTLS ничего не пишет, и dial вернётся без ошибки:
+		// отметка, а не ошибка записи, не даёт dialWithBackup его взять.
+		leg.lost.Store(true)
 		_ = conn.Close()
 		return secondConn{conn}
 	}
-	return &countingConn{Conn: conn, a: a}
+	return &countingConn{Conn: conn, a: leg.a}
 }
 
 // countingConn считает байты, прочитанные из соединения, пока идёт попытка.
@@ -404,7 +414,7 @@ func (c *coalescingTransport) lead(ctx context.Context, l *leaderDial, rt *dialR
 	watched := make(chan struct{})
 	go watchAttempt(l.guard, a, coalescedTCPTimeout, coalescedAttemptTimeout, watched)
 	conn, err := l.guard.run(ctx, coalescedDialTimeout, func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return dialWithBackup(context.WithValue(ctx, dialAttemptKey{}, a), a, dial, network, addr)
+		return dialWithBackup(ctx, a, dial, network, addr)
 	}, network, addr)
 	a.ended.Store(true)
 	close(watched)
@@ -485,8 +495,10 @@ func dialWithBackup(ctx context.Context, a *dialAttempt, dial func(context.Conte
 	}
 	results := make(chan result, 2)
 	var cancels [2]context.CancelFunc
+	var legs [2]dialLeg
 	start := func(idx int) {
-		actx, cancel := context.WithCancel(ctx)
+		legs[idx].a = a
+		actx, cancel := context.WithCancel(context.WithValue(ctx, dialAttemptKey{}, &legs[idx]))
 		cancels[idx] = cancel
 		go func() {
 			conn, err := dial(actx, network, addr)
@@ -511,6 +523,14 @@ func dialWithBackup(ctx context.Context, a *dialAttempt, dial func(context.Conte
 			}
 		case r := <-results:
 			running--
+			if r.err == nil && legs[r.idx].lost.Load() {
+				// Уступивший TCP вернулся «удачно» (XHTTP без TLS): его
+				// соединение закрыто и никому не годится.
+				if r.conn != nil {
+					_ = r.conn.Close()
+				}
+				r.conn, r.err = nil, errCoalescedSecondTCP
+			}
 			if r.err == nil {
 				if running > 0 {
 					// Проигравший обрывается; его соединение, если он всё

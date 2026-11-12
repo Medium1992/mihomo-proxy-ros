@@ -388,6 +388,48 @@ func TestCoalesceDialsOneHandshakeAfterSlowTCP(t *testing.T) {
 	}
 }
 
+// XHTTP без TLS: wrapTLS возвращает соединение как есть, ничего не записав,
+// и dial, уступивший TCP другому, возвращается без ошибки. Он приходит первым
+// (ведущий ещё не вернулся), но попытка отдаёт соединение ведущего, а не
+// закрытое соединение уступившего.
+func TestCoalesceDialsBackupLostTCPWithoutTLS(t *testing.T) {
+	var n atomic.Int64
+	var leaderConn net.Conn
+	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		c, peer := net.Pipe()
+		t.Cleanup(func() { c.Close(); peer.Close() })
+		switch n.Add(1) {
+		case 1:
+			// Ведущий: TCP за 300 мс, раньше запасного, а вернётся через
+			// 100 мс после этого.
+			time.Sleep(300 * time.Millisecond)
+			w := DialTCPUp(ctx, c)
+			leaderConn = w
+			time.Sleep(100 * time.Millisecond)
+			return w, nil
+		default:
+			// Запасной: начат через coalescedBackupAfter, TCP вторым,
+			// возвращается сразу, как без TLS.
+			time.Sleep(100 * time.Millisecond)
+			return DialTCPUp(ctx, c), nil
+		}
+	}
+	a := &dialAttempt{start: time.Now(), tcpUp: make(chan struct{})}
+	conn, err := dialWithBackup(context.Background(), a, dial, "tcp", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, lost := conn.(secondConn); lost {
+		t.Fatal("the attempt returned the closed conn of the dial that lost TCP")
+	}
+	if conn != leaderConn {
+		t.Fatalf("the attempt returned %T, want the leader's conn", conn)
+	}
+	if got := n.Load(); got != 2 {
+		t.Fatalf("%d dials, want the leader and its backup", got)
+	}
+}
+
 // Соединение ведущего занято его же долгим запросом (лимит в один поток), а
 // RoundTrip ведущего не вернётся до конца сессии. Запрос, пришедший, пока
 // удачный ведущий держит место, получает от net/http занятое соединение,
