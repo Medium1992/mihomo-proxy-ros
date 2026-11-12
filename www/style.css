@@ -40,6 +40,10 @@ body[data-theme="dark"] {
 
 html { background: var(--bg); }
 
+/* Классические полосы прокрутки (Firefox, Windows) не берут цвет из
+   color-scheme: без этого в тёмной теме они белые. */
+html[data-theme="dark"] { scrollbar-color: var(--line-strong) var(--surface); }
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -106,6 +110,8 @@ nav { display: grid; gap: 6px; }
   padding-right: 4px;
   margin-right: -4px;
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
 }
 
 nav a {
@@ -143,13 +149,20 @@ nav a.active {
 .side-note {
   flex: 0 0 auto;
   margin-top: 16px;
-  display: grid;
-  gap: 6px;
-  padding: 14px;
+  padding: 10px 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-2);
 }
+.side-note > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 700;
+}
+.side-note[open] > summary { color: var(--ink); margin-bottom: 6px; }
+.side-note > span { display: block; }
+
+.nav-toggle { display: none; }
 
 .main {
   width: min(1220px, 100%);
@@ -1135,6 +1148,42 @@ input[data-secret-hidden="1"]::placeholder {
   color: var(--ink);
 }
 
+/* Справка, а не предупреждение: свёрнута до заголовка, чтобы поля под ней
+   были видны сразу. Предупреждения (.notice-warn) остаются открытыми. */
+.notice-fold {
+  display: block;
+  padding: 0;
+  border-color: var(--line);
+  background: var(--surface-2);
+}
+.notice-fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted);
+}
+.notice-fold > summary::-webkit-details-marker { display: none; }
+.notice-fold > summary::before {
+  content: "?";
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+}
+.notice-fold > summary b { font-weight: 650; }
+.notice-fold[open] > summary { color: var(--ink); }
+.notice-fold > :not(summary) { display: block; margin: 0 14px 10px; }
+.notice-fold > :last-child { margin-bottom: 14px; }
+
 .dns-policy-head {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -1719,14 +1768,66 @@ pre {
   margin: 20px 0 40px;
 }
 
+/* Появляется только с непустым черновиком (.has-pending из
+   updatePendingCounter) и держится у нижнего края экрана. */
 .bottom-submit {
+  display: none;
+  position: sticky;
+  bottom: 12px;
+  z-index: 20;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin: 16px 0 18px;
+  padding: 10px 10px 10px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
 }
+.bottom-submit.has-pending { display: flex; }
+.bottom-submit[hidden] { display: none; }
+.bottom-submit-label { color: var(--muted); font-weight: 650; }
+.bottom-submit .primary { min-height: 42px; }
 
-.bottom-submit .primary {
-  width: 100%;
-  min-height: 48px;
+/* Сбросы стирают черновик: они в меню «⋯», а не рядом с главной кнопкой. */
+.more-menu { position: relative; }
+.more-menu > summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  list-style: none;
 }
+.more-menu > summary::-webkit-details-marker { display: none; }
+.more-menu > summary:hover, .more-menu[open] > summary { border-color: var(--accent); color: var(--ink); }
+.more-menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  display: grid;
+  gap: 6px;
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.more-menu-list button { justify-content: flex-start; width: 100%; }
+
+.status-default { display: none; }
 
 .command-panel[hidden] { display: none; }
 body[data-page="tools"] .command-trigger,
@@ -1763,18 +1864,31 @@ body[data-page="yaml"] #commands {
 .tools textarea { min-height: 160px; }
 
 @media (max-width: 980px) {
-  .app { grid-template-columns: 1fr; }
+  .app { grid-template-columns: minmax(0, 1fr); }
   .side {
     position: relative;
     height: auto;
-    padding: 14px;
+    padding: 12px 14px;
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
-  .brand { margin-bottom: 10px; }
+  .brand { margin-bottom: 10px; min-height: 0; padding: 4px 6px; }
+  /* Меню свёрнуто в кнопку с текущей страницей: иначе оно занимает
+     весь первый экран телефона. */
+  .nav-toggle {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    font-weight: 700;
+  }
+  .nav-toggle b { color: var(--accent); font-size: 18px; }
+  .side nav, .side .side-note { display: none; }
+  .side.nav-open nav { display: grid; margin-top: 10px; overflow: visible; }
+  .side.nav-open .side-note { display: block; }
   nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .side-note { position: static; margin-top: 12px; }
   .main { padding: 16px; }
+  .top { margin: -16px -16px 16px; padding: 16px; }
   .top, .overview-head { grid-template-columns: 1fr; }
   .top { align-items: flex-start; }
   .top-actions { justify-content: flex-start; }
@@ -1792,12 +1906,23 @@ body[data-page="yaml"] #commands {
 @media (max-width: 560px) {
   nav { grid-template-columns: 1fr; }
   .panel, .command-panel, .overview-head > div:first-child { padding: 16px; }
-  .top h1 { font-size: 28px; }
+  .top h1 { font-size: 24px; }
   .overview-head h2 { font-size: 24px; }
   .stats b { font-size: 24px; }
   button, .ghost, .primary, .theme-btn { width: 100%; }
+  /* Кнопки шапки, чипы, вкладки и нижняя полоса — в строку, а не столбиком
+     во всю ширину. */
+  .top-actions button, .chip, .page-tab, .bottom-submit .primary { width: auto; }
+  .top-actions { gap: 6px; }
+  .top-actions .theme-btn b { display: none; }
+  .bottom-submit { flex-wrap: wrap; }
   .bc-copy-all { width: 28px; }
   .subhead { align-items: stretch; flex-direction: column; }
+}
+
+/* На телефоне шапка не прилипает: с кнопками она занимала бы треть экрана. */
+@media (max-width: 700px) {
+  .top { position: static; padding: 14px 16px 12px; }
 }
 
 .env-row.mixed-user-row {
@@ -1925,7 +2050,7 @@ body[data-page="yaml"] #commands {
   -webkit-backdrop-filter: blur(10px);
 }
 @media (max-width: 700px) {
-  .page-tabs { top: 72px; }
+  .page-tabs { top: 0; }
 }
 
 .page-tab {
@@ -3203,3 +3328,42 @@ details.group-sec > summary:focus-visible,
 }
 
 .env-grip.env-grip-fixed { cursor: default; }
+
+/* Обзор: карточка «Добавить сайт» без подсказок и имён на роутере —
+   они на странице правил. */
+.quick-site-nohead .quick-site-hint,
+.quick-site-nohead .quick-site-ros { display: none; }
+
+/* Пустой список своих правил говорит, что он пуст и как его пополнить. */
+#rules:not(:has(.env-row))::before {
+  content: attr(data-empty);
+  display: block;
+  padding: 12px 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  color: var(--muted);
+}
+.subhead > div > small { display: block; margin-top: 2px; font-weight: 400; }
+
+/* Группа: пустые поля спрятаны, их выводят кнопки «+ условие». */
+.field.cond-hidden { display: none; }
+.cond-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 10px 0 4px;
+}
+.cond-add[hidden] { display: none; }
+.cond-add-title {
+  color: var(--faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.cond-add-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cond-add .chip { min-height: 0; width: auto; }
+
+@media (max-width: 560px) {
+  .bc-grid.bc-grid-three { grid-template-columns: 1fr; }
+}

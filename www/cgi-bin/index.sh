@@ -648,7 +648,8 @@ EOF
       <strong>MihomoProxyRoS</strong>
       <small>ENV control panel</small>
     </a>
-    <nav>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="sideNav" onclick="toggleSideNav(this)"><span class="nav-toggle-current"></span><b aria-hidden="true">☰</b></button>
+    <nav id="sideNav">
 EOF
   # Порядок — это путь настройки: откуда брать прокси, как их собрать в
   # группы и что куда направить; ядро и порты трогают реже, проверка — в конце.
@@ -669,10 +670,10 @@ EOF
   nav_item tools "Инструменты" "↯"
   cat <<EOF
     </nav>
-    <div class="side-note">
-      <b>Как это работает</b>
+    <details class="side-note">
+      <summary>Как это работает</summary>
       <span>Правки в панели — черновик. Кнопка «Команды MikroTik» превращает его в команды RouterOS: их вставляют в терминал роутера, и контейнер перезапускается с новыми настройками.</span>
-    </div>
+    </details>
   </aside>
   <main class="main">
     <header class="top">
@@ -686,9 +687,14 @@ EOF
           <b id="themeLabel">Темная</b>
         </button>
         <button class="panel-open" type="button" onclick="openMihomoPanel(this)" data-ui-url="$(env_attr EXTERNAL_UI_URL "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip")" title="Открыть панель mihomo: адрес контейнера, порт 9090, secret подставляется автоматически"><span aria-hidden="true">◫</span>Панель Mihomo</button>
-        <button class="ghost reset-btn" type="button" onclick="resetCurrentPageDraft()" title="Вернуть поля этой страницы к значениям с роутера">Сбросить страницу</button>
-        <button class="ghost reset-btn" type="button" onclick="resetUiDraft()" title="Стереть все несохранённые правки на всех страницах">Сбросить всё</button>
         <button class="primary command-trigger" type="button" onclick="generateCommands()">Команды MikroTik</button>
+        <details class="more-menu">
+          <summary title="Сбросить черновик" aria-label="Ещё">⋯</summary>
+          <div class="more-menu-list">
+            <button class="ghost reset-btn" type="button" onclick="resetCurrentPageDraft()" title="Вернуть поля этой страницы к значениям с роутера">Сбросить страницу</button>
+            <button class="ghost reset-btn" type="button" onclick="resetUiDraft()" title="Стереть все несохранённые правки на всех страницах">Сбросить всё</button>
+          </div>
+        </details>
       </div>
     </header>
     <form id="envForm">
@@ -701,7 +707,8 @@ footer() {
   [ -n "${RULES_ENV_SNAPSHOT_DONE:-}" ] || rules_env_snapshot
   cat <<'EOF'
     <div class="bottom-submit">
-      <button class="primary command-trigger" type="button" onclick="generateCommands()">Сгенерировать команды MikroTik</button>
+      <span class="bottom-submit-label"></span>
+      <button class="primary command-trigger" type="button" onclick="generateCommands()">Команды MikroTik</button>
     </div>
     </form>
     <section id="commands" class="command-panel" hidden>
@@ -818,7 +825,7 @@ EOF
   section_end
 
   known_providers_seed
-  section_start "Добавить сайт" "Самый частый сценарий — пустить сайт или адрес через нужный прокси. Вставьте адрес, выберите, через что его пускать, и нажмите «Добавить»: панель сама решит, в какую переменную это записать, и покажет решение заранее."
+  section_start "Добавить сайт" "Вставьте адрес и выберите, через что его пускать: панель сама решит, в какую переменную это записать. Подробнее и имена на роутере — на странице «Правила и сайты»."
   rules_env_snapshot
   quick_site_card nohead
   section_end
@@ -855,11 +862,11 @@ sniffer_tab() {
   toggle_field SNIFFER_OVERRIDE_DESTINATION "override-destination" "Подменять адрес назначения найденным доменом и переподключаться уже по нему. Нужно, когда клиент пришёл с чужим IP, но ломает случаи, где SNI не совпадает с реальным получателем — такие адреса вынесите в списки ниже." true
   echo '</div>'
   cat <<'EOF'
-<div class="notice">
-  <b>Что можно писать в списках</b>
+<details class="notice notice-fold">
+  <summary><b>Что можно писать в списках</b></summary>
   <span>Значения через запятую. Адресные списки принимают CIDR (<code>192.168.88.0/24</code>), <code>geoip:private</code> и <code>rule-set:ИМЯ</code> — набор должен быть с behavior <code>ipcidr</code>. Список доменов принимает шаблоны (<code>+.example.com</code>, <code>*.example.com</code>), <code>geosite:ИМЯ</code> и <code>rule-set:ИМЯ</code> с behavior <code>domain</code> или <code>classical</code>. Имя набора берётся из <code>rule-providers</code> готового конфига — его видно на странице YAML; с несуществующим именем ядро не стартует, а <code>geoip:</code> и <code>geosite:</code> заставят контейнер скачать geo-базы.</span>
   <a class="doc-link" href="https://wiki.metacubex.one/ru/config/sniff/" target="_blank" rel="noopener">Документация sniffer</a>
-</div>
+</details>
 EOF
   echo '<div class="dns-list-grid">'
   dns_list_editor SNIFFER_SKIP_SRC_ADDRESS "skip-src-address" "skip-src-address" "192.168.88.10/32" \
@@ -945,20 +952,20 @@ EOF
   done
   cat <<'EOF'
 </div>
-<div class="notice">
-  <b>fake-ip-filter-mode: rule</b>
+<details class="notice notice-fold">
+  <summary><b>fake-ip-filter-mode: rule</b></summary>
   <span>В контейнере этот режим сейчас задан хардкодом, а последним правилом entrypoint всегда добавляет <code>MATCH,fake-ip</code>. Строки выше идут по номеру env: <code>FAKE_IP_FILTER1</code>, <code>FAKE_IP_FILTER2</code> и так далее.</span>
   <a class="doc-link" href="https://wiki.metacubex.one/ru/config/dns/#fake-ip-filter-mode" target="_blank" rel="noopener">Документация fake-ip-filter-mode</a>
   <a class="doc-link" href="https://wiki.metacubex.one/ru/config/rules/" target="_blank" rel="noopener">Документация rules</a>
-</div>
-<div class="notice">
-  <b>Настоящие IP отдельным клиентам</b>
+</details>
+<details class="notice notice-fold">
+  <summary><b>Настоящие IP отдельным клиентам</b></summary>
   <span>Правило <code>SRC-IP-CIDR,192.168.88.10/32,real-ip</code> отдаёт указанному клиенту локальной сети обычные адреса вместо fake-ip: ему достаточно прописать DNS контейнера, отдельный чистый DNS не нужен. Это возможность нашей сборки ядра — апстрим её не принял, — поэтому на официальном mihomo такой конфиг не запустится. Правило действует только на запросы, пришедшие в DNS контейнера извне; внутренние (перехват TUN, резолв самих прокси) идут как раньше.</span>
-</div>
-<div class="notice">
-  <b>DNS-серверы</b>
+</details>
+<details class="notice notice-fold">
+  <summary><b>DNS-серверы</b></summary>
   <span>Три списка ниже задаются переменными через запятую. Значения по умолчанию совпадают с тем, что контейнер писал в конфиг раньше, а пустой список возвращает их же: без <code>default-nameserver</code> и <code>nameserver</code> mihomo не стартует.</span>
-</div>
+</details>
 EOF
   echo '<div class="dns-list-grid">'
   dns_list_editor DNS_DEFAULT_NAMESERVER "default-nameserver" "default-nameserver" "8.8.8.8" \
@@ -1093,10 +1100,11 @@ EOF
   <div class="group-sec-head"><b>REALITY и X25519MLKEM768</b></div>
 EOF
   cat <<'EOF'
-<div class="notice">
+<details class="notice notice-fold">
+  <summary><b>Почему контейнер дописывает этот флаг</b></summary>
   <span>Подписки почти никогда не присылают <code>support-x25519mlkem768</code>, а серверам он бывает нужен. Контейнер дописывает флаг через <code>override-expr</code> провайдера, и правило смотрит на наличие <code>reality-opts</code> — обычные VLESS без REALITY, VMess, SS, Hysteria и прочие не задеваются. Действует на <code>LINK*</code>, <code>SUB_LINK*</code> и смонтированные YAML; у каждой подписки значение можно переопределить своим полем.</span>
   <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#override" target="_blank" rel="noopener">Документация override</a>
-</div>
+</details>
 EOF
   echo '<div class="grid">'
   select_field REALITY_MLKEM "REALITY MLKEM" "<code>auto</code> — проставить <code>true</code> только там, где подписка поле не прислала. <code>true</code> — навязать даже поверх присланного <code>false</code>. <code>false</code> — навязать выключение. <code>off</code> — не трогать." auto "auto true false off"
@@ -2437,7 +2445,7 @@ rules_page() {
     done
   fi
   echo '</textarea>'
-  echo '<div class="subhead"><b>RULESxx</b><button type="button" onclick="addPreviewRule()">Добавить RULES</button></div><div id="rules" class="rows">'
+  echo '<div class="subhead"><div><b>Свои правила RULESxx</b><small>Правила из групп, наборов и маунтов показаны в итоговом списке ниже и правятся там, откуда пришли.</small></div><button type="button" onclick="addPreviewRule()">Добавить RULES</button></div><div id="rules" class="rows" data-empty="Своих правил нет. Сайт или IP проще добавить карточкой выше, строку RULES — кнопкой «Добавить RULES».">'
   for name in $(env_names '^RULES[0-9]+='); do
     idx="$(printf '%s' "$name" | sed 's/RULES//')"
     val="$(env_attr "$name" "")"
@@ -2448,7 +2456,6 @@ EOF
   echo '</div>'
   echo '<div class="subhead"><b>Итоговый rules из YAML</b></div>'
   echo '<div id="finalRulesPreview" class="final-rules"><div class="empty">Предпросмотр собирается в браузере из env и черновика.</div></div>'
-  echo '<div class="note-list"><div><b>RULESxx</b><span>Редактируются отдельно сверху. Generated-строки показывают итог от GROUP/RULE_SET/маунтов и не редактируются здесь.</span></div></div>'
   section_end
 }
 

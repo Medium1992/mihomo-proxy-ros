@@ -2076,6 +2076,15 @@ function updatePendingCounter() {
     badge.hidden = !n;
     btn.title = n ? "Изменено переменных: " + n : "Изменений нет";
   });
+  // Нижняя полоса дублирует кнопку шапки, поэтому показывается, только
+  // когда есть что отправлять, и тогда держится у нижнего края экрана.
+  const bottom = document.querySelector(".bottom-submit");
+  if (bottom) {
+    const files = typeof LiveFiles !== "undefined" ? LiveFiles.changes().length : 0;
+    bottom.classList.toggle("has-pending", !!(n || files));
+    const label = bottom.querySelector(".bottom-submit-label");
+    if (label) label.textContent = n ? "Изменений в черновике: " + n : "Файлы изменены после старта";
+  }
   // Третий шаг на обзоре — «отправьте изменения»: он живой, по черновику.
   const step = document.querySelector("[data-pending-step]");
   if (step) {
@@ -6823,6 +6832,11 @@ function refreshFieldMarkers() {
       statusEl.textContent = "modified";
     }
   });
+  // «default» стоит почти в каждой карточке и ничего не сообщает: видны
+  // только set, new и modified, текст статуса остаётся для логики выше.
+  document.querySelectorAll("#envForm .field-meta > i, #envForm .field > i, #envForm .toggle > i, #envForm .dns-list-editor > i").forEach((el) => {
+    el.classList.toggle("status-default", el.textContent.trim() === "default");
+  });
 }
 
 // Count modified by inspecting actual inputs (works for dynamic rows where
@@ -7035,9 +7049,71 @@ function updatePendingRemovalsPanel() {
   panel.innerHTML = intro + '<div class="pending-removals-list">' + chips + '</div>';
 }
 
+// ---- Группа: пустые поля спрятаны за «+ условие» ----
+// У группы обычно заполнены два-три поля из двух десятков, а на экране были
+// все. Пустые редкие поля прячем и выводим кнопками под секцией: нажал —
+// поле появилось. Прячем только при первом показе: поле, которое уже было
+// на экране (с значением, раскрытое или очищенное сейчас), остаётся.
+const GROUP_OPTIONAL_FIELDS = {
+  members: { label: "+ ещё:", suffixes: ["FILTER", "EXCLUDE"] },
+  pick: { label: "+ ещё:", suffixes: ["DEFAULT_SELECTED"] },
+  rules: { label: "+ условие:", suffixes: ["GEOSITE", "GEOIP", "AS", "DOMAIN", "SUFFIX", "KEYWORD", "IPCIDR", "SRCIPCIDR", "DSCP", "PRIORITY", "DNS"] },
+};
+
+function refreshGroupOptionalFields() {
+  document.querySelectorAll(".group-pane .group-sec[data-sec]").forEach((sec) => {
+    const cfg = GROUP_OPTIONAL_FIELDS[sec.dataset.sec];
+    if (!cfg) return;
+    const grid = sec.querySelector(":scope > .grid");
+    if (!grid) return;
+    let bar = sec.querySelector(":scope > .cond-add");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.className = "cond-add";
+      bar.innerHTML = '<span class="cond-add-title"></span><div class="cond-add-chips"></div>';
+      bar.querySelector(".cond-add-title").textContent = cfg.label;
+      grid.after(bar);
+    }
+    const chips = bar.querySelector(".cond-add-chips");
+    sec.querySelectorAll(".field[data-env]").forEach((box) => {
+      const env = box.dataset.env || "";
+      if (!cfg.suffixes.some((suf) => env.endsWith("_" + suf))) return;
+      const input = box.querySelector("input[name], select[name], textarea[name]");
+      if (!input) return;
+      const shown = box.dataset.condShown === "1";
+      const empty = fieldValue(input) === "" && input.dataset.modified !== "true" && document.activeElement !== input;
+      let chip = chips.querySelector('[data-cond-for="' + CSS.escape(env) + '"]');
+      if (shown || !empty) {
+        box.dataset.condShown = "1";
+        box.classList.remove("cond-hidden");
+        if (chip) chip.remove();
+        return;
+      }
+      box.classList.add("cond-hidden");
+      if (!chip) {
+        chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "chip";
+        chip.dataset.condFor = env;
+        chip.textContent = (box.querySelector(":scope > span > b") || {}).textContent || env;
+        chip.addEventListener("click", () => {
+          box.dataset.condShown = "1";
+          box.classList.remove("cond-hidden");
+          chip.remove();
+          bar.hidden = !chips.children.length;
+          input.focus();
+        });
+        chips.appendChild(chip);
+      }
+    });
+    bar.hidden = !chips.children.length;
+  });
+}
+
 function refreshAllBadges() {
   if (typeof updatePendingCounter === "function") updatePendingCounter();
   refreshFieldMarkers();
+  refreshGroupOptionalFields();
   updateTabBadges();
   updateNavBadges();
   updateGroupBadges();
@@ -7108,6 +7184,29 @@ function bootstrapUI() {
   const first = requestedButton || document.querySelector(".file-list button");
   if (first) switchYaml(first.dataset.name);
 }
+
+// Меню слева на узком экране свёрнуто в одну кнопку с названием страницы.
+function toggleSideNav(btn) {
+  const side = btn.closest(".side");
+  const open = !side.classList.contains("nav-open");
+  side.classList.toggle("nav-open", open);
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const current = document.querySelector(".side nav a.active");
+  const label = document.querySelector(".nav-toggle-current");
+  // Без значка: он в <span> перед названием.
+  const title = current ? [...current.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join("").trim() : "";
+  if (label) label.textContent = title || "Меню";
+});
+
+// Меню «⋯» в шапке закрывается кликом мимо него и после выбора пункта.
+document.addEventListener("click", (e) => {
+  document.querySelectorAll(".more-menu[open]").forEach((menu) => {
+    if (!menu.contains(e.target) || e.target.closest(".more-menu-list button")) menu.open = false;
+  });
+});
 
 document.addEventListener("DOMContentLoaded", () => {
   // Черновик с сервера тянем ДО инициализации формы: секретные ключи живут
