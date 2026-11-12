@@ -65,13 +65,14 @@
 # address lists
 /ip/firewall/address-list/remove [find where list="MihomoProxyRoS" and !dynamic]
 /ip/firewall/address-list/remove [find where list="YT" and comment="YT_MSS"]
+/ip/firewall/address-list/remove [find where list="MihomoProxyRoS_src" or (list="MihomoProxyRoS_local" and comment="MihomoSrc")]
 :foreach a in={"1.1.1.1";"9.9.9.9";"149.112.112.112";"104.16.248.249";"104.16.249.249";"8.8.8.8";"8.8.4.4"} do={
 /ip/firewall/address-list/remove [find where list="DNS" and address=$a]
 }
 :put "Removed address lists"
 
 # mangle
-/ip/firewall/mangle/remove [find where comment="YT_MSS" or comment="Accept_no_mark" or comment="AcceptInWAN&Containers" or comment="RoutingToMihomo1" or comment="RoutingToMihomo2" or comment="MarkConnAddressList" or comment="Discord_RTC" or comment="Discord_WebRTC"]
+/ip/firewall/mangle/remove [find where comment="YT_MSS" or comment="Accept_no_mark" or comment="AcceptInWAN&Containers" or comment="RoutingToMihomo1" or comment="RoutingToMihomo2" or comment="MarkConnAddressList" or comment="Discord_RTC" or comment="Discord_WebRTC" or comment="MihomoSrc_tcp" or comment="MihomoSrc_udp"]
 :put "Removed mangle rules"
 
 # routes and routing table

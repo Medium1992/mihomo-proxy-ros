@@ -637,6 +637,9 @@ function collectAllCommands() {
 // Домены групп (*_SUFFIX, *_DOMAIN) и правил RULES, которые не идут в DIRECT,
 // роутер должен отправлять в mihomo: для них нужна запись FWD с address-list,
 // как в раскатке. IP групп (*_IPCIDR) попадают в address-list напрямую.
+// Адреса клиентов (*_SRCIPCIDR, SRC-IP-CIDR) идут в свой address-list: весь
+// TCP и UDP этих устройств, кроме локальных сетей, мультикаста и broadcast,
+// mangle отправляет в контейнер, а там его разводит правило SRC-IP-CIDR.
 // Команды считаются по разнице env «было → стало», а не по логу: домен
 // убирается с роутера, только если его больше нет ни в одной группе и правиле.
 const RouterNames = {
@@ -661,16 +664,18 @@ const RouterNames = {
 };
 
 function routerItemsOf(env) {
-  // name → { domains: Map(domain → {exact, group}), ips: Map(cidr → group) } по всем
-  // группам из GROUP и правилам RULES*, кроме DIRECT.
+  // name → { domains: Map(domain → {exact, group}), ips: Map(cidr → group),
+  // srcs: Map(cidr → group) } по всем группам из GROUP и правилам RULES*, кроме DIRECT.
   const domains = new Map();
   const ips = new Map();
+  const srcs = new Map();
   const groups = String(env.get("GROUP") || "").split(",").map((g) => g.trim()).filter(Boolean);
   groups.forEach((g) => {
     const prefix = groupEnvPrefix(g);
     splitList(env.get(prefix + "_SUFFIX")).forEach((d) => { if (!domains.has(d)) domains.set(d, { exact: false, group: g }); });
     splitList(env.get(prefix + "_DOMAIN")).forEach((d) => { if (!domains.has(d)) domains.set(d, { exact: true, group: g }); });
     splitList(env.get(prefix + "_IPCIDR")).forEach((ip) => { if (!ips.has(ip)) ips.set(ip, g); });
+    splitList(env.get(prefix + "_SRCIPCIDR")).forEach((ip) => { if (!srcs.has(ip)) srcs.set(ip, g); });
   });
   for (const [name, value] of env) {
     if (!/^RULES[0-9]+$/.test(name)) continue;
@@ -681,13 +686,14 @@ function routerItemsOf(env) {
       if (type === "DOMAIN-SUFFIX" && !domains.has(parts[1])) domains.set(parts[1], { exact: false, group: parts[2] });
       else if (type === "DOMAIN" && !domains.has(parts[1])) domains.set(parts[1], { exact: true, group: parts[2] });
       else if (type === "IP-CIDR" && !ips.has(parts[1])) ips.set(parts[1], parts[2]);
+      else if (type === "SRC-IP-CIDR" && !srcs.has(parts[1])) srcs.set(parts[1], parts[2]);
     });
   }
-  return { domains, ips };
+  return { domains, ips, srcs };
 }
 
 function routerCommandsFor(pairs) {
-  const changed = pairs.filter((p) => p.name === "GROUP" || /^RULES[0-9]+$/.test(p.name) || /_(SUFFIX|DOMAIN|IPCIDR)$/.test(p.name));
+  const changed = pairs.filter((p) => p.name === "GROUP" || /^RULES[0-9]+$/.test(p.name) || /_(SUFFIX|DOMAIN|IPCIDR|SRCIPCIDR)$/.test(p.name));
   if (!changed.length) return [];
   const now = previewEnvMap();
   const was = new Map(now);
@@ -718,10 +724,50 @@ function routerCommandsFor(pairs) {
   for (const ip of a.ips.keys()) {
     if (!b.ips.has(ip)) out.push("/ip firewall address-list remove [find list=" + list + " address=" + q(addr(ip)) + "]");
   }
+  out.push(...routerSrcCommands(a.srcs, b.srcs, q, addr));
   // Каждая команда в :do {} on-error={}: при вставке скриптом одна ошибка
   // (имя уже занято, другая запись с тем же именем) не остановит остальные.
   return out.length ? ["", "# DNS и address-list роутера (forward-to=" + RouterNames.fwd + ", address-list=" + RouterNames.list + ")"]
     .concat(out.map((c) => ":do {" + c + "} on-error={}")) : [];
+}
+
+// Локальные назначения устройств из *_SRCIPCIDR: в таблице MihomoProxyRoS
+// частные сети в blackhole, так что без исключения LAN и сам роутер были бы
+// недоступны. Адреса роутера отсекает dst-address-type=!local.
+const ROUTER_SRC_BYPASS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "224.0.0.0/4", "255.255.255.255"];
+
+function routerSrcCommands(was, now, q, addr) {
+  const srcList = q(RouterNames.list + "_src");
+  const bypass = q(RouterNames.list + "_local");
+  const notBypass = q("!" + RouterNames.list + "_local");
+  const out = [];
+  let added = false;
+  for (const [ip, group] of now) {
+    if (was.has(ip)) continue;
+    added = true;
+    out.push(":if ([:len [/ip firewall address-list find list=" + srcList + " address=" + q(addr(ip)) + "]] = 0) do={/ip firewall address-list add list=" +
+      srcList + " address=" + q(addr(ip)) + " comment=" + q(group) + "}");
+  }
+  for (const ip of was.keys()) {
+    if (!now.has(ip)) out.push("/ip firewall address-list remove [find list=" + srcList + " address=" + q(addr(ip)) + "]");
+  }
+  if (added) {
+    ROUTER_SRC_BYPASS.forEach((ip) => out.push(":if ([:len [/ip firewall address-list find list=" + bypass + " address=" + q(ip) +
+      "]] = 0) do={/ip firewall address-list add list=" + bypass + " address=" + q(ip) + " comment=\"MihomoSrc\"}"));
+    // Метку соединения берём у правила раскатки, а встаём перед её
+    // mark-routing: дальше пакет ведёт уже существующая цепочка. ICMP
+    // в контейнер не идёт, поэтому TCP и UDP отдельными правилами.
+    out.push(":local r [/ip firewall mangle find comment=\"RoutingToMihomo1\"]; :local c [/ip firewall mangle find comment=\"MarkConnAddressList\"]; " +
+      ":if ([:len $r] = 0 or [:len $c] = 0) do={:put \"MihomoSrc: no RoutingToMihomo1/MarkConnAddressList mangle rules from the installer, add the mangle by hand\"} else={" +
+      ":local m [/ip firewall mangle get [:pick $c 0] new-connection-mark]; :foreach p in={\"tcp\";\"udp\"} do={" +
+      ":if ([:len [/ip firewall mangle find comment=(\"MihomoSrc_\" . $p)]] = 0) do={/ip firewall mangle add chain=prerouting action=mark-connection" +
+      " in-interface-list=LAN connection-mark=no-mark connection-state=new src-address-list=" + srcList + " dst-address-list=" + notBypass +
+      " dst-address-type=!local protocol=$p new-connection-mark=$m comment=(\"MihomoSrc_\" . $p) place-before=[:pick $r 0]}}}");
+  } else if (was.size && !now.size) {
+    out.push("/ip firewall mangle remove [find comment=\"MihomoSrc_tcp\" or comment=\"MihomoSrc_udp\"]");
+    out.push("/ip firewall address-list remove [find list=" + bypass + " comment=\"MihomoSrc\"]");
+  }
+  return out;
 }
 
 function formatCommands(title, commands) {
