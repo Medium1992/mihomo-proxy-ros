@@ -131,11 +131,10 @@ func TestCoalesceDialsLiveConnsStreamLimit(t *testing.T) {
 	t.Logf("connections used %d, dials %d, peak open %d", n, d.dials.Load(), d.maxOpen.Load())
 }
 
-// После полной блокировки не остаётся ни сокетов, ни горутин dial'а. Срок
-// dial'а короче coalescedThrottle: ждущие получают ошибку ведущего.
+// После полной блокировки не остаётся ни сокетов, ни горутин dial'а.
 func TestCoalesceDialsNoLeakBlackhole(t *testing.T) {
 	leakCheck(t)
-	setDialTimeout(t, coalescedThrottle*2/3)
+	setDialTimeout(t, 300*time.Millisecond)
 	addr := blackholeServer(t)
 	var d dialCounter
 	rt := coalescedTestTransport(t, addr, &d, 0)
@@ -146,8 +145,13 @@ func TestCoalesceDialsNoLeakBlackhole(t *testing.T) {
 			t.Fatalf("round %d: %d of 30 requests failed, want all", round, failed)
 		}
 	}
-	if got := d.dials.Load(); got != 3 {
-		t.Fatalf("3 rounds of 30 requests made %d dials, want 3", got)
+	// Попытки идут одна за другой, по одной в срок 300 мс, пока сессии ждут
+	// (2 с на раунд): не больше семи-восьми на раунд, а не по одной на запрос.
+	if got := d.dials.Load(); got > 3*8 {
+		t.Fatalf("3 rounds of 30 requests made %d dials, want at most one per attempt bound", got)
+	}
+	if got := d.maxOpen.Load(); got != 1 {
+		t.Fatalf("%d sockets open at once, want 1", got)
 	}
 	waitFor(t, "sockets to close", 2*time.Second, func() bool { return d.open.Load() == 0 })
 }

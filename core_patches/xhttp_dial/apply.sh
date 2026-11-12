@@ -4,10 +4,9 @@
 # запроса, не нашедшего готового соединения. На холодном пуле и при
 # рукопожатии, заблокированном после ClientHello, это TCP-соединение на сессию,
 # и max-connections в reuse-settings сокеты больше не ограничивает (тот же
-# класс бага, что XTLS/Xray-core#6797). Склейка — по образцу x/net CL 845005
-# и того, как Chrome дозванивается до h2-хоста (ожидание 300 мс, до 6 dial'ов,
-# запасной только до TCP), см. transport/xhttp/dial_coalesce.go; заодно dial
-# получает срок, которого на этом пути не было.
+# класс бага, что XTLS/Xray-core#6797). Склейка — по образцу x/net CL 845005,
+# см. transport/xhttp/dial_coalesce.go; заодно dial получает срок, которого на
+# этом пути не было.
 #
 # В апстриме меняются две строки transport/xhttp/client.go: NewClient
 # оборачивает обе фабрики транспорта, а DialTLSContext h2 отмечает
@@ -36,13 +35,14 @@ grep -Fq 'makeTransport, makeDownloadTransport = CoalesceDials(makeTransport), C
 
 # Отметка «TCP установлен» в DialTLSContext h2-транспорта, между dialRaw и
 # wrapTLS: запасной dial склейки, как у браузеров, бывает только пока TCP
-# ведущего не установлен, а на повисшее рукопожатие второго ClientHello нет.
+# ведущего не установлен, а срок рукопожатия отсчитывается от этой отметки и
+# продлевается, пока сервер присылает байты (их считает обёртка raw).
 # Строка с wrapTLS(..., true) — только на пути h2.
 tls='wrapped, err := wrapTLS(ctx, raw, true)'
 n=$(grep -Fc "$tls" "$target" || true)
 [ "$n" = "1" ] || { echo "xhttp_dial: h2 wrapTLS found $n times in $target, expected 1" >&2; exit 1; }
-sed -i 's|^\(\t*\)wrapped, err := wrapTLS(ctx, raw, true)$|\1DialTCPUp(ctx)\n&|' "$target"
-grep -B1 -F "$tls" "$target" | grep -Fq 'DialTCPUp(ctx)' \
+sed -i 's|^\(\t*\)wrapped, err := wrapTLS(ctx, raw, true)$|\1raw = DialTCPUp(ctx, raw)\n&|' "$target"
+grep -B1 -F "$tls" "$target" | grep -Fq 'raw = DialTCPUp(ctx, raw)' \
   || { echo "xhttp_dial: DialTCPUp hook did not apply ($target)" >&2; exit 1; }
 
 # GetBody для тела packet-up. Сервер с MAX_CONCURRENT_STREAMS меньше 100

@@ -22,11 +22,16 @@ import (
 // которое считает соединения и умеет изображать блокировку после ClientHello.
 
 // standRelay — TCP-реле перед сервером. В режиме block новые соединения
-// принимаются и читаются, но наверх ничего не уходит и ответа нет.
+// принимаются и читаются, но наверх ничего не уходит и ответа нет. freeze —
+// сколько следующих соединений заморозить так же, при рабочем пути. delay
+// (нс) — задержка перед тем, как соединение пойдёт наверх: TCP с клиентом
+// уже установлен, а рукопожатие идёт не мгновенно, как на канале с RTT.
 type standRelay struct {
 	ln       net.Listener
 	upstream string
 	blocked  atomic.Bool
+	freeze   atomic.Int64
+	delay    atomic.Int64
 	accepted atomic.Int64
 	open     atomic.Int64
 	peak     atomic.Int64
@@ -50,6 +55,15 @@ func newStandRelay(t *testing.T, upstream string) *standRelay {
 }
 
 func (r *standRelay) addr() string { return r.ln.Addr().String() }
+
+func (r *standRelay) takeFreeze() bool {
+	for n := r.freeze.Load(); n > 0; n = r.freeze.Load() {
+		if r.freeze.CompareAndSwap(n, n-1) {
+			return true
+		}
+	}
+	return false
+}
 
 func (r *standRelay) track(c net.Conn) {
 	r.mu.Lock()
@@ -91,9 +105,12 @@ func (r *standRelay) serve() {
 			defer r.open.Add(-1)
 			defer r.untrack(c)
 			defer c.Close()
-			if r.blocked.Load() {
+			if r.blocked.Load() || r.takeFreeze() {
 				io.Copy(io.Discard, c)
 				return
+			}
+			if d := r.delay.Load(); d > 0 {
+				time.Sleep(time.Duration(d))
 			}
 			up, err := net.Dial("tcp", r.upstream)
 			if err != nil {
@@ -285,9 +302,9 @@ func TestCoalesceDialsStandWrappedDial(t *testing.T) {
 }
 
 // Блокировка после ClientHello на холодном пуле: живые соединения оборваны,
-// новые висят. Две волны сессий не открывают больше coalescedMaxDials сокетов
-// на транспорт (у Chrome — 6 на хост) и не оставляют их висеть; после снятия
-// блокировки сессии сразу идут.
+// новые висят. Две волны сессий не открывают больше двух сокетов на
+// транспорт (ведущий и запасной: история у клиента после прогрева уже есть)
+// и не оставляют их висеть; после снятия блокировки сессии сразу идут.
 func TestCoalesceDialsStandBlackhole(t *testing.T) {
 	leakCheck(t)
 	setDialTimeout(t, 2*time.Second)
@@ -306,8 +323,8 @@ func TestCoalesceDialsStandBlackhole(t *testing.T) {
 		if failed, _ := sessions(client, 50, 700*time.Millisecond, 1<<10); failed != 50 {
 			t.Fatalf("wave %d: %d of 50 sessions failed, want all", wave, failed)
 		}
-		if got := relay.peak.Load(); got > int64(2*coalescedMaxDials) {
-			t.Fatalf("wave %d: %d sockets open at once, want at most %d", wave, got, 2*coalescedMaxDials)
+		if got := relay.peak.Load(); got > 4 {
+			t.Fatalf("wave %d: %d sockets open at once, want at most 4", wave, got)
 		}
 		waitFor(t, "abandoned dials to end", time.Second, func() bool { return relay.open.Load() == 0 })
 	}
@@ -362,8 +379,7 @@ func TestCoalesceDialsStandAborts(t *testing.T) {
 // Страница начала грузиться во время блокировки, сессии идут одна за другой,
 // и блокировка снимается посреди залпа. Повисший ведущий не держит залп:
 // сессии, пришедшие после снятия, проходят все, а новое соединение получают
-// и часть сессий, начатых ещё во время блокировки. Сокетов не больше
-// coalescedMaxDials попыток и одного рабочего соединения на транспорт.
+// и часть сессий, начатых ещё во время блокировки. Сокетов при этом единицы.
 func TestCoalesceDialsStandBlockDuringPage(t *testing.T) {
 	leakCheck(t)
 	setDialTimeout(t, 3*time.Second)
@@ -410,11 +426,168 @@ func TestCoalesceDialsStandBlockDuringPage(t *testing.T) {
 	if during.Load() == 0 {
 		t.Fatal("no session started during the block got the new connection")
 	}
-	// Реле считает и рабочие соединения: после снятия блокировки новое уже
-	// открыто, а повисшие попытки обрываются мгновением позже, когда ждущие
-	// получили его из пула. Отсюда плюс одно на транспорт.
-	if got := relay.peak.Load(); got > int64(2*coalescedMaxDials+2) {
-		t.Fatalf("%d sockets open at once, want at most %d", got, 2*coalescedMaxDials+2)
+	if got := relay.peak.Load(); got > 6 {
+		t.Fatalf("%d sockets open at once, want a few", got)
 	}
 	t.Logf("started during block and passed: %d; after unblock: %d of %d; connections %d", during.Load(), afterOK.Load(), after.Load(), relay.accepted.Load())
+}
+
+// Блокировка после ClientHello, сессии идут без перерыва, сроки рабочие:
+// сессия ждёт 5 с, рукопожатие идёт 250 мс, а не мгновенно. В начале — залп,
+// который сам начинает зависшие попытки: его сессии стартуют вместе с ними и
+// должны дозвониться следующими, а не сдаться вместе с повисшими. Под
+// блокировкой на транспорте висит одна попытка; после снятия сессии, начатые
+// позже, проходят.
+func TestCoalesceDialsStandRecoveryUnderLoad(t *testing.T) {
+	leakCheck(t)
+	const xmux = 3
+	const block = 2 * time.Second
+	const total = 9 * time.Second
+	relay := newStandRelay(t, standServer(t, "stream-one"))
+	relay.delay.Store(int64(250 * time.Millisecond))
+	client := standClient(t, relay.addr(), "stream-one", &ReuseConfig{MaxConnections: fmt.Sprint(xmux)}, nil)
+	relay.blocked.Store(true)
+	time.AfterFunc(block, func() { relay.blocked.Store(false) })
+
+	type result struct {
+		start, end time.Duration
+		ok, burst  bool
+	}
+	var mu sync.Mutex
+	var all []result
+	var wg sync.WaitGroup
+	begin := time.Now()
+	run := func(i int, burst bool) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s := time.Since(begin)
+			err := echoSession(client, 5*time.Second, 1<<10, i)
+			mu.Lock()
+			all = append(all, result{s, time.Since(begin), err == nil, burst})
+			mu.Unlock()
+		}()
+	}
+	for i := 0; i < 32; i++ {
+		run(i, true)
+	}
+	for i := 32; time.Since(begin) < total; i++ {
+		time.Sleep(40 * time.Millisecond)
+		run(i, false)
+	}
+	wg.Wait()
+
+	firstOK := time.Duration(-1)
+	var burstOK, during, duringOK, after, afterFailed int
+	for _, r := range all {
+		if r.ok && (firstOK < 0 || r.end < firstOK) {
+			firstOK = r.end
+		}
+		switch {
+		case r.burst:
+			if r.ok {
+				burstOK++
+			}
+		case r.start < block:
+			during++
+			if r.ok {
+				duringOK++
+			}
+		default:
+			after++
+			if !r.ok {
+				afterFailed++
+			}
+		}
+	}
+	t.Logf("burst passed %d of 32; started during block passed %d of %d; after unblock failed %d of %d; first success %v after unblock; accepted %d, peak %d",
+		burstOK, duringOK, during, afterFailed, after, (firstOK - block).Round(100*time.Millisecond), relay.accepted.Load(), relay.peak.Load())
+	if burstOK != 32 {
+		t.Fatalf("burst that started the hanging attempts: %d of 32 passed", burstOK)
+	}
+	if afterFailed > 0 {
+		t.Fatalf("%d of %d sessions started after unblock failed", afterFailed, after)
+	}
+	// Срок сессии, а не срок попытки из кода: попытка, живущая дольше
+	// сессии, держала бы рабочий путь закрытым и после снятия блокировки.
+	if got := firstOK - block; got > 5*time.Second {
+		t.Fatalf("first session passed %v after unblock, want within the 5s session bound", got)
+	}
+	// Повисшие попытки сменяют друг друга, а не копятся: на транспорт одна
+	// повисшая и одно рабочее соединение, пока реле замечает закрытие.
+	if got := relay.peak.Load(); got > 2*xmux {
+		t.Fatalf("%d sockets open at once, want hanging attempts one at a time per transport", got)
+	}
+}
+
+// Один замёрзший поток на рабочем пути: первое рукопожатие транспорта
+// повисло, следующее прошло бы сразу. Залп ждёт не дольше срока попытки и
+// проходит весь, а повисших рукопожатий на транспорте одно.
+func TestCoalesceDialsStandFrozenHandshake(t *testing.T) {
+	leakCheck(t)
+	relay := newStandRelay(t, standServer(t, "stream-one"))
+	relay.delay.Store(int64(100 * time.Millisecond))
+	relay.freeze.Store(1)
+	client := standClient(t, relay.addr(), "stream-one", &ReuseConfig{MaxConnections: "1"}, nil)
+	start := time.Now()
+	failed, err := sessions(client, 30, 5*time.Second, 1<<10)
+	took := time.Since(start)
+	t.Logf("burst of 30 behind a frozen handshake: took %v, failed %d, accepted %d, peak %d", took.Round(10*time.Millisecond), failed, relay.accepted.Load(), relay.peak.Load())
+	if failed != 0 {
+		t.Fatalf("%d of 30 sessions failed: %v", failed, err)
+	}
+	if took > 3*time.Second {
+		t.Fatalf("burst behind one frozen handshake took %v", took)
+	}
+	if got := relay.accepted.Load(); got != 2 {
+		t.Fatalf("%d connections, want the frozen one and its replacement", got)
+	}
+}
+
+// Холодный залп на трёх транспортах, TCP устанавливается сразу, а
+// рукопожатие медленное. Склейка держит одно соединение на транспорт при
+// любой скорости рукопожатия: второго ClientHello, пока первое идёт, нет.
+func TestCoalesceDialsStandSlowHandshakeBurst(t *testing.T) {
+	leakCheck(t)
+	for _, delay := range []time.Duration{400 * time.Millisecond, 700 * time.Millisecond} {
+		upstream := standServer(t, "stream-one")
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var accepted atomic.Int64
+		var conns sync.WaitGroup
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				accepted.Add(1)
+				conns.Add(1)
+				go func() {
+					defer conns.Done()
+					defer c.Close()
+					time.Sleep(delay)
+					u, err := net.Dial("tcp", upstream)
+					if err != nil {
+						return
+					}
+					defer u.Close()
+					go func() { io.Copy(u, c); u.Close() }()
+					io.Copy(c, u)
+				}()
+			}
+		}()
+		client := standClient(t, ln.Addr().String(), "stream-one", &ReuseConfig{MaxConnections: "3"}, nil)
+		if failed, err := sessions(client, 16, 5*time.Second, 1<<10); failed != 0 {
+			t.Fatalf("handshake %v: %d of 16 sessions failed: %v", delay, failed, err)
+		}
+		if got := accepted.Load(); got != 3 {
+			t.Fatalf("handshake %v: %d connections for 16 sessions on 3 transports, want 3", delay, got)
+		}
+		client.Close()
+		ln.Close()
+		conns.Wait()
+	}
 }

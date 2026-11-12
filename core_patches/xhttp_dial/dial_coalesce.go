@@ -6,46 +6,49 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/metacubex/http"
 	"github.com/metacubex/http/httptrace"
 )
 
-// Склейка dial'ов HTTP/2-транспорта XHTTP по образцу Chrome.
+// Склейка dial'ов HTTP/2-транспорта XHTTP.
 //
 // С переходом клиента на net/http.Transport (MetaCubeX/mihomo bb2f57b0) каждый
 // запрос, не нашедший готового соединения, начинает свой dial: для HTTP/1 так
 // net/http и задуман («late binding»). Для h2 это значит, что холодный пул или
 // рукопожатие, повисшее после ClientHello, дают по TCP-соединению на сессию, а
 // max-connections в reuse-settings ограничивает число транспортов, но не
-// сокеты под ними. Прежний http2.Transport склеивал dial'ы сам, x/net после
-// golang/go#81646 (CL 845005) тоже: первый dial ведущий, остальные ждут его.
-// Здесь склейка устроена так, как Chrome ведёт себя с хостом, о котором знает,
-// что он говорит h2 (net/http/http_stream_factory_job.cc,
-// net/socket/transport_client_socket_pool.cc, ветка main):
-//   - первый dial к адресу ведущий; остальные запросы ждут его до
-//     coalescedThrottle, а дождавшись, получают его соединение из пула;
-//   - не дождавшийся за coalescedThrottle запрос дозванивается сам, но к
-//     адресу идёт не больше coalescedMaxDials dial'ов сразу; когда все места
-//     заняты, запрос ждёт, пока dial закончится, или соединение из пула;
-//   - пока TCP ведущего не установлен за coalescedBackupAfter, а других
-//     dial'ов к адресу нет, начинается один запасной (coalescedBackupAfter);
-//   - повторных dial'ов по таймеру, пока попытки идут, нет: каждая живёт до
-//     своего coalescedDialTimeout.
-// В отличие от Chrome и x/net:
-//   - dial, который больше никто не ждёт, обрывается: net/http держал бы
-//     повисшее рукопожатие ради будущих запросов, а оно им только мешает;
+// сокеты под ними. Прежний http2.Transport склеивал dial'ы сам. Так же их
+// склеивает x/net после golang/go#81646 (CL 845005), отсюда и устройство:
+// первый dial ведущий, остальные ждут его и выходят, как только их запрос
+// получил соединение из пула. К адресу идёт одна попытка за раз, и одно
+// соединение на транспорт остаётся правдой при любой скорости рукопожатия.
+//
+// На проводе к адресу никогда не висят два рукопожатия сразу: пока попытка
+// висит, второго ClientHello нет; повисшая обрывается (coalescedTCPTimeout,
+// coalescedAttemptTimeout), и следующую начинает тот, кому соединение ещё
+// нужно, как человек, нажавший «обновить» на повисшей странице. Медленную, но
+// живую попытку не обрывают: срок рукопожатия растёт со временем установки
+// TCP, и пока сервер что-то присылает, попытка продолжается. Запасной dial
+// бывает только до установленного TCP, как у Chrome и Firefox.
+//
+// В отличие от x/net:
+//   - dial, который больше никто не ждёт, обрывается: на этом пути net/http
+//     держал бы повисшее рукопожатие, и новые сессии после снятия блокировки
+//     ждали бы его вместо того, чтобы дозвониться заново;
 //   - удачный ведущий остаётся на месте ещё coalescedDialRetry: запрос,
 //     пришедший, пока net/http настраивает h2 и ещё не положил соединение в
 //     пул, иначе дозвонился бы сам;
 //   - повторный поиск соединения тем же запросом (соединение его не
-//     приняло) за удачным ведущим не встаёт, а дозванивается сразу; Chrome в
-//     этом случае ставит поток в очередь сессии, но потоки XHTTP живут часами,
-//     и очередь держала бы новые сессии до чужого закрытия;
-//   - упавший dial ошибку не раздаёт, пока к адресу идут другие: ждущие
-//     переходят к ним, а запрос, чей dial упал, больше не дозванивается сам,
-//     иначе на отказывающем пути выходило бы по dial'у на круг.
+//     приняло) за удачным ведущим не встаёт, а дозванивается сразу;
+//   - ведущий, оборванный по сроку, ошибку ждущим не раздаёт: первый из них
+//     дозванивается сам, остальные встают за ним, пока у их сессий есть
+//     время. Отказ (сброс, закрытый порт, ошибка TLS) получают все, как в
+//     x/net: на отказывающем пути это один dial, а не по dial'у на ждущего;
+//   - если TCP ведущего не установлен за coalescedBackupAfter, начинается
+//     один запасной dial.
 
 // coalescedDialRetry — сколько ждущий ждёт соединения после того, как ведущий
 // дозвонился и его RoundTrip вернулся, и сколько удачный ведущий держит место.
@@ -58,47 +61,97 @@ import (
 // 200 мс ничего не стоят.
 const coalescedDialRetry = 250 * time.Millisecond
 
-// coalescedThrottle — сколько запрос ждёт чужой dial, прежде чем дозваниваться
-// самому. У Chrome это kHTTP2ThrottleMs = 300 (crbug.com/718576) для хостов,
-// про которые он знает, что они говорят h2; транспорт здесь h2 всегда.
-var coalescedThrottle = 300 * time.Millisecond
+// coalescedAttemptTimeout — сколько попытка ведущего ждёт ответа сервера после
+// установленного TCP, прежде чем её заменит следующая. net/http дозванивается
+// в контексте, отвязанном от отмены запроса, а рукопожатие на этом пути срока
+// не имеет: повисшее после ClientHello держало бы всех ждущих до таймаута TCP.
+// Срок — это и простой транспорта на одном зависшем рукопожатии (блокировка,
+// замёрзший поток, смена WAN посреди рукопожатия), и частота ClientHello под
+// блокировкой: один в срок на транспорт. Он вдвое меньше срока сессии в
+// tunnel (C.DefaultTCPTimeout, 5 с), чтобы залп, начавший зависшую попытку,
+// успел дозвониться следующей. Попытка заменяется, а не идёт параллельно, и
+// медленный живой канал срезался бы на одном и том же месте, поэтому срок
+// отсчитывается от установленного TCP (DNS, dialer-proxy и сам TCP в него не
+// входят), не меньше трёх времён до установленного TCP этой попытки и
+// продлевается на столько же, пока от сервера идут байты: блокировка после
+// ClientHello — это тишина, а медленный канал присылает ServerHello. Всё
+// вместе не дольше coalescedDialTimeout. С TCP Fast Open dialRaw возвращается
+// до ответа сервера: время до TCP выходит около нуля, срок — ровно
+// coalescedAttemptTimeout от начала, и запасного dial'а нет, а потерянный SYN
+// уходит в продление по байтам или в следующую попытку.
+var coalescedAttemptTimeout = 2 * time.Second
 
-// coalescedMaxDials — сколько dial'ов к одному адресу идёт сразу. У Chrome это
-// предел сокетов на хост, g_max_sockets_per_group = 6, считая и те, что ещё
-// подключаются. Здесь — на транспорт: у каждого клиента xmux своё соединение.
-var coalescedMaxDials = 6
+// coalescedTCPTimeout — сколько попытка ждёт установленного TCP. Сюда входят
+// DNS и цепочка dialer-proxy, а потерянный SYN страхует запасной dial, поэтому
+// срок длиннее coalescedAttemptTimeout.
+var coalescedTCPTimeout = 3 * time.Second
+
+// coalescedDialTimeout — предел попытки целиком, тот же, что у сессии: дольше
+// её ждать некому. Им же ограничен dial запроса, пришедшего в обход склейки.
+var coalescedDialTimeout = 5 * time.Second
 
 // coalescedBackupAfter — когда начинать запасной dial, если TCP ведущего ещё
 // не установлен: потерянный SYN ядро повторит только через секунду. Как у
-// Chrome (backup connect job, kMaxConnectRetryIntervalMs = 250; только пока
-// у хоста нет других сокетов и TCP не установлен) и у Firefox
-// (network.http.connection-retry-timeout = 250, отменяется по установленному
-// TCP). Когда TCP поднялся и идёт рукопожатие, второй ClientHello к тому же
-// серверу браузер не шлёт, и запасной здесь тоже не начинается.
+// Chrome (backup connect job через kMaxConnectRetryIntervalMs = 250, только
+// пока TCP не установлен) и у Firefox (network.http.connection-retry-timeout
+// = 250, отменяется по установленному TCP). Когда TCP поднялся и идёт
+// рукопожатие, второй ClientHello к тому же серверу браузер не шлёт, и
+// запасной здесь тоже не начинается.
 var coalescedBackupAfter = 250 * time.Millisecond
-
-// coalescedDialTimeout ограничивает каждый dial: net/http дозванивается в
-// контексте, отвязанном от отмены запроса, а у рукопожатия на этом пути срока
-// нет, и повисшее после ClientHello держало бы место до таймаута TCP. У
-// браузеров рукопожатие ограничено 30 с (Chrome kSSLHandshakeTimeout, Firefox
-// network.http.tls-handshake-timeout), здесь 10 с, как TLSHandshakeTimeout в
-// net/http и ограничение рукопожатия XHTTP в Xray: под блокировкой каждое
-// место держится до срока, и после снятия блокировки сессии ждали бы
-// повисшие попытки полминуты.
-var coalescedDialTimeout = 10 * time.Second
 
 var errCoalescedDialAbandoned = errors.New("xhttp: coalesced dial abandoned")
 
-type dialTCPUpKey struct{}
+type dialAttemptKey struct{}
+
+// dialAttempt — ход одной попытки ведущего: её запасной dial и сроки.
+type dialAttempt struct {
+	start  time.Time
+	tcpUp  chan struct{} // закрыт, когда TCP попытки (любого из dial'ов) установлен
+	upOnce sync.Once
+	upAt   atomic.Int64 // когда, UnixNano
+	read   atomic.Int64 // сколько байтов прислал сервер
+	ended  atomic.Bool  // попытка закончилась: считать больше незачем
+}
+
+func (a *dialAttempt) markUp() {
+	a.upOnce.Do(func() {
+		a.upAt.Store(time.Now().UnixNano())
+		close(a.tcpUp)
+	})
+}
 
 // DialTCPUp отмечает, что TCP dial'а с контекстом ctx установлен и дальше
-// идёт рукопожатие. Его зовёт DialTLSContext h2-транспорта (NewTransport)
-// между dialRaw и wrapTLS: с этого момента запасной dial не начинается.
-func DialTCPUp(ctx context.Context) {
-	if up, ok := ctx.Value(dialTCPUpKey{}).(func()); ok {
-		up()
+// идёт рукопожатие, и возвращает соединение, которое считает присланные
+// сервером байты. Его зовёт DialTLSContext h2-транспорта (NewTransport) между
+// dialRaw и wrapTLS: с этого момента запасной dial не начинается, а попытку не
+// обрывают, пока сервер что-то присылает. Вне склейки соединение не меняется.
+func DialTCPUp(ctx context.Context, conn net.Conn) net.Conn {
+	a, ok := ctx.Value(dialAttemptKey{}).(*dialAttempt)
+	if !ok {
+		return conn
 	}
+	a.markUp()
+	return &countingConn{Conn: conn, a: a}
 }
+
+// countingConn считает байты, прочитанные из соединения, пока идёт попытка.
+// Соединение XHTTP живёт часами, поэтому после рукопожатия на чтение остаётся
+// одна проверка флага. Настоящий сокет под ней виден через Upstream(): так
+// его находят обёртки mihomo и TCP_INFO у xhttp_flow.
+type countingConn struct {
+	net.Conn
+	a *dialAttempt
+}
+
+func (c *countingConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n > 0 && !c.a.ended.Load() {
+		c.a.read.Add(int64(n))
+	}
+	return n, err
+}
+
+func (c *countingConn) Upstream() any { return c.Conn }
 
 type dialRoundTripKey struct{}
 
@@ -160,9 +213,10 @@ func (s *dialRoundTrip) finish() {
 
 // leaderDial — dial, который идёт на самом деле.
 type leaderDial struct {
-	dialc chan struct{} // закрыт, когда dial вернулся; err к этому моменту записан
-	err   error
-	guard *guardedDial
+	dialc   chan struct{} // закрыт, когда dial вернулся; err к этому моменту записан
+	err     error
+	rtDonec chan struct{} // donec RoundTrip, ради которого dial начат
+	guard   *guardedDial
 	// Под coalescingTransport.mu.
 	refs int // RoundTrip'ы, которые этот dial ждут
 }
@@ -170,13 +224,7 @@ type leaderDial struct {
 type coalescingTransport struct {
 	*http.Transport
 	mu      sync.Mutex
-	leaders map[string]*leaderDial // по адресу, как ключ пула net/http: за кем вставать
-	dials   map[string]int         // сколько dial'ов к адресу идёт, с запасными
-	waiting map[string]int         // сколько запросов ждёт места под dial
-	active  map[string]map[*leaderDial]struct{}
-	// slotc закрывается и заменяется, когда dial к адресу закончился: его
-	// ждут запросы, которым не хватило места или чей dial упал.
-	slotc map[string]chan struct{}
+	leaders map[string]*leaderDial // по адресу, как ключ пула net/http
 }
 
 // CoalesceDials оборачивает фабрику так, что у её HTTP/2-транспортов dial'ы
@@ -224,8 +272,6 @@ func (c *coalescingTransport) dial(ctx context.Context, dial func(context.Contex
 	if done {
 		return nil, errCoalescedDialAbandoned
 	}
-	throttleAt := time.Now().Add(coalescedThrottle)
-	var lastErr error // dial, за которым мы шли или который вели, упал
 	for {
 		c.mu.Lock()
 		l := c.leaders[addr]
@@ -236,162 +282,80 @@ func (c *coalescingTransport) dial(ctx context.Context, dial func(context.Contex
 			delete(c.leaders, addr)
 			l = nil
 		}
-		switch {
-		case l != nil && (l.succeeded() || lastErr == nil && time.Now().Before(throttleAt)):
-			// Ждём ведущего, пока не вышел срок, или удачного: его соединение
-			// вот-вот будет в пуле, и свой dial был бы лишним.
-			l.refs++
-			c.mu.Unlock()
-			conn, err, again := c.follow(ctx, l, rt, gotConnc, addr, throttleAt)
-			if !again {
-				if err == nil || errors.Is(err, errCoalescedDialAbandoned) || ctx.Err() != nil {
-					return conn, err
-				}
-				lastErr = err
-			}
-			continue
-		case lastErr == nil && c.dials[addr] < coalescedMaxDials:
-			l = &leaderDial{dialc: make(chan struct{}), refs: 1}
-			var gctx context.Context
-			l.guard, gctx = newGuardedDial(ctx)
+		if l == nil {
+			g, gctx := newGuardedDial(ctx)
+			l = &leaderDial{dialc: make(chan struct{}), rtDonec: rt.donec, guard: g, refs: 1}
 			if c.leaders == nil {
 				c.leaders = make(map[string]*leaderDial)
-				c.dials = make(map[string]int)
-				c.active = make(map[string]map[*leaderDial]struct{})
 			}
 			c.leaders[addr] = l
-			c.dials[addr]++
-			if c.active[addr] == nil {
-				c.active[addr] = make(map[*leaderDial]struct{})
-			}
-			c.active[addr][l] = struct{}{}
 			c.mu.Unlock()
-			conn, err := c.lead(gctx, l, rt, gotConnc, dial, network, addr)
-			if err == nil || errors.Is(err, errCoalescedDialAbandoned) || ctx.Err() != nil {
+			conn, err := c.lead(gctx, l, rt, dial, network, addr)
+			if !errors.Is(err, os.ErrDeadlineExceeded) || !stillWaiting(ctx, rt, gotConnc) {
 				return conn, err
 			}
-			lastErr = err
+			// Наша попытка повисла и оборвана по сроку, а сессия ещё ждёт:
+			// начинаем следующую, если её не начал кто-то из ждущих.
 			continue
 		}
-		// Места нет, или наш dial упал: ждём, пока закончится какой-нибудь
-		// dial к адресу. Удачный кладёт соединение в пул, и его получаем и
-		// мы. Упал наш, а других не осталось — его ошибка наша.
-		if lastErr != nil && c.dials[addr] == 0 {
-			c.mu.Unlock()
-			return nil, lastErr
-		}
-		slotc := c.slot(addr)
-		if c.waiting == nil {
-			c.waiting = make(map[string]int)
-		}
-		c.waiting[addr]++
+		l.refs++
 		c.mu.Unlock()
-		var err error
-		select {
-		case <-slotc:
-		case <-gotConnc:
-			err = errCoalescedDialAbandoned
-		case <-rt.donec:
-			err = errCoalescedDialAbandoned
-		case <-ctx.Done():
-			err = ctx.Err()
+		conn, err, again := c.follow(ctx, l, rt, gotConnc, addr)
+		if !again {
+			return conn, err
 		}
-		c.mu.Lock()
-		if c.waiting[addr]--; c.waiting[addr] <= 0 {
-			delete(c.waiting, addr)
-			// Ушёл последний ждущий места: dial'ы, оставленные ради
-			// ждущих, теперь не нужны никому.
-			for l := range c.active[addr] {
-				if l.refs <= 0 {
-					l.guard.abort(errCoalescedDialAbandoned)
-				}
-			}
-		}
-		c.mu.Unlock()
-		if err != nil {
-			return nil, err
-		}
+		// Соединение удачного ведущего нам не досталось, или ведущий
+		// оборван по сроку: на следующем круге ведущими становимся мы, если
+		// место ещё не занял другой ждущий, — тогда встаём за ним.
+		c.unlead(l, addr)
 	}
 }
 
-// slot — канал, который закроется, когда закончится очередной dial к addr.
-// Вызывается под coalescingTransport.mu.
-func (c *coalescingTransport) slot(addr string) chan struct{} {
-	if c.slotc == nil {
-		c.slotc = make(map[string]chan struct{})
-	}
-	ch := c.slotc[addr]
-	if ch == nil {
-		ch = make(chan struct{})
-		c.slotc[addr] = ch
-	}
-	return ch
-}
-
-// dialEnded освобождает место dial'а к addr (l — ведущий, nil — запасной) и
-// будит тех, кто его ждал.
-func (c *coalescingTransport) dialEnded(l *leaderDial, addr string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if l != nil {
-		delete(c.active[addr], l)
-		if len(c.active[addr]) == 0 {
-			delete(c.active, addr)
-		}
-	}
-	if c.dials[addr]--; c.dials[addr] <= 0 {
-		delete(c.dials, addr)
-	}
-	if ch := c.slotc[addr]; ch != nil {
-		close(ch)
-		delete(c.slotc, addr)
-	}
-}
-
-// takeDial занимает место под запасной dial к addr: только если других
-// dial'ов к адресу нет, как backup job у Chrome только при пустой группе.
-func (c *coalescingTransport) takeDial(addr string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.dials[addr] != 1 {
+// stillWaiting — соединение этому поиску ещё нужно: RoundTrip не вернулся,
+// поиск соединения не получил, контекст dial'а жив.
+func stillWaiting(ctx context.Context, rt *dialRoundTrip, gotConnc chan struct{}) bool {
+	select {
+	case <-rt.donec:
 		return false
+	case <-gotConnc:
+		return false
+	case <-ctx.Done():
+		return false
+	default:
+		return true
 	}
-	c.dials[addr]++
-	return true
 }
 
-// follow ждёт ведущего l до throttleAt. again — ведущий дозвонился, а
-// соединение нашему запросу так и не досталось, или срок вышел: пора
+// follow ждёт ведущего l. again — ведущий дозвонился, а соединение нашему
+// запросу так и не досталось, или ведущий оборван по сроку: пора
 // дозваниваться самим.
-func (c *coalescingTransport) follow(ctx context.Context, l *leaderDial, rt *dialRoundTrip, gotConnc chan struct{}, addr string, throttleAt time.Time) (conn net.Conn, err error, again bool) {
+func (c *coalescingTransport) follow(ctx context.Context, l *leaderDial, rt *dialRoundTrip, gotConnc chan struct{}, addr string) (conn net.Conn, err error, again bool) {
 	defer c.release(l, addr)
-	dialc := l.dialc
+	dialc, rtDonec := l.dialc, l.rtDonec
 	var retry <-chan time.Time
-	throttle := time.NewTimer(time.Until(throttleAt))
-	defer throttle.Stop()
-	// Канал, а не throttle.C в select: при go 1.20 в go.mod остановленный
-	// таймер может оставить в канале значение.
-	throttleC := throttle.C
 	for {
+		if dialc == nil && rtDonec == nil && retry == nil {
+			// Ведущий дозвонился и его RoundTrip вернулся, а нашему
+			// соединение не досталось. Либо оно сейчас придёт, либо с
+			// соединением ведущего что-то не так; ждём немного и
+			// дозваниваемся сами.
+			retry = time.After(coalescedDialRetry)
+		}
 		select {
 		case <-dialc:
 			if l.err != nil {
+				if errors.Is(l.err, os.ErrDeadlineExceeded) || errors.Is(l.err, errCoalescedDialAbandoned) {
+					// Попытка повисла и оборвана по сроку или оборвана,
+					// потому что ждавшие её ушли, а мы пришли, пока она
+					// закрывалась. Наша сессия ещё ждёт: следующую
+					// начинаем сами, как «обновить» на повисшей странице.
+					return nil, nil, true
+				}
 				return nil, l.err, false
 			}
-			// Ведущий дозвонился, а нашему соединение пока не досталось.
-			// Либо оно сейчас придёт из пула, либо с соединением ведущего
-			// что-то не так; ждём немного и дозваниваемся сами.
-			dialc, throttleC = nil, nil
-			retry = time.After(coalescedDialRetry)
-		case <-throttleC:
-			select {
-			case <-l.dialc:
-				// Dial закончился на самом сроке: разбираем его как обычно.
-				throttleC = nil
-				continue
-			default:
-			}
-			return nil, nil, true
+			dialc = nil
+		case <-rtDonec:
+			rtDonec = nil
 		case <-retry:
 			return nil, nil, true
 		case <-rt.donec:
@@ -405,43 +369,35 @@ func (c *coalescingTransport) follow(ctx context.Context, l *leaderDial, rt *dia
 	}
 }
 
-func (c *coalescingTransport) lead(ctx context.Context, l *leaderDial, rt *dialRoundTrip, gotConnc chan struct{}, dial func(context.Context, string, string) (net.Conn, error), network, addr string) (net.Conn, error) {
-	// Ведущий перестаёт ждать свой dial, когда его запрос получил соединение
-	// из другого dial'а или RoundTrip вернулся.
+func (c *coalescingTransport) lead(ctx context.Context, l *leaderDial, rt *dialRoundTrip, dial func(context.Context, string, string) (net.Conn, error), network, addr string) (net.Conn, error) {
+	// Ведущий перестаёт ждать свой dial, когда вернулся его RoundTrip.
 	stop := make(chan struct{})
 	go func() {
 		select {
 		case <-rt.donec:
 			c.release(l, addr)
-		case <-gotConnc:
-			c.release(l, addr)
 		case <-stop:
 		}
 	}()
-	conn, err := l.guard.run(ctx, func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return c.dialWithBackup(ctx, dial, network, addr)
+	a := &dialAttempt{start: time.Now(), tcpUp: make(chan struct{})}
+	watched := make(chan struct{})
+	go watchAttempt(l.guard, a, coalescedTCPTimeout, coalescedAttemptTimeout, watched)
+	conn, err := l.guard.run(ctx, coalescedDialTimeout, func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return dialWithBackup(context.WithValue(ctx, dialAttemptKey{}, a), a, dial, network, addr)
 	}, network, addr)
+	a.ended.Store(true)
+	close(watched)
 	close(stop)
 
-	// Место освобождается после того, как исход dial'а записан: проснувшиеся
-	// ждущие места должны увидеть удачного ведущего и встать за ним.
 	if err != nil {
 		// Сначала снимаем ведущего, потом будим ждущих: следующий запрос
 		// должен увидеть пустое место и дозвониться заново.
 		c.unlead(l, addr)
 		l.err = err
 		close(l.dialc)
-		c.dialEnded(l, addr)
 		return conn, err
 	}
 	close(l.dialc)
-	// Удачный встаёт на место ведущего, даже если его уже занял dial,
-	// начатый позже: запросам, которые сейчас придут или проснутся, нужно
-	// его соединение, а не ещё один dial.
-	c.mu.Lock()
-	c.leaders[addr] = l
-	c.mu.Unlock()
-	c.dialEnded(l, addr)
 	// Удачный ведущий остаётся на месте ещё coalescedDialRetry: net/http
 	// кладёт соединение в пул уже после возврата из dial'а, после настройки
 	// h2, и сигнала об этом не даёт (GotConn ведущего бывает и раньше).
@@ -452,12 +408,55 @@ func (c *coalescingTransport) lead(ctx context.Context, l *leaderDial, rt *dialR
 	return conn, nil
 }
 
+// watchAttempt обрывает попытку a, которая повисла: TCP не установлен за
+// tcpTimeout (coalescedTCPTimeout) или сервер молчит дольше срока
+// рукопожатия (coalescedAttemptTimeout, его даёт attemptTimeout). Предел
+// coalescedDialTimeout ставит сам guard. Сроки передаются на старте попытки,
+// а не читаются в горутине, как и срок guard'а.
+func watchAttempt(g *guardedDial, a *dialAttempt, tcpTimeout, attemptTimeout time.Duration, done <-chan struct{}) {
+	wait := func(d time.Duration) bool {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		select {
+		case <-t.C:
+			return true
+		case <-done:
+			return false
+		}
+	}
+	tcp := time.NewTimer(tcpTimeout)
+	select {
+	case <-a.tcpUp:
+		tcp.Stop()
+	case <-tcp.C:
+		g.abort(os.ErrDeadlineExceeded)
+		return
+	case <-done:
+		tcp.Stop()
+		return
+	}
+	bound := attemptTimeout
+	if d := 3 * time.Duration(a.upAt.Load()-a.start.UnixNano()); d > bound {
+		bound = d
+	}
+	var read int64
+	for wait(bound) {
+		n := a.read.Load()
+		if n == read {
+			// За весь срок от сервера ни байта: рукопожатие повисло.
+			g.abort(os.ErrDeadlineExceeded)
+			return
+		}
+		read = n
+	}
+}
+
 // dialWithBackup дозванивается, а если за coalescedBackupAfter TCP не
-// установлен и других dial'ов к адресу нет, начинает один запасной. Побеждает
-// первый удачный; второй обрывается, а его соединение, если успело,
-// закрывается. Контекст победителя не отменяется: обёртки соединения могут
-// привязывать к нему время жизни.
-func (c *coalescingTransport) dialWithBackup(ctx context.Context, dial func(context.Context, string, string) (net.Conn, error), network, addr string) (net.Conn, error) {
+// установлен, начинает один запасной dial. Побеждает первый удачный; второй
+// обрывается, а его соединение, если успело, закрывается. Контекст
+// победителя не отменяется: обёртки соединения могут привязывать к нему время
+// жизни.
+func dialWithBackup(ctx context.Context, a *dialAttempt, dial func(context.Context, string, string) (net.Conn, error), network, addr string) (net.Conn, error) {
 	type result struct {
 		conn net.Conn
 		err  error
@@ -465,43 +464,29 @@ func (c *coalescingTransport) dialWithBackup(ctx context.Context, dial func(cont
 	}
 	results := make(chan result, 2)
 	var cancels [2]context.CancelFunc
-	tcpUp := make(chan struct{})
-	var tcpUpOnce sync.Once
-	start := func(idx int, up func()) {
+	start := func(idx int) {
 		actx, cancel := context.WithCancel(ctx)
 		cancels[idx] = cancel
-		if up != nil {
-			actx = context.WithValue(actx, dialTCPUpKey{}, up)
-		}
 		go func() {
 			conn, err := dial(actx, network, addr)
 			results <- result{conn, err, idx}
 		}()
 	}
-	start(0, func() { tcpUpOnce.Do(func() { close(tcpUp) }) })
+	start(0)
 	backup := time.NewTimer(coalescedBackupAfter)
 	defer backup.Stop()
 	backupC := backup.C
-	running, backupTaken := 1, false
-	defer func() {
-		if backupTaken {
-			c.dialEnded(nil, addr)
-		}
-	}()
+	running := 1
 	var firstErr error
 	for running > 0 {
 		select {
 		case <-backupC:
 			backupC = nil
 			select {
-			case <-tcpUp:
-				continue
+			case <-a.tcpUp:
 			default:
-			}
-			if c.takeDial(addr) {
-				backupTaken = true
 				running++
-				start(1, nil)
+				start(1)
 			}
 		case r := <-results:
 			running--
@@ -549,21 +534,13 @@ func (c *coalescingTransport) unlead(l *leaderDial, addr string) {
 // release снимает с l один ждущий его RoundTrip. Ушёл последний, а dial ещё
 // идёт — он обрывается: net/http держит dial ради будущих запросов, но
 // повисшее рукопожатие будущим запросам только мешает. Место ведущего
-// освобождается сразу, и следующий запрос встаёт за другим dial'ом или
-// дозванивается заново, а не ждёт обречённый dial. Если же к адресу ждут
-// места другие запросы, dial остаётся: его соединение достанется им из пула,
-// а оборванный уступил бы место новому dial'у к тому же адресу. Так и Chrome
-// снимает connect job, только если попыток больше, чем ждущих запросов.
+// освобождается, когда обрыв закончился, а не сразу: иначе следующий запрос
+// начал бы рукопожатие, пока прежнее ещё закрывается. Пришедший в этот миг
+// встаёт за обрываемым и дозванивается следом за ним.
 func (c *coalescingTransport) release(l *leaderDial, addr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if l.refs--; l.refs > 0 {
-		return
-	}
-	if c.leaders[addr] == l {
-		delete(c.leaders, addr)
-	}
-	if c.waiting[addr] > 0 {
 		return
 	}
 	l.guard.abort(errCoalescedDialAbandoned)
@@ -596,8 +573,8 @@ func (g *guardedDial) abort(reason error) {
 	g.cancel()
 }
 
-func (g *guardedDial) run(ctx context.Context, dial func(context.Context, string, string) (net.Conn, error), network, addr string) (net.Conn, error) {
-	timer := time.AfterFunc(coalescedDialTimeout, func() { g.abort(os.ErrDeadlineExceeded) })
+func (g *guardedDial) run(ctx context.Context, timeout time.Duration, dial func(context.Context, string, string) (net.Conn, error), network, addr string) (net.Conn, error) {
+	timer := time.AfterFunc(timeout, func() { g.abort(os.ErrDeadlineExceeded) })
 	conn, err := dial(ctx, network, addr)
 	timer.Stop()
 	g.mu.Lock()
@@ -608,18 +585,17 @@ func (g *guardedDial) run(ctx context.Context, dial func(context.Context, string
 		return conn, err
 	}
 	// Dial оборван. Даже если он успел вернуть соединение, его контекст уже
-	// отменён, и полагаться на такое соединение нельзя.
+	// отменён, и полагаться на такое соединение нельзя. Ошибка — причина
+	// обрыва, а не то, чем dial ответил на отмену: по ней ждущие отличают
+	// повисшую попытку от отказа.
 	if conn != nil {
 		_ = conn.Close()
 	}
-	if err == nil || errors.Is(err, context.Canceled) {
-		err = reason
-	}
-	return nil, err
+	return nil, reason
 }
 
 // boundedDial ограничивает dial сроком coalescedDialTimeout.
 func boundedDial(ctx context.Context, dial func(context.Context, string, string) (net.Conn, error), network, addr string) (net.Conn, error) {
 	g, ctx := newGuardedDial(ctx)
-	return g.run(ctx, dial, network, addr)
+	return g.run(ctx, coalescedDialTimeout, dial, network, addr)
 }
