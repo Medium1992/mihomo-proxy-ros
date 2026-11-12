@@ -3,6 +3,7 @@ package xhttp
 import (
 	"context"
 	"crypto/tls"
+	"io"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -326,6 +327,64 @@ func TestCoalesceDialsSlowAliveHandshake(t *testing.T) {
 		if got := d.dials.Load(); got > 2 {
 			t.Fatalf("rtt %v: %d dials, want no attempt cut on a live path", rtt, got)
 		}
+	}
+}
+
+// helloCounter — прокси перед addr, который считает соединения, приславшие
+// хоть один байт, то есть начавшие рукопожатие, и пускает их к серверу через
+// delay: рукопожатие идёт не мгновенно.
+func helloCounter(t *testing.T, addr string, delay time.Duration, hellos *atomic.Int64) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				first := make([]byte, 1)
+				if _, err := io.ReadFull(c, first); err != nil {
+					return
+				}
+				hellos.Add(1)
+				time.Sleep(delay)
+				u, err := net.Dial("tcp", addr)
+				if err != nil {
+					return
+				}
+				defer u.Close()
+				u.Write(first)
+				go func() { io.Copy(u, c); u.Close() }()
+				io.Copy(c, u)
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// TCP устанавливается дольше coalescedBackupAfter (DNS на первом dial'е,
+// dialer-proxy, большой RTT), и запасной dial тоже до него доходит. Дальше
+// идёт только тот, кто дошёл первым: рукопожатие к серверу одно.
+func TestCoalesceDialsOneHandshakeAfterSlowTCP(t *testing.T) {
+	var hellos atomic.Int64
+	addr := helloCounter(t, okServer(t), 300*time.Millisecond, &hellos)
+	var d dialCounter
+	mk := dialFactory(t, &d, func(int64) string { return addr }, func(int64) time.Duration { return 300 * time.Millisecond }, nil)
+	failed, _ := burst(mk(), 30, 5*time.Second)
+	if failed != 0 {
+		t.Fatalf("%d of 30 requests failed", failed)
+	}
+	if got := d.dials.Load(); got != 2 {
+		t.Fatalf("%d dials, want the leader and its backup", got)
+	}
+	if got := hellos.Load(); got != 1 {
+		t.Fatalf("%d handshakes reached the server, want 1", got)
 	}
 }
 

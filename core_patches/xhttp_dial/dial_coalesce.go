@@ -113,24 +113,45 @@ type dialAttempt struct {
 	ended  atomic.Bool  // попытка закончилась: считать больше незачем
 }
 
-func (a *dialAttempt) markUp() {
+// markUp отмечает установленный TCP. first — этот dial дошёл до TCP первым
+// из двух (ведущий и запасной).
+func (a *dialAttempt) markUp() (first bool) {
 	a.upOnce.Do(func() {
 		a.upAt.Store(time.Now().UnixNano())
 		close(a.tcpUp)
+		first = true
 	})
+	return first
 }
+
+// errCoalescedSecondTCP — у dial'а попытки TCP установлен вторым: рукопожатие
+// уже начал другой, и второго ClientHello к серверу не будет.
+var errCoalescedSecondTCP = errors.New("xhttp: the other dial of the attempt reached TCP first")
+
+// secondConn — соединение dial'а, дошедшего до TCP вторым: уже закрыто, и
+// wrapTLS падает на первой же записи, ничего не отправив.
+type secondConn struct{ net.Conn }
+
+func (secondConn) Read([]byte) (int, error)  { return 0, errCoalescedSecondTCP }
+func (secondConn) Write([]byte) (int, error) { return 0, errCoalescedSecondTCP }
 
 // DialTCPUp отмечает, что TCP dial'а с контекстом ctx установлен и дальше
 // идёт рукопожатие, и возвращает соединение, которое считает присланные
 // сервером байты. Его зовёт DialTLSContext h2-транспорта (NewTransport) между
 // dialRaw и wrapTLS: с этого момента запасной dial не начинается, а попытку не
-// обрывают, пока сервер что-то присылает. Вне склейки соединение не меняется.
+// обрывают, пока сервер что-то присылает. Если TCP попытки уже установил
+// другой её dial (ведущий и запасной дошли оба), этот закрывается, не начав
+// рукопожатия: к серверу идёт одно рукопожатие. Вне склейки соединение не
+// меняется.
 func DialTCPUp(ctx context.Context, conn net.Conn) net.Conn {
 	a, ok := ctx.Value(dialAttemptKey{}).(*dialAttempt)
 	if !ok {
 		return conn
 	}
-	a.markUp()
+	if !a.markUp() {
+		_ = conn.Close()
+		return secondConn{conn}
+	}
 	return &countingConn{Conn: conn, a: a}
 }
 
@@ -504,7 +525,9 @@ func dialWithBackup(ctx context.Context, a *dialAttempt, dial func(context.Conte
 				return r.conn, nil
 			}
 			cancels[r.idx]()
-			if firstErr == nil {
+			// Ошибка dial'а, уступившего TCP другому, ничего не говорит о
+			// пути: попытка отвечает ошибкой того, кто шёл дальше.
+			if firstErr == nil || errors.Is(firstErr, errCoalescedSecondTCP) {
 				firstErr = r.err
 			}
 		}
