@@ -638,8 +638,9 @@ function collectAllCommands() {
 // роутер должен отправлять в mihomo: для них нужна запись FWD с address-list,
 // как в раскатке. IP групп (*_IPCIDR) попадают в address-list напрямую.
 // Адреса клиентов (*_SRCIPCIDR, SRC-IP-CIDR) идут в свой address-list: весь
-// TCP и UDP этих устройств, кроме локальных сетей, мультикаста и broadcast,
-// mangle отправляет в контейнер, а там его разводит правило SRC-IP-CIDR.
+// TCP и UDP этих устройств mangle отправляет в контейнер, а там его разводит
+// правило SRC-IP-CIDR. Локальные сети, мультикаст и broadcast выше
+// принимаются accept'ом и остаются на роутере.
 // Команды считаются по разнице env «было → стало», а не по логу: домен
 // убирается с роутера, только если его больше нет ни в одной группе и правиле.
 const RouterNames = {
@@ -731,15 +732,15 @@ function routerCommandsFor(pairs) {
     .concat(out.map((c) => ":do {" + c + "} on-error={}")) : [];
 }
 
-// Локальные назначения устройств из *_SRCIPCIDR: в таблице MihomoProxyRoS
-// частные сети в blackhole, так что без исключения LAN и сам роутер были бы
-// недоступны. Адреса роутера отсекает dst-address-type=!local.
-const ROUTER_SRC_BYPASS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "224.0.0.0/4", "255.255.255.255"];
+// Локальные подсети для устройств из *_SRCIPCIDR: в таблице MihomoProxyRoS
+// частные сети в blackhole, так что без accept'а перед пометкой LAN была бы
+// недоступна. Мультикаст и broadcast отсекает dst-address-type, адреса
+// роутера — dst-address-type=!local в самих правилах пометки.
+const ROUTER_SRC_BYPASS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16"];
 
 function routerSrcCommands(was, now, q, addr) {
   const srcList = q(RouterNames.list + "_src");
   const bypass = q(RouterNames.list + "_local");
-  const notBypass = q("!" + RouterNames.list + "_local");
   const out = [];
   let added = false;
   for (const [ip, group] of now) {
@@ -754,17 +755,22 @@ function routerSrcCommands(was, now, q, addr) {
   if (added) {
     ROUTER_SRC_BYPASS.forEach((ip) => out.push(":if ([:len [/ip firewall address-list find list=" + bypass + " address=" + q(ip) +
       "]] = 0) do={/ip firewall address-list add list=" + bypass + " address=" + q(ip) + " comment=\"MihomoSrc\"}"));
-    // Метку соединения берём у правила раскатки, а встаём перед её
-    // mark-routing: дальше пакет ведёт уже существующая цепочка. ICMP
+    // Все правила встают перед mark-routing раскатки в порядке добавления:
+    // сначала два accept'а, затем пометка, а дальше пакет ведёт уже
+    // существующая цепочка. Метку соединения берём у правила раскатки. ICMP
     // в контейнер не идёт, поэтому TCP и UDP отдельными правилами.
+    const base = "/ip firewall mangle add chain=prerouting in-interface-list=LAN connection-mark=no-mark connection-state=new src-address-list=" + srcList;
     out.push(":local r [/ip firewall mangle find comment=\"RoutingToMihomo1\"]; :local c [/ip firewall mangle find comment=\"MarkConnAddressList\"]; " +
       ":if ([:len $r] = 0 or [:len $c] = 0) do={:put \"MihomoSrc: no RoutingToMihomo1/MarkConnAddressList mangle rules from the installer, add the mangle by hand\"} else={" +
-      ":local m [/ip firewall mangle get [:pick $c 0] new-connection-mark]; :foreach p in={\"tcp\";\"udp\"} do={" +
-      ":if ([:len [/ip firewall mangle find comment=(\"MihomoSrc_\" . $p)]] = 0) do={/ip firewall mangle add chain=prerouting action=mark-connection" +
-      " in-interface-list=LAN connection-mark=no-mark connection-state=new src-address-list=" + srcList + " dst-address-list=" + notBypass +
-      " dst-address-type=!local protocol=$p new-connection-mark=$m comment=(\"MihomoSrc_\" . $p) place-before=[:pick $r 0]}}}");
+      ":local m [/ip firewall mangle get [:pick $c 0] new-connection-mark]; :local b [:pick $r 0]; " +
+      ":if ([:len [/ip firewall mangle find comment=\"MihomoSrc_local\"]] = 0) do={" + base + " action=accept dst-address-list=" + bypass +
+      " comment=\"MihomoSrc_local\" place-before=$b}; " +
+      ":if ([:len [/ip firewall mangle find comment=\"MihomoSrc_bcast\"]] = 0) do={" + base + " action=accept dst-address-type=broadcast,multicast" +
+      " comment=\"MihomoSrc_bcast\" place-before=$b}; " +
+      ":foreach p in={\"tcp\";\"udp\"} do={:if ([:len [/ip firewall mangle find comment=(\"MihomoSrc_\" . $p)]] = 0) do={" + base +
+      " action=mark-connection dst-address-type=!local protocol=$p new-connection-mark=$m comment=(\"MihomoSrc_\" . $p) place-before=$b}}}");
   } else if (was.size && !now.size) {
-    out.push("/ip firewall mangle remove [find comment=\"MihomoSrc_tcp\" or comment=\"MihomoSrc_udp\"]");
+    out.push("/ip firewall mangle remove [find comment=\"MihomoSrc_local\" or comment=\"MihomoSrc_bcast\" or comment=\"MihomoSrc_tcp\" or comment=\"MihomoSrc_udp\"]");
     out.push("/ip firewall address-list remove [find list=" + bypass + " comment=\"MihomoSrc\"]");
   }
   return out;
