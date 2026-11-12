@@ -14,8 +14,11 @@ import (
 // hedgeFactory — фабрика h2-транспортов XHTTP одного клиента со склейкой.
 // target и delay решают за каждый dial по его номеру (с 1), куда он идёт и
 // сколько ждёт перед TCP, — так изображаются потерянный SYN и блокировка.
-func hedgeFactory(t *testing.T, d *dialCounter, target func(n int64) string, delay func(n int64) time.Duration) TransportMaker {
+// tlsDelay, если не nil, — сколько рукопожатие с этим номером (с 1) ждёт
+// после установленного TCP, — так изображается медленный ClientHello.
+func hedgeFactory(t *testing.T, d *dialCounter, target func(n int64) string, delay func(n int64) time.Duration, tlsDelay func(n int64) time.Duration) TransportMaker {
 	t.Helper()
+	var handshakes atomic.Int64
 	mk := CoalesceDials(func() http.RoundTripper {
 		return NewTransport(func(ctx context.Context) (net.Conn, error) {
 			n := d.dials.Add(1)
@@ -32,6 +35,15 @@ func hedgeFactory(t *testing.T, d *dialCounter, target func(n int64) string, del
 			}
 			return d.track(c), nil
 		}, func(ctx context.Context, c net.Conn, _ bool) (net.Conn, error) {
+			if n := handshakes.Add(1); tlsDelay != nil {
+				if wait := tlsDelay(n); wait > 0 {
+					select {
+					case <-time.After(wait):
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+				}
+			}
 			tc := tls.Client(c, &tls.Config{NextProtos: []string{"h2"}, InsecureSkipVerify: true})
 			if err := tc.HandshakeContext(ctx); err != nil {
 				return nil, err
@@ -93,7 +105,7 @@ func TestCoalesceDialsHedgeUsesClientHistory(t *testing.T) {
 			return 3 * time.Second
 		}
 		return 0
-	})
+	}, nil)
 	if err := roundTrip(mk(), context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +126,7 @@ func TestCoalesceDialsHedgeUsesClientHistory(t *testing.T) {
 func TestCoalesceDialsNoHedgeWithoutHistory(t *testing.T) {
 	addr := okServer(t)
 	var d dialCounter
-	mk := hedgeFactory(t, &d, func(int64) string { return addr }, func(int64) time.Duration { return 600 * time.Millisecond })
+	mk := hedgeFactory(t, &d, func(int64) string { return addr }, func(int64) time.Duration { return 600 * time.Millisecond }, nil)
 	failed, took := burst(mk(), 30, 5*time.Second)
 	if failed != 0 {
 		t.Fatalf("%d of 30 requests failed", failed)
@@ -136,7 +148,7 @@ func TestCoalesceDialsHedgeQuietOnHealthyPath(t *testing.T) {
 			return 0
 		}
 		return 100 * time.Millisecond
-	})
+	}, nil)
 	if err := roundTrip(mk(), context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +159,33 @@ func TestCoalesceDialsHedgeQuietOnHealthyPath(t *testing.T) {
 	}
 	if got := d.dials.Load(); got != 4 {
 		t.Fatalf("%d dials for warm-up and three cold bursts, want 4", got)
+	}
+}
+
+// TCP ведущего поднялся сразу, а рукопожатие идёт 600 мс. Браузер второго
+// ClientHello на медленное рукопожатие не шлёт, и мы не шлём: запасного dial'а
+// нет, залп ждёт ведущего.
+func TestCoalesceDialsNoHedgeOnSlowHandshake(t *testing.T) {
+	addr := okServer(t)
+	var d dialCounter
+	mk := hedgeFactory(t, &d, func(int64) string { return addr }, func(int64) time.Duration { return 0 }, func(n int64) time.Duration {
+		if n == 2 {
+			return 600 * time.Millisecond
+		}
+		return 0
+	})
+	if err := roundTrip(mk(), context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	failed, took := burst(mk(), 30, 5*time.Second)
+	if failed != 0 {
+		t.Fatalf("%d of 30 requests failed", failed)
+	}
+	if got := d.dials.Load(); got != 2 {
+		t.Fatalf("%d dials, want warm-up and the slow one: no second ClientHello while a handshake runs", got)
+	}
+	if took < 600*time.Millisecond {
+		t.Fatalf("burst took %v, faster than its only handshake", took)
 	}
 }
 
@@ -174,7 +213,7 @@ func TestCoalesceDialsFailedHedgeFallsBackToLeader(t *testing.T) {
 			return 600 * time.Millisecond
 		}
 		return 0
-	})
+	}, nil)
 	if err := roundTrip(mk(), context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -190,8 +229,9 @@ func TestCoalesceDialsFailedHedgeFallsBackToLeader(t *testing.T) {
 	}
 }
 
-// Блокировка у клиента с историей: запасной dial один на ведущего, дальше
-// правило coalescedDialStale, и сокетов единицы, а не по одному на запрос.
+// Блокировка после ClientHello у клиента с историей: TCP поднимается, так что
+// запасного dial'а нет, дальше правило coalescedDialStale, и сокетов единицы,
+// а не по одному на запрос.
 func TestCoalesceDialsHedgeBoundedOnBlackhole(t *testing.T) {
 	addr := okServer(t)
 	hole := blackholeServer(t)
@@ -201,7 +241,7 @@ func TestCoalesceDialsHedgeBoundedOnBlackhole(t *testing.T) {
 			return addr
 		}
 		return hole
-	}, func(int64) time.Duration { return 0 })
+	}, func(int64) time.Duration { return 0 }, nil)
 	warm := mk()
 	if err := roundTrip(warm, context.Background()); err != nil {
 		t.Fatal(err)
@@ -214,9 +254,9 @@ func TestCoalesceDialsHedgeBoundedOnBlackhole(t *testing.T) {
 	if failed != 50 {
 		t.Fatalf("%d of 50 requests failed, want all", failed)
 	}
-	// Ведущий, запасной на ~250 мс, затем новые на ~1,25 и ~2,25 с.
-	if got := ends.Load() - 1; got > 4 {
-		t.Fatalf("%d dials into the blackhole in 2.5s, want at most 4", got)
+	// Ведущий, затем новые на ~1 и ~2 с; запасного нет: TCP установлен.
+	if got := ends.Load() - 1; got > 3 {
+		t.Fatalf("%d dials into the blackhole in 2.5s, want at most 3", got)
 	}
 	if got := d.maxOpen.Load(); got > 5 {
 		t.Fatalf("%d sockets open at once", got)

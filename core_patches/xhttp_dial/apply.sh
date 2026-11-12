@@ -8,8 +8,9 @@
 # см. transport/xhttp/dial_coalesce.go; заодно dial получает срок, которого на
 # этом пути не было.
 #
-# В апстриме меняется одна строка transport/xhttp/client.go: NewClient
-# оборачивает обе фабрики транспорта. Вторая правка, GetBody для packet-up в
+# В апстриме меняются две строки transport/xhttp/client.go: NewClient
+# оборачивает обе фабрики транспорта, а DialTLSContext h2 отмечает
+# установленный TCP. Вторая правка, GetBody для packet-up в
 # config.go, описана ниже. Обёртка внешняя по отношению к
 # xhttp_flow (тот оборачивает фабрики раньше, в vless.go), поэтому патчи
 # ложатся в любом порядке и независимо друг от друга.
@@ -31,6 +32,17 @@ sed -i 's|^func NewClient(cfg \*Config, makeTransport TransportMaker, makeDownlo
 
 grep -Fq 'makeTransport, makeDownloadTransport = CoalesceDials(makeTransport), CoalesceDials(makeDownloadTransport)' "$target" \
   || { echo "xhttp_dial: NewClient hook did not apply ($target)" >&2; exit 1; }
+
+# Отметка «TCP установлен» в DialTLSContext h2-транспорта, между dialRaw и
+# wrapTLS: запасной dial склейки, как у браузеров, бывает только пока TCP
+# ведущего не установлен, а на повисшее рукопожатие второго ClientHello нет.
+# Строка с wrapTLS(..., true) — только на пути h2.
+tls='wrapped, err := wrapTLS(ctx, raw, true)'
+n=$(grep -Fc "$tls" "$target" || true)
+[ "$n" = "1" ] || { echo "xhttp_dial: h2 wrapTLS found $n times in $target, expected 1" >&2; exit 1; }
+sed -i 's|^\(\t*\)wrapped, err := wrapTLS(ctx, raw, true)$|\1DialTCPUp(ctx)\n&|' "$target"
+grep -B1 -F "$tls" "$target" | grep -Fq 'DialTCPUp(ctx)' \
+  || { echo "xhttp_dial: DialTCPUp hook did not apply ($target)" >&2; exit 1; }
 
 # GetBody для тела packet-up. Сервер с MAX_CONCURRENT_STREAMS меньше 100
 # отбивает потоки, которые клиент шлёт до его SETTINGS, а склейка сгоняет залп

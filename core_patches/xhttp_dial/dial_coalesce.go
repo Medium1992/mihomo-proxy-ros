@@ -34,9 +34,10 @@ import (
 //     приняло) за удачным ведущим не встаёт, а дозванивается сразу;
 //   - за ведущим, который дозванивается дольше coalescedDialStale, не ждут:
 //     новый запрос или один из ждущих дозванивается сам;
-//   - если ведущий дозванивается вдвое дольше обычного для этого клиента,
-//     один из ждущих начинает запасной dial (coalescedHedgeMin); упал
-//     запасной — его ждущие возвращаются к ведущему.
+//   - если TCP ведущего не установлен за вдвое большее время, чем обычный
+//     dial этого клиента, один из ждущих начинает запасной dial
+//     (coalescedHedgeMin); упал запасной — его ждущие возвращаются к
+//     ведущему.
 
 // coalescedDialRetry — сколько ждущий ждёт соединения после того, как ведущий
 // дозвонился и его RoundTrip вернулся, и сколько удачный ведущий держит место.
@@ -72,13 +73,18 @@ var coalescedDialTimeout = 5 * time.Second
 var coalescedDialStale = time.Second
 
 // coalescedHedgeMin — нижняя граница срока запасного dial'а. Потерянный SYN
-// или ClientHello ядро повторит только через секунду, и весь холодный залп
-// ждал бы этого повтора, а сток в это время шёл бы по соседним dial'ам.
-// Поэтому, если ведущий дозванивается вдвое дольше сглаженного времени
-// рукопожатия (dialHistory), один из ждущих начинает запасной dial, а
-// остальные встают за ним; соединение того, кто успеет первым, net/http
-// раздаст всем. Нижняя граница — чтобы на быстром канале шум не давал лишних
-// dial'ов, верхняя — coalescedDialStale: дальше работает уже то правило.
+// ядро повторит только через секунду, и весь холодный залп ждал бы этого
+// повтора, а сток в это время шёл бы по соседним dial'ам. Поэтому, если TCP
+// ведущего не установлен за вдвое большее время, чем сглаженное время dial'а
+// (dialHistory), один из ждущих начинает запасной dial, а остальные встают за
+// ним; соединение того, кто успеет первым, net/http раздаст всем. Так делают и
+// браузеры: запасное TCP-соединение через 250 мс у Chrome (backup connect job)
+// и у Firefox (network.http.connection-retry-timeout), и тоже только пока TCP
+// не установлен. Когда TCP поднялся и идёт рукопожатие, второй ClientHello к
+// тому же серверу браузер не шлёт, и мы не шлём: медленное рукопожатие ждём
+// по coalescedDialStale. Нижняя граница — чтобы на быстром канале шум не
+// давал лишних dial'ов, верхняя — coalescedDialStale: дальше работает уже то
+// правило.
 // Запасной dial бывает только у обычного ведущего: у самого запасного и у
 // ведущих после coalescedDialStale его нет, так что одновременно идут не
 // больше двух dial'ов, а под блокировкой их по-прежнему не больше одного
@@ -89,6 +95,17 @@ var coalescedDialStale = time.Second
 var coalescedHedgeMin = 250 * time.Millisecond
 
 var errCoalescedDialAbandoned = errors.New("xhttp: coalesced dial abandoned")
+
+type dialTCPUpKey struct{}
+
+// DialTCPUp отмечает, что TCP dial'а с контекстом ctx установлен и дальше
+// идёт рукопожатие. Его зовёт DialTLSContext h2-транспорта (NewTransport)
+// между dialRaw и wrapTLS: с этого момента запасной dial ведущему не положен.
+func DialTCPUp(ctx context.Context) {
+	if up, ok := ctx.Value(dialTCPUpKey{}).(func()); ok {
+		up()
+	}
+}
 
 type dialRoundTripKey struct{}
 
@@ -159,6 +176,8 @@ type leaderDial struct {
 	hedgeable bool
 	hedgeOf   *leaderDial // у запасного — ведущий, за которым ждали до него
 	guard     *guardedDial
+	tcpUp     chan struct{} // закрыт, когда TCP ведущего установлен
+	tcpUpOnce sync.Once
 	// Под coalescingTransport.mu.
 	refs   int  // RoundTrip'ы, которые этот dial ждут
 	hedged bool // запасной уже начат: второго не будет
@@ -295,7 +314,8 @@ func (c *coalescingTransport) dial(ctx context.Context, dial func(context.Contex
 		}
 		if l == nil {
 			g, gctx := newGuardedDial(ctx)
-			l = &leaderDial{dialc: make(chan struct{}), rtDonec: rt.donec, started: time.Now(), hedgeable: hedgeable, hedgeOf: hedgeOf, guard: g, refs: 1}
+			l = &leaderDial{dialc: make(chan struct{}), rtDonec: rt.donec, started: time.Now(), hedgeable: hedgeable, hedgeOf: hedgeOf, guard: g, tcpUp: make(chan struct{}), refs: 1}
+			gctx = context.WithValue(gctx, dialTCPUpKey{}, l.markTCPUp)
 			if c.leaders == nil {
 				c.leaders = make(map[string]*leaderDial)
 			}
@@ -374,8 +394,18 @@ func (c *coalescingTransport) follow(ctx context.Context, l *leaderDial, rt *dia
 			wait, hedged = d, true
 		}
 	}
+	var tcpUp <-chan struct{}
+	if hedged {
+		tcpUp = l.tcpUp
+		select {
+		case <-tcpUp:
+			// TCP ведущего уже установлен: запасного не будет.
+			wait, hedged, tcpUp = coalescedDialStale, false, nil
+		default:
+		}
+	}
 	stale := time.NewTimer(time.Until(l.started.Add(wait)))
-	defer stale.Stop()
+	defer func() { stale.Stop() }()
 	// Канал, а не stale.C в select: при go 1.20 в go.mod остановленный таймер
 	// может оставить в канале значение.
 	staleC := stale.C
@@ -402,6 +432,16 @@ func (c *coalescingTransport) follow(ctx context.Context, l *leaderDial, rt *dia
 			default:
 				return nil, nil, true, hedged
 			}
+		case <-tcpUp:
+			// TCP ведущего установлен раньше срока запасного: дальше идёт
+			// рукопожатие, и его ждём по coalescedDialStale, как без запасного.
+			tcpUp = nil
+			if staleC != nil {
+				stale.Stop()
+				stale = time.NewTimer(time.Until(l.started.Add(coalescedDialStale)))
+				staleC = stale.C
+			}
+			hedged = false
 		case <-rtDonec:
 			rtDonec = nil
 		case <-retry:
@@ -448,6 +488,10 @@ func (c *coalescingTransport) lead(ctx context.Context, l *leaderDial, rt *dialR
 	// получает его из пула.
 	time.AfterFunc(coalescedDialRetry, func() { c.unlead(l, addr) })
 	return conn, nil
+}
+
+func (l *leaderDial) markTCPUp() {
+	l.tcpUpOnce.Do(func() { close(l.tcpUp) })
 }
 
 // succeeded — dial ведущего закончился удачно.
