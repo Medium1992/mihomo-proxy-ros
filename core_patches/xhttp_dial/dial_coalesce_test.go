@@ -134,10 +134,16 @@ func setDialTimeout(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { coalescedDialTimeout = old })
 }
 
-func setDialStale(t *testing.T, d time.Duration) {
-	old := coalescedDialStale
-	coalescedDialStale = d
-	t.Cleanup(func() { coalescedDialStale = old })
+func setBackupAfter(t *testing.T, d time.Duration) {
+	old := coalescedBackupAfter
+	coalescedBackupAfter = d
+	t.Cleanup(func() { coalescedBackupAfter = old })
+}
+
+func setThrottle(t *testing.T, d time.Duration) {
+	old := coalescedThrottle
+	coalescedThrottle = d
+	t.Cleanup(func() { coalescedThrottle = old })
 }
 
 // roundTripTimeout — потолок для запроса без своего срока: тест с
@@ -203,10 +209,11 @@ func TestCoalesceDialsColdBurst(t *testing.T) {
 	}
 }
 
-// Рукопожатие висит: в полёте ровно один сокет, и ждущие получают ошибку
-// ведущего, а не тянут каждый свой срок.
+// Рукопожатие висит и обрывается по сроку раньше coalescedThrottle: в полёте
+// ровно один сокет, и ждущие получают ошибку ведущего, а не тянут каждый свой
+// срок.
 func TestCoalesceDialsBlackhole(t *testing.T) {
-	setDialTimeout(t, 300*time.Millisecond)
+	setDialTimeout(t, coalescedThrottle*2/3)
 	addr := blackholeServer(t)
 	var d dialCounter
 	rt := coalescedTestTransport(t, addr, &d, 0)
@@ -287,8 +294,9 @@ func TestCoalesceDialsReuseManager(t *testing.T) {
 }
 
 // Запрос ведущего ушёл, пока dial шёл: dial не бросается, его соединение
-// достаётся остальным.
+// достаётся остальным. Dial медленный до TCP, но запасной здесь не про то.
 func TestCoalesceDialsLeaderGivesUp(t *testing.T) {
+	setBackupAfter(t, time.Second)
 	addr := h2TestServer(t, 0, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	var d dialCounter
 	rt := coalescedTestTransport(t, addr, &d, 300*time.Millisecond)
@@ -578,13 +586,14 @@ func TestCoalesceDialsPublicationWindow(t *testing.T) {
 	}
 }
 
-// Ведущий повис: пока он моложе coalescedDialStale, за ним ждут. Потом один
-// из ждущих дозванивается сам, остальные встают за ним; так раз в срок, пока
-// ждущие не кончатся. Ни один dial не обрывается, пока его ждут, и все сокеты
-// закрываются, когда ждать некому.
-func TestCoalesceDialsStaleLeader(t *testing.T) {
+// Ведущий повис. Ждущие ждут его coalescedThrottle, потом каждый
+// дозванивается сам, как запросы Chrome после kHTTP2ThrottleMs. Повторных
+// dial'ов по таймеру нет: пока попытки висят, новых не начинается. Ни один
+// dial не обрывается, пока его ждут, и все сокеты закрываются, когда ждать
+// некому.
+func TestCoalesceDialsThrottledWaiters(t *testing.T) {
 	setDialTimeout(t, 3*time.Second)
-	setDialStale(t, 300*time.Millisecond)
+	setThrottle(t, 300*time.Millisecond)
 	addr := blackholeServer(t)
 	var d dialCounter
 	rt := coalescedTestTransport(t, addr, &d, 0)
@@ -608,12 +617,12 @@ func TestCoalesceDialsStaleLeader(t *testing.T) {
 	if got := d.dials.Load(); got != 1 && time.Since(begin) < 250*time.Millisecond {
 		t.Fatalf("waiters behind a fresh leader dialed: %d dials", got)
 	}
-	waitFor(t, "a waiter to replace the stale leader", time.Second, func() bool { return d.dials.Load() == 2 })
-	waitFor(t, "the last waiter to replace the next one", time.Second, func() bool { return d.dials.Load() == 3 })
-	wg.Wait()
+	waitFor(t, "both waiters to dial after the throttle", time.Second, func() bool { return d.dials.Load() == 3 })
+	time.Sleep(time.Second)
 	if got := d.dials.Load(); got != 3 {
-		t.Fatalf("%d dials for three requests, want 3", got)
+		t.Fatalf("%d dials while three attempts hang, want 3: no redial on a timer", got)
 	}
+	wg.Wait()
 	waitFor(t, "abandoned dials to close", time.Second, func() bool { return d.open.Load() == 0 })
 }
 

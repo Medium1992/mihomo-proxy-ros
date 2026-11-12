@@ -11,12 +11,12 @@ import (
 	"github.com/metacubex/http"
 )
 
-// hedgeFactory — фабрика h2-транспортов XHTTP одного клиента со склейкой.
+// dialFactory — фабрика h2-транспортов XHTTP одного клиента со склейкой.
 // target и delay решают за каждый dial по его номеру (с 1), куда он идёт и
 // сколько ждёт перед TCP, — так изображаются потерянный SYN и блокировка.
 // tlsDelay, если не nil, — сколько рукопожатие с этим номером (с 1) ждёт
 // после установленного TCP, — так изображается медленный ClientHello.
-func hedgeFactory(t *testing.T, d *dialCounter, target func(n int64) string, delay func(n int64) time.Duration, tlsDelay func(n int64) time.Duration) TransportMaker {
+func dialFactory(t *testing.T, d *dialCounter, target func(n int64) string, delay func(n int64) time.Duration, tlsDelay func(n int64) time.Duration) TransportMaker {
 	t.Helper()
 	var handshakes atomic.Int64
 	mk := CoalesceDials(func() http.RoundTripper {
@@ -65,42 +65,14 @@ func okServer(t *testing.T) string {
 	return h2TestServer(t, 0, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 }
 
-func TestCoalesceDialsHedgeHistory(t *testing.T) {
-	var h *dialHistory
-	if _, ok := h.hedgeAfter("a"); ok {
-		t.Fatal("nil history gave a hedge delay")
-	}
-	h = &dialHistory{}
-	if _, ok := h.hedgeAfter("a"); ok {
-		t.Fatal("empty history gave a hedge delay")
-	}
-	h.observe("a", 10*time.Millisecond)
-	if d, ok := h.hedgeAfter("a"); !ok || d != coalescedHedgeMin {
-		t.Fatalf("fast path: hedge after %v, %v; want the %v floor", d, ok, coalescedHedgeMin)
-	}
-	if _, ok := h.hedgeAfter("b"); ok {
-		t.Fatal("history leaked to another address")
-	}
-	h = &dialHistory{}
-	h.observe("a", 100*time.Millisecond)
-	h.observe("a", 900*time.Millisecond)
-	if d, ok := h.hedgeAfter("a"); !ok || d != 400*time.Millisecond {
-		t.Fatalf("one slow dial after 100ms: hedge after %v, %v; want 400ms (smoothed to 200ms)", d, ok)
-	}
-	h = &dialHistory{}
-	h.observe("a", 600*time.Millisecond)
-	if d, ok := h.hedgeAfter("a"); ok {
-		t.Fatalf("slow path: hedge after %v; want none at or past coalescedDialStale", d)
-	}
-}
-
-// Клиент уже дозванивался, теперь холодный залп на свежем транспорте, и dial
-// ведущего застрял, как при потерянном SYN. Запасной dial начинается по
-// замеру клиента, а не через coalescedDialStale, и залп идёт по нему.
-func TestCoalesceDialsHedgeUsesClientHistory(t *testing.T) {
+// Клиент уже дозванивался, теперь холодный залп на свежем транспорте, и SYN
+// ведущего потерян: его dial стоит до TCP. Через coalescedBackupAfter
+// начинается запасной, как backup connect job у Chrome, и залп идёт по нему
+// раньше, чем истечёт coalescedThrottle ждущих.
+func TestCoalesceDialsBackupOnLostSYN(t *testing.T) {
 	addr := okServer(t)
 	var d dialCounter
-	mk := hedgeFactory(t, &d, func(int64) string { return addr }, func(n int64) time.Duration {
+	mk := dialFactory(t, &d, func(int64) string { return addr }, func(n int64) time.Duration {
 		if n == 2 {
 			return 3 * time.Second
 		}
@@ -113,37 +85,45 @@ func TestCoalesceDialsHedgeUsesClientHistory(t *testing.T) {
 	if failed != 0 {
 		t.Fatalf("%d of 30 requests failed", failed)
 	}
-	if took >= 800*time.Millisecond {
-		t.Fatalf("burst behind a stuck dial took %v: no hedge before coalescedDialStale", took)
+	if took >= coalescedThrottle+200*time.Millisecond {
+		t.Fatalf("burst behind a lost SYN took %v: no backup dial", took)
 	}
 	if got := d.dials.Load(); got != 3 {
-		t.Fatalf("%d dials, want warm-up, the stuck one and one hedge", got)
+		t.Fatalf("%d dials, want warm-up, the stuck one and one backup", got)
 	}
 }
 
-// Первый dial клиента: истории нет, срок не угадываем. Медленный, но живой
-// dial запасного не получает.
-func TestCoalesceDialsNoHedgeWithoutHistory(t *testing.T) {
+// Одиночный запрос без ждущих тоже получает запасной dial: у Chrome backup job
+// не зависит от числа запросов.
+func TestCoalesceDialsBackupForLoneRequest(t *testing.T) {
 	addr := okServer(t)
 	var d dialCounter
-	mk := hedgeFactory(t, &d, func(int64) string { return addr }, func(int64) time.Duration { return 600 * time.Millisecond }, nil)
-	failed, took := burst(mk(), 30, 5*time.Second)
-	if failed != 0 {
-		t.Fatalf("%d of 30 requests failed", failed)
+	mk := dialFactory(t, &d, func(int64) string { return addr }, func(n int64) time.Duration {
+		if n == 1 {
+			return 3 * time.Second
+		}
+		return 0
+	}, nil)
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := roundTrip(mk(), ctx); err != nil {
+		t.Fatal(err)
 	}
-	if got := d.dials.Load(); got != 1 {
-		t.Fatalf("%d dials without history, want 1", got)
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("lone request behind a lost SYN took %v", took)
 	}
-	if took < 600*time.Millisecond {
-		t.Fatalf("burst took %v, faster than its only dial", took)
+	if got := d.dials.Load(); got != 2 {
+		t.Fatalf("%d dials, want the stuck one and one backup", got)
 	}
 }
 
-// Рабочий путь с историей: dial укладывается в срок, запасных нет.
-func TestCoalesceDialsHedgeQuietOnHealthyPath(t *testing.T) {
+// Рабочий путь: dial укладывается в coalescedBackupAfter и coalescedThrottle,
+// ни запасных, ни своих dial'ов у ждущих нет.
+func TestCoalesceDialsQuietOnHealthyPath(t *testing.T) {
 	addr := okServer(t)
 	var d dialCounter
-	mk := hedgeFactory(t, &d, func(int64) string { return addr }, func(n int64) time.Duration {
+	mk := dialFactory(t, &d, func(int64) string { return addr }, func(n int64) time.Duration {
 		if n == 1 {
 			return 0
 		}
@@ -162,13 +142,14 @@ func TestCoalesceDialsHedgeQuietOnHealthyPath(t *testing.T) {
 	}
 }
 
-// TCP ведущего поднялся сразу, а рукопожатие идёт 600 мс. Браузер второго
-// ClientHello на медленное рукопожатие не шлёт, и мы не шлём: запасного dial'а
-// нет, залп ждёт ведущего.
-func TestCoalesceDialsNoHedgeOnSlowHandshake(t *testing.T) {
+// TCP ведущего поднялся сразу, а рукопожатие идёт 600 мс. Запасного нет: на
+// повисшее рукопожатие второй ClientHello не шлют. Но ждущие, не дождавшись за
+// coalescedThrottle, дозваниваются сами, как запросы Chrome после
+// kHTTP2ThrottleMs, и всего dial'ов не больше coalescedMaxDials.
+func TestCoalesceDialsSlowHandshakeThrottled(t *testing.T) {
 	addr := okServer(t)
 	var d dialCounter
-	mk := hedgeFactory(t, &d, func(int64) string { return addr }, func(int64) time.Duration { return 0 }, func(n int64) time.Duration {
+	mk := dialFactory(t, &d, func(int64) string { return addr }, func(int64) time.Duration { return 0 }, func(n int64) time.Duration {
 		if n == 2 {
 			return 600 * time.Millisecond
 		}
@@ -181,20 +162,37 @@ func TestCoalesceDialsNoHedgeOnSlowHandshake(t *testing.T) {
 	if failed != 0 {
 		t.Fatalf("%d of 30 requests failed", failed)
 	}
-	if got := d.dials.Load(); got != 2 {
-		t.Fatalf("%d dials, want warm-up and the slow one: no second ClientHello while a handshake runs", got)
+	if took >= 600*time.Millisecond {
+		t.Fatalf("burst took %v: waited for the slow handshake instead of dialing after the throttle", took)
 	}
-	if took < 600*time.Millisecond {
-		t.Fatalf("burst took %v, faster than its only handshake", took)
+	if got := d.dials.Load() - 1; got < 2 || got > int64(coalescedMaxDials) {
+		t.Fatalf("%d dials for the burst, want the slow one plus waiters' own, at most %d", got, coalescedMaxDials)
 	}
 }
 
-// Запасной dial сразу получает отказ (сброс, закрытый порт), а застрявший
-// ведущий через 600 мс дозванивается. Вставшие за запасным не падают с его
-// ошибкой, а дожидаются ведущего, как без запасного. Ждущие уходят к
-// запасному разом, и кто дошёл, когда он уже упал, второго не начинает:
-// отказ получил бы и он, и так по dial'у на ждущего.
-func TestCoalesceDialsFailedHedgeFallsBackToLeader(t *testing.T) {
+// Все dial'ы медленные (600 мс до TCP), но живые: запасной и свои dial'ы
+// ждущих упираются в coalescedMaxDials, лишних нет.
+func TestCoalesceDialsSlowPathCapped(t *testing.T) {
+	addr := okServer(t)
+	var d dialCounter
+	mk := dialFactory(t, &d, func(int64) string { return addr }, func(int64) time.Duration { return 600 * time.Millisecond }, nil)
+	failed, _ := burst(mk(), 30, 5*time.Second)
+	if failed != 0 {
+		t.Fatalf("%d of 30 requests failed", failed)
+	}
+	if got := d.dials.Load(); got > int64(coalescedMaxDials) {
+		t.Fatalf("%d dials, want at most %d", got, coalescedMaxDials)
+	}
+	if got := d.maxOpen.Load(); got > int64(coalescedMaxDials) {
+		t.Fatalf("%d sockets open at once, want at most %d", got, coalescedMaxDials)
+	}
+}
+
+// Запасной и свои dial'ы ждущих сразу получают отказ (сброс, закрытый порт), а
+// застрявший ведущий через 600 мс дозванивается. Ошибка отказавших не роняет
+// запросы, пока ведущий жив: они ждут его, и каждый запрос дозванивается сам
+// не больше одного раза.
+func TestCoalesceDialsFailedDialsFallBackToLeader(t *testing.T) {
 	addr := okServer(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -203,7 +201,7 @@ func TestCoalesceDialsFailedHedgeFallsBackToLeader(t *testing.T) {
 	refused := ln.Addr().String()
 	ln.Close()
 	var d dialCounter
-	mk := hedgeFactory(t, &d, func(n int64) string {
+	mk := dialFactory(t, &d, func(n int64) string {
 		if n <= 2 {
 			return addr
 		}
@@ -219,24 +217,25 @@ func TestCoalesceDialsFailedHedgeFallsBackToLeader(t *testing.T) {
 	}
 	failed, took := burst(mk(), 30, 5*time.Second)
 	if failed != 0 {
-		t.Fatalf("%d of 30 requests failed with the hedge's error", failed)
+		t.Fatalf("%d of 30 requests failed with a refused dial's error", failed)
 	}
-	if took >= coalescedDialStale {
+	if took >= time.Second {
 		t.Fatalf("burst took %v: waited past the leader's dial", took)
 	}
-	if got := d.dials.Load(); got != 3 {
-		t.Fatalf("%d dials, want warm-up, the slow leader and the refused hedge", got)
+	// Разогрев, ведущий, запасной и не больше одного своего на ждущего.
+	if got := d.dials.Load(); got > 3+29 {
+		t.Fatalf("%d dials, want at most one per waiter", got)
 	}
 }
 
-// Блокировка после ClientHello у клиента с историей: TCP поднимается, так что
-// запасного dial'а нет, дальше правило coalescedDialStale, и сокетов единицы,
-// а не по одному на запрос.
-func TestCoalesceDialsHedgeBoundedOnBlackhole(t *testing.T) {
+// Блокировка после ClientHello у клиента: TCP поднимается, запасного нет, ждущие
+// через coalescedThrottle дозваниваются сами до coalescedMaxDials, и дальше,
+// пока попытки висят, новых нет: повторного dial'а по таймеру нет.
+func TestCoalesceDialsBlackholeCapped(t *testing.T) {
 	addr := okServer(t)
 	hole := blackholeServer(t)
 	var d dialCounter
-	mk := hedgeFactory(t, &d, func(n int64) string {
+	mk := dialFactory(t, &d, func(n int64) string {
 		if n == 1 {
 			return addr
 		}
@@ -248,17 +247,14 @@ func TestCoalesceDialsHedgeBoundedOnBlackhole(t *testing.T) {
 	}
 	warm.(*coalescingTransport).CloseIdleConnections()
 	waitFor(t, "the warm-up connection to close", time.Second, func() bool { return d.open.Load() == 0 })
-	var ends atomic.Int64
 	failed, _ := burst(mk(), 50, 2500*time.Millisecond)
-	ends.Store(d.dials.Load())
 	if failed != 50 {
 		t.Fatalf("%d of 50 requests failed, want all", failed)
 	}
-	// Ведущий, затем новые на ~1 и ~2 с; запасного нет: TCP установлен.
-	if got := ends.Load() - 1; got > 3 {
-		t.Fatalf("%d dials into the blackhole in 2.5s, want at most 3", got)
+	if got := d.dials.Load() - 1; got > int64(coalescedMaxDials) {
+		t.Fatalf("%d dials into the blackhole in 2.5s, want at most %d", got, coalescedMaxDials)
 	}
-	if got := d.maxOpen.Load(); got > 5 {
+	if got := d.maxOpen.Load(); got > int64(coalescedMaxDials) {
 		t.Fatalf("%d sockets open at once", got)
 	}
 	waitFor(t, "abandoned dials to close", 2*time.Second, func() bool { return d.open.Load() == 0 })

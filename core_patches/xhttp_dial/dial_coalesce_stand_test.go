@@ -285,9 +285,9 @@ func TestCoalesceDialsStandWrappedDial(t *testing.T) {
 }
 
 // Блокировка после ClientHello на холодном пуле: живые соединения оборваны,
-// новые висят. Две волны сессий не открывают больше двух сокетов на
-// транспорт (ведущий и запасной: история у клиента после прогрева уже есть)
-// и не оставляют их висеть; после снятия блокировки сессии сразу идут.
+// новые висят. Две волны сессий не открывают больше coalescedMaxDials сокетов
+// на транспорт (у Chrome — 6 на хост) и не оставляют их висеть; после снятия
+// блокировки сессии сразу идут.
 func TestCoalesceDialsStandBlackhole(t *testing.T) {
 	leakCheck(t)
 	setDialTimeout(t, 2*time.Second)
@@ -306,8 +306,8 @@ func TestCoalesceDialsStandBlackhole(t *testing.T) {
 		if failed, _ := sessions(client, 50, 700*time.Millisecond, 1<<10); failed != 50 {
 			t.Fatalf("wave %d: %d of 50 sessions failed, want all", wave, failed)
 		}
-		if got := relay.peak.Load(); got > 4 {
-			t.Fatalf("wave %d: %d sockets open at once, want at most 4", wave, got)
+		if got := relay.peak.Load(); got > int64(2*coalescedMaxDials) {
+			t.Fatalf("wave %d: %d sockets open at once, want at most %d", wave, got, 2*coalescedMaxDials)
 		}
 		waitFor(t, "abandoned dials to end", time.Second, func() bool { return relay.open.Load() == 0 })
 	}
@@ -362,7 +362,8 @@ func TestCoalesceDialsStandAborts(t *testing.T) {
 // Страница начала грузиться во время блокировки, сессии идут одна за другой,
 // и блокировка снимается посреди залпа. Повисший ведущий не держит залп:
 // сессии, пришедшие после снятия, проходят все, а новое соединение получают
-// и часть сессий, начатых ещё во время блокировки. Сокетов при этом единицы.
+// и часть сессий, начатых ещё во время блокировки. Сокетов не больше
+// coalescedMaxDials попыток и одного рабочего соединения на транспорт.
 func TestCoalesceDialsStandBlockDuringPage(t *testing.T) {
 	leakCheck(t)
 	setDialTimeout(t, 3*time.Second)
@@ -409,8 +410,11 @@ func TestCoalesceDialsStandBlockDuringPage(t *testing.T) {
 	if during.Load() == 0 {
 		t.Fatal("no session started during the block got the new connection")
 	}
-	if got := relay.peak.Load(); got > 6 {
-		t.Fatalf("%d sockets open at once, want a few", got)
+	// Реле считает и рабочие соединения: после снятия блокировки новое уже
+	// открыто, а повисшие попытки обрываются мгновением позже, когда ждущие
+	// получили его из пула. Отсюда плюс одно на транспорт.
+	if got := relay.peak.Load(); got > int64(2*coalescedMaxDials+2) {
+		t.Fatalf("%d sockets open at once, want at most %d", got, 2*coalescedMaxDials+2)
 	}
 	t.Logf("started during block and passed: %d; after unblock: %d of %d; connections %d", during.Load(), afterOK.Load(), after.Load(), relay.accepted.Load())
 }

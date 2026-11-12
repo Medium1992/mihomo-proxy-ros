@@ -131,10 +131,11 @@ func TestCoalesceDialsLiveConnsStreamLimit(t *testing.T) {
 	t.Logf("connections used %d, dials %d, peak open %d", n, d.dials.Load(), d.maxOpen.Load())
 }
 
-// После полной блокировки не остаётся ни сокетов, ни горутин dial'а.
+// После полной блокировки не остаётся ни сокетов, ни горутин dial'а. Срок
+// dial'а короче coalescedThrottle: ждущие получают ошибку ведущего.
 func TestCoalesceDialsNoLeakBlackhole(t *testing.T) {
 	leakCheck(t)
-	setDialTimeout(t, 300*time.Millisecond)
+	setDialTimeout(t, coalescedThrottle*2/3)
 	addr := blackholeServer(t)
 	var d dialCounter
 	rt := coalescedTestTransport(t, addr, &d, 0)
