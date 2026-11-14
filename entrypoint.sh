@@ -3526,6 +3526,24 @@ EOF
 
     sub_is_happ=0
     case "$url" in
+      ssconf://*)
+        # Динамический ключ Outline («Дядя Ваня» и похожие): по ссылке
+        # приложение каждый раз заново берёт конфиг, а сервис меняет в нём
+        # сервер и ключи. Конфиг скачивает и превращает в ссылки vanya-sub,
+        # mihomo обновляет его по interval, как подписку.
+        if [ "${WEB_API_PORT:-81}" = "0" ]; then
+          log "$name: ssconf:// needs the loopback converter, but WEB_API_PORT=0; provider skipped"
+          continue
+        fi
+        url="http://127.0.0.1:${WEB_API_PORT:-81}/cgi-bin/vanya-sub?ssconf=$(printf '%s' "$url" | url_encode)"
+        log "$name: ssconf key routed through vanya-sub on 127.0.0.1:${WEB_API_PORT:-81}"
+        # Конфиг качает конвертер: заголовки и proxy mihomo к нему не относятся.
+        headers_raw=""
+        if [ "$proxy" != "DIRECT" ]; then
+          log "$name: ${name}_PROXY='$proxy' does not apply to ssconf keys, forcing DIRECT"
+        fi
+        proxy="DIRECT"
+        ;;
       happ://*)
         if ! command -v happ_decrypt >/dev/null 2>&1; then
           log "$name: /www/lib/happ.sh is missing, provider skipped"
@@ -4846,8 +4864,11 @@ setup_api_listener() {
   chmod 600 "$API_HTTPD_CONF" 2>/dev/null || true
   cp /www/cgi-bin/xray2mihomo-sub "$API_ROOT/cgi-bin/xray2mihomo-sub" 2>/dev/null || return 0
   chmod +x "$API_ROOT/cgi-bin/xray2mihomo-sub" 2>/dev/null || true
+  # vanya-sub — ключи ssconf:// в SUB_LINK*.
+  cp /www/cgi-bin/vanya-sub "$API_ROOT/cgi-bin/vanya-sub" 2>/dev/null \
+    && chmod +x "$API_ROOT/cgi-bin/vanya-sub" 2>/dev/null || true
   httpd -f -p "127.0.0.1:${WEB_API_PORT:-81}" -h "$API_ROOT" -c "$API_HTTPD_CONF" >/dev/null 2>&1 &
-  log "Loopback API listener on 127.0.0.1:${WEB_API_PORT:-81} (xray2mihomo-sub for SUB_LINK*)"
+  log "Loopback API listener on 127.0.0.1:${WEB_API_PORT:-81} (xray2mihomo-sub and vanya-sub for SUB_LINK*)"
 }
 
 run() {

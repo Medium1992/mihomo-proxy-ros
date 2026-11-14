@@ -1,0 +1,88 @@
+#!/bin/sh
+# Ключ ssconf (динамический ключ Outline; так раздаёт узлы «Дядя Ваня» и
+# похожие сервисы) как подписка mihomo. Ссылка ssconf:// — это адрес, по
+# которому приложение каждый раз заново получает конфиг: сервис может сменить
+# сервер или ключи, и приложение подхватит их. Поэтому SUB_LINKn=ssconf://…
+# entrypoint направляет сюда, и mihomo обновляет провайдер по interval, как
+# обычную подписку.
+#
+# Вызывает сам mihomo через loopback-слушатель (WEB_API_PORT), поэтому
+# csrf-guard не применим; SSRF во внутреннюю сеть закрыт, как у
+# xray2mihomo-sub. Ответ — ссылки по одной в строке, основной узел первым:
+# разбор формата в vanya-yaml.awk и vanya.jq.
+
+STATE_DIR="${STATE_DIR:-/dev/shm/mihomo-vanya-sub}"
+TIMEOUT="${VANYA_FETCH_TIMEOUT:-25}"
+AWK_PROG="${VANYA_AWK:-/www/cgi-bin/vanya-yaml.awk}"
+JQ_PROG="${VANYA_JQ:-/www/cgi-bin/vanya.jq}"
+# Бэкенд отвечает по-разному в зависимости от User-Agent (Vary: User-Agent):
+# этот конфиг он отдаёт приложению Vanya.
+UA="VanyaVPN/1.0"
+
+mkdir -p "$STATE_DIR" 2>/dev/null
+
+urldecode() {
+  printf '%s\n' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\\x\1/g' | while IFS= read -r line; do printf '%b' "$line"; done
+}
+
+field_qs() {
+  printf '%s' "$QUERY_STRING" | awk -v k="$1" -F'&' '{
+    for (i=1; i<=NF; i++) {
+      n = index($i, "=")
+      if (n > 0 && substr($i, 1, n-1) == k) { print substr($i, n+1); exit }
+    }
+  }'
+}
+
+emit_error() {
+  printf 'Status: %s\r\n' "$1"
+  printf 'Content-Type: text/plain; charset=utf-8\r\n'
+  printf 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n\r\n'
+  printf '%s\n' "$2"
+  exit 0
+}
+
+key=$(urldecode "$(field_qs ssconf)")
+case "$key" in
+  ssconf://*) url="https://${key#ssconf://}" ;;
+  https://*) url="$key" ;;
+  *) emit_error 400 "ssconf must be ssconf:// or https://" ;;
+esac
+# Во фрагменте ключа Outline держит параметры клиента, серверу он не нужен.
+url="${url%%#*}"
+case "$url" in
+  *[\ \"\'\`\<\>\|\{\}\\^]*) emit_error 400 "invalid characters in ssconf" ;;
+esac
+
+. /www/cgi-bin/_guard.sh
+if host_is_private "$(url_host "$url")"; then
+  emit_error 403 "private/loopback addresses are blocked (set ALLOW_PRIVATE_FETCH=true to allow)"
+fi
+
+body="$STATE_DIR/body.$$"
+pairs="$STATE_DIR/pairs.$$"
+res="$STATE_DIR/res.$$"
+err="$STATE_DIR/err.$$"
+trap 'rm -f "$body" "$pairs" "$res" "$err"' EXIT
+
+if command -v curl >/dev/null 2>&1; then
+  status=$(curl -sS -L -m "$TIMEOUT" -H 'Product-Code: VANYA' -A "$UA" -o "$body" -w '%{http_code}' "$url" 2>"$err") || emit_error 502 "ssconf fetch failed: $(head -c 300 "$err")"
+  case "$status" in 2??) ;; *) emit_error 502 "ssconf backend answered HTTP $status" ;; esac
+else
+  wget -q -T "$TIMEOUT" -O "$body" --header='Product-Code: VANYA' --user-agent="$UA" "$url" 2>"$err" || emit_error 502 "ssconf fetch failed: $(head -c 300 "$err")"
+fi
+[ -s "$body" ] || emit_error 502 "ssconf backend returned an empty config"
+
+# JSON (старый формат Outline) идёт в jq как есть, YAML — через awk.
+first=$(tr -d ' \t\r\n' < "$body" | head -c 1)
+if [ "$first" = "{" ]; then
+  jq -r -f "$JQ_PROG" "$body" > "$res" 2>"$err"
+else
+  awk -f "$AWK_PROG" "$body" > "$pairs" 2>"$err" \
+    && jq -s 'reduce .[] as [$p, $v] ({}; setpath($p; $v))' "$pairs" 2>>"$err" | jq -r -f "$JQ_PROG" > "$res" 2>>"$err"
+fi
+[ -s "$res" ] || emit_error 502 "ssconf config not converted: $(head -c 300 "$err")"
+
+printf 'Content-Type: text/plain; charset=utf-8\r\n'
+printf 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n\r\n'
+cat "$res"

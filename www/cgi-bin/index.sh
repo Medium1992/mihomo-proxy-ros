@@ -1010,7 +1010,7 @@ EOF
 
 sub_link_row_inner() {
   _n="$1"; _d="${2:-$1}"
-  if env_masked "$_n"; then _sp="$(secret_attrs "$_n")"; else _sp=' placeholder="https://subscription или happ://crypt5/..."'; fi
+  if env_masked "$_n"; then _sp="$(secret_attrs "$_n")"; else _sp=' placeholder="https://subscription, happ://crypt5/... или ssconf://..."'; fi
   _extras="${_n}_INTERVAL ${_n}_PROXY ${_n}_DIALER_PROXY ${_n}_FILTER ${_n}_EXCLUDE_FILTER ${_n}_EXCLUDE_TYPE ${_n}_ADDITIONAL_PREFIX ${_n}_ADDITIONAL_SUFFIX ${_n}_CONVERT ${_n}_MLKEM ${_n}_OVERRIDE_EXPR ${_n}_HEADERS"
   cat <<EOF
   <div class="row-main">
@@ -1158,6 +1158,7 @@ EOF
   <div><b>SUB_LINKxx_INTERVAL</b><span>Интервал обновления подписки, соответствует provider <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#interval" target="_blank" rel="noopener">interval</a>.</span></div>
   <div><b>SUB_LINKxx_HEADERS</b><span>HTTP <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#header" target="_blank" rel="noopener">headers</a>. Редактор собирает env в формат <code>key=value#key2=value2</code>. Для happ-ссылок и режима <code>xray2mihomo</code> заголовки уезжают апстриму через конвертер, а не напрямую из mihomo. Подписка открывается «только в Happ или INCY», а mihomo пишет <code>pull error: 422</code>? Нужны все заголовки телефона 1 в 1, включая <code>x-hwid</code> — как их подсмотреть, написано в «Инструменты → xray2mihomo».</span></div>
   <div><b>happ://crypt*</b><span>В <code>SUB_LINKxx</code> можно положить зашифрованную ссылку Happ (<code>crypt</code>…<code>crypt5</code>, обе раскладки). Контейнер расшифрует её при старте и подставит настоящий адрес подписки. Ключи берутся из <code>assets/happ.js</code>; если появился новый — панель напишет «неизвестный маркер», и надо обновить секреты <code>HAPP1..HAPP4</code>.</span></div>
+  <div><b>ssconf://</b><span>Динамический ключ Outline («Дядя Ваня» и похожие сервисы) тоже кладётся в <code>SUB_LINKxx</code>. Это не узел, а адрес, по которому приложение каждый раз заново получает конфиг: сервис меняет в нём сервер и ключи. Контейнер отдаёт ключ локальному конвертеру <code>vanya-sub</code> на <code>WEB_API_PORT</code>, тот скачивает конфиг и превращает узлы в ссылки (основной первым), а mihomo обновляет их по интервалу, как подписку. <code>SUB_LINKxx_PROXY</code> и заголовки к таким ключам не применяются. Посмотреть, что внутри ключа, можно в «Инструменты → Дядя Ваня ВПН».</span></div>
   <div><b>SUB_LINKxx_CONVERT</b><span><code>auto</code> (по умолчанию): happ-ссылки идут через локальный конвертер <code>xray2mihomo</code>, обычные — напрямую. <code>xray2mihomo</code> — принудительно, если обычная подписка тоже отдаёт Xray JSON. <code>none</code> — отдать mihomo как есть. Конвертер живёт на loopback-порту <code>WEB_API_PORT</code>; при <code>WEB_API_PORT=0</code> конвертация недоступна.</span></div>
   <div><b>SUB_LINKxx_PROXY и конвертер</b><span>Не совмещаются: <code>proxy</code> управляет тем, как mihomo тянет сам провайдер, а после конвертации это localhost. Подписку с апстрима качает уже конвертер, и о прокси mihomo он не знает — для таких строк принудительно ставится <code>DIRECT</code>.</span></div>
   <div><b>SUB_LINKxx_FILTER</b><span>Provider-level <a class="doc-link" href="https://wiki.metacubex.one/ru/config/proxy-providers/#filter" target="_blank" rel="noopener">filter</a> — regex по именам узлов внутри подписки, несколько через <code>|</code>.</span></div>
@@ -2756,6 +2757,7 @@ tools_page() {
       <div class="tool-status" id="toolHappStatus"></div>
     </article>
     <article class="tool-pane" data-tool-pane="vanya" hidden>
+      <div class="notice"><b>Ключ — в SUB_LINK</b><span>Сам <code>ssconf://</code> кладите в <code>SUB_LINKxx</code>: контейнер будет получать конфиг заново по интервалу подписки, и смена сервера или ключей у сервиса подхватится сама. Ссылки ниже — снимок на сейчас: в <code>LINKxx</code> они работают, пока сервис их не сменит.</span></div>
       <label class="field field-wide"><span><b>UUID или ssconf://</b><em>чистый UUID соберётся в ssconf автоматически</em></span><textarea id="toolVanyaInput" rows="7" spellcheck="false" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx&#10;ssconf://домен/vanya/UUID"></textarea></label>
       <div class="tool-compact-grid">
         <label class="field"><span><b>Домен по умолчанию</b><em>для чистого UUID</em></span><input id="toolVanyaDomain" spellcheck="false" value="berezochka.ru" placeholder="berezochka.ru"></label>
