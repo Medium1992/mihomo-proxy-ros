@@ -2762,10 +2762,10 @@ tools_page() {
       </div>
       <div class="bc-actions">
         <button type="button" onclick="toolVanyaFetch()">Запросить config</button>
-        <button type="button" onclick="toolCopy('toolVanyaSs', this)">Скопировать ss://</button>
+        <button type="button" onclick="toolCopy('toolVanyaSs', this)">Скопировать ссылки</button>
         <button type="button" onclick="toolCopy('toolVanyaYaml', this)">Скопировать YAML</button>
       </div>
-      <label class="field field-wide"><span><b>ss://</b><em>готовая ссылка</em></span><textarea id="toolVanyaSs" rows="4" readonly spellcheck="false"></textarea></label>
+      <label class="field field-wide"><span><b>Ссылки</b><em>ss://, vless:// и другие, основной узел первым; можно класть в LINK</em></span><textarea id="toolVanyaSs" rows="4" readonly spellcheck="false"></textarea></label>
       <label class="field field-wide"><span><b>mihomo YAML</b><em>proxy entry</em></span><textarea id="toolVanyaYaml" rows="9" readonly spellcheck="false"></textarea></label>
       <details class="bc-tier-info">
         <summary>Сведения и сырой ответ</summary>

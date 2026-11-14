@@ -1583,8 +1583,9 @@ function toolVanyaConfigToOutputs(text) {
   return { ss, yaml, cfg, notes: [] };
 }
 
-// toolParseSimpleYaml — YAML конфига Outline: вложенные словари по отступам и
-// скаляры, в кавычках или без. Списков и многострочных значений там нет.
+// toolParseSimpleYaml — YAML конфига Outline: вложенные словари по отступам,
+// скаляры в кавычках или без и многострочные блоки «|» (в них ключи Vanya
+// кладут JSON sing-box). Списков там нет.
 function toolParseSimpleYaml(text) {
   const root = {};
   const stack = [{ indent: -1, obj: root }];
@@ -1594,7 +1595,9 @@ function toolParseSimpleYaml(text) {
     if (v.startsWith("'")) return v.slice(1, -1).replace(/''/g, "'");
     return v.replace(/\s+#.*$/, "");
   };
-  for (const raw of String(text).split(/\r?\n/)) {
+  const lines = String(text).split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const indent = raw.length - raw.trimStart().length;
@@ -1603,12 +1606,25 @@ function toolParseSimpleYaml(text) {
     while (stack.length > 1 && indent <= stack[stack.length - 1].indent) stack.pop();
     const parent = stack[stack.length - 1].obj;
     const key = unquote(m[1]);
-    if (m[2] === undefined || m[2].trim() === "") {
+    const value = m[2] === undefined ? "" : m[2].trim();
+    if (/^[|>][+-]?$/.test(value)) {
+      // Блок: все следующие строки глубже ключа (и пустые между ними).
+      const block = [];
+      while (i + 1 < lines.length) {
+        const next = lines[i + 1];
+        if (next.trim() && next.length - next.trimStart().length <= indent) break;
+        block.push(next);
+        i++;
+      }
+      const cut = Math.min(...block.filter((l) => l.trim()).map((l) => l.length - l.trimStart().length));
+      const body = block.map((l) => l.slice(Number.isFinite(cut) ? cut : 0));
+      parent[key] = value[0] === ">" ? body.join(" ").trim() : body.join("\n").replace(/\n+$/, value.endsWith("-") ? "" : "\n");
+    } else if (value === "") {
       const obj = {};
       parent[key] = obj;
       stack.push({ indent, obj });
     } else {
-      parent[key] = unquote(m[2]);
+      parent[key] = unquote(value);
     }
   }
   return root;
@@ -1634,8 +1650,136 @@ function toolVanyaOutlineEndpoint(ep) {
   throw new Error("endpoint $type: " + type + " не поддерживается");
 }
 
+// toolVanyaSingbox — transport $type: singbox: в config лежит JSON sing-box.
+// Узлы shadowsocks, vless, trojan и hysteria2 становятся ссылками и записями
+// mihomo; тот, на который в итоге ведёт route.final, — первым.
+function toolVanyaSingboxToOutputs(t) {
+  const sb = typeof t.config === "string" ? JSON.parse(t.config) : t.config;
+  const obs = Array.isArray(sb && sb.outbounds) ? sb.outbounds : [];
+  const byTag = new Map(obs.map((o) => [o.tag, o]));
+  const resolve = (tag, seen = new Set()) => {
+    const o = byTag.get(tag);
+    if (!o || seen.has(tag)) return null;
+    seen.add(tag);
+    if (Array.isArray(o.outbounds)) {
+      for (const sub of [o.default, ...o.outbounds]) {
+        const r = sub && resolve(sub, seen);
+        if (r) return r;
+      }
+      return null;
+    }
+    return o;
+  };
+  const main = resolve(sb && sb.route && sb.route.final);
+  const loc = String(t.location || "").trim();
+  const name = (o) => (loc ? loc + " " : "") + (o.tag || o.type);
+  const nodes = obs.filter((o) => ["shadowsocks", "vless", "trojan", "hysteria2"].includes(o.type));
+  nodes.sort((a, b) => (b === main) - (a === main));
+  if (!nodes.length) throw new Error("в config sing-box нет shadowsocks, vless, trojan или hysteria2");
+  const links = [];
+  const yaml = ["proxies:"];
+  const notes = [];
+  for (const o of nodes) {
+    const out = toolSingboxNode(o, name(o));
+    links.push(out.link);
+    yaml.push(...out.yaml);
+    notes.push(...out.notes);
+  }
+  if (main) notes.unshift("основной узел: " + name(main) + " (route.final)");
+  return { ss: links.join("\n"), yaml: yaml.join("\n"), cfg: { tag: main ? name(main) : name(nodes[0]) }, notes };
+}
+
+// toolSingboxNode — один outbound sing-box: ссылка и запись mihomo.
+function toolSingboxNode(o, name) {
+  const host = String(o.server || "");
+  const port = String(o.server_port || "");
+  const hp = toolHostPort(host, port);
+  const tls = o.tls && o.tls.enabled ? o.tls : null;
+  const reality = tls && tls.reality && tls.reality.enabled ? tls.reality : null;
+  const fp = tls && tls.utls && tls.utls.enabled ? (tls.utls.fingerprint || "chrome") : "";
+  const tr = o.transport || {};
+  const notes = [];
+  const y = [`  - name: ${toolYamlScalar(name)}`];
+  const q = new URLSearchParams();
+  const tlsYaml = () => {
+    if (!tls) return;
+    if (o.type !== "trojan" && o.type !== "hysteria2") y.push("    tls: true");
+    if (tls.server_name) y.push(`    ${o.type === "vless" ? "servername" : "sni"}: ${toolYamlScalar(tls.server_name)}`);
+    if (tls.insecure) y.push("    skip-cert-verify: true");
+    if (Array.isArray(tls.alpn) && tls.alpn.length) y.push(`    alpn: [${tls.alpn.map(toolYamlScalar).join(", ")}]`);
+    if (fp) y.push(`    client-fingerprint: ${toolYamlScalar(fp)}`);
+    if (reality) {
+      y.push("    reality-opts:", `      public-key: ${toolYamlScalar(reality.public_key || "")}`);
+      if (reality.short_id) y.push(`      short-id: ${toolYamlScalar(reality.short_id)}`);
+    }
+    q.set("security", reality ? "reality" : "tls");
+    if (tls.server_name) q.set("sni", tls.server_name);
+    if (fp) q.set("fp", fp);
+    if (reality) {
+      q.set("pbk", reality.public_key || "");
+      if (reality.short_id) q.set("sid", reality.short_id);
+    }
+    if (tls.insecure) q.set("allowInsecure", "1");
+    if (Array.isArray(tls.alpn) && tls.alpn.length) q.set("alpn", tls.alpn.join(","));
+  };
+  const transportYaml = () => {
+    const type = tr.type || "tcp";
+    q.set("type", type === "http" ? "h2" : type);
+    if (type === "ws") {
+      y.push("    network: ws", "    ws-opts:", `      path: ${toolYamlScalar(tr.path || "/")}`);
+      const wsHost = tr.headers && tr.headers.Host;
+      if (wsHost) y.push("      headers:", `        Host: ${toolYamlScalar(wsHost)}`);
+      q.set("path", tr.path || "/");
+      if (wsHost) q.set("host", wsHost);
+    } else if (type === "grpc") {
+      y.push("    network: grpc", "    grpc-opts:", `      grpc-service-name: ${toolYamlScalar(tr.service_name || "")}`);
+      q.set("serviceName", tr.service_name || "");
+    } else if (type !== "tcp") {
+      notes.push(name + ": транспорт " + type + " не перенесён");
+    }
+  };
+  if (o.type === "shadowsocks") {
+    const user = toolUtf8ToBase64(`${o.method}:${o.password}`).replace(/=+$/g, "");
+    const udp = o.network !== "tcp";
+    y.push("    type: ss", `    server: ${toolYamlScalar(host)}`, `    port: ${Number(port)}`,
+      `    cipher: ${toolYamlScalar(o.method)}`, `    password: ${toolYamlScalar(o.password)}`, `    udp: ${udp}`);
+    if (o.plugin) notes.push(name + ": plugin " + o.plugin + " не перенесён");
+    return { link: `ss://${user}@${hp}#${encodeURIComponent(name)}`, yaml: y, notes };
+  }
+  if (o.type === "vless") {
+    y.push("    type: vless", `    server: ${toolYamlScalar(host)}`, `    port: ${Number(port)}`,
+      `    uuid: ${toolYamlScalar(o.uuid)}`, "    udp: true");
+    if (o.flow) y.push(`    flow: ${toolYamlScalar(o.flow)}`);
+    q.set("encryption", "none");
+    if (o.flow) q.set("flow", o.flow);
+    tlsYaml();
+    transportYaml();
+    return { link: `vless://${encodeURIComponent(o.uuid)}@${hp}?${q}#${encodeURIComponent(name)}`, yaml: y, notes };
+  }
+  if (o.type === "trojan") {
+    y.push("    type: trojan", `    server: ${toolYamlScalar(host)}`, `    port: ${Number(port)}`,
+      `    password: ${toolYamlScalar(o.password)}`, "    udp: true");
+    tlsYaml();
+    transportYaml();
+    return { link: `trojan://${encodeURIComponent(o.password)}@${hp}?${q}#${encodeURIComponent(name)}`, yaml: y, notes };
+  }
+  // hysteria2
+  y.push("    type: hysteria2", `    server: ${toolYamlScalar(host)}`, `    port: ${Number(port)}`,
+    `    password: ${toolYamlScalar(o.password || "")}`);
+  if (o.obfs && o.obfs.type) {
+    y.push(`    obfs: ${toolYamlScalar(o.obfs.type)}`, `    obfs-password: ${toolYamlScalar(o.obfs.password || "")}`);
+    q.set("obfs", o.obfs.type);
+    q.set("obfs-password", o.obfs.password || "");
+  }
+  tlsYaml();
+  q.delete("security");
+  q.delete("type");
+  return { link: `hysteria2://${encodeURIComponent(o.password || "")}@${hp}?${q}#${encodeURIComponent(name)}`, yaml: y, notes };
+}
+
 function toolVanyaOutlineToOutputs(cfg) {
   const t = cfg.transport;
+  if (t.$type === "singbox") return toolVanyaSingboxToOutputs(t);
   const tcp = t.$type === "tcpudp" ? t.tcp : t;
   const udp = t.$type === "tcpudp" ? t.udp : null;
   if (!tcp || tcp.$type !== "shadowsocks") {
