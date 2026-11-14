@@ -1547,8 +1547,19 @@ function toolVanyaProxyName(cfg) {
   return tag || [cfg?.server, cfg?.server_port || cfg?.port].filter(Boolean).join(":") || "VanyaVPN";
 }
 
+// Ключ ssconf отдаёт либо старый JSON Outline (method, password, server,
+// server_port), либо новый формат динамических ключей Outline — YAML (или тот
+// же объект в JSON) с transport: { $type: tcpudp, tcp: …, udp: … }, где у
+// shadowsocks есть cipher, secret, endpoint и необязательный prefix.
 function toolVanyaConfigToOutputs(text) {
-  const cfg = JSON.parse(text);
+  let cfg;
+  try {
+    cfg = JSON.parse(text);
+  } catch (e) {
+    if (!/^\s*transport\s*:/m.test(text)) throw e;
+    cfg = toolParseSimpleYaml(text);
+  }
+  if (cfg && typeof cfg === "object" && cfg.transport) return toolVanyaOutlineToOutputs(cfg);
   const method = String(cfg.method || cfg.cipher || "").trim();
   const password = String(cfg.password || "").trim();
   const server = String(cfg.server || "").trim();
@@ -1569,7 +1580,113 @@ function toolVanyaConfigToOutputs(text) {
     `    password: ${toolYamlScalar(password)}`,
     "    udp: true"
   ].filter(Boolean).join("\n");
-  return { ss, yaml, cfg };
+  return { ss, yaml, cfg, notes: [] };
+}
+
+// toolParseSimpleYaml — YAML конфига Outline: вложенные словари по отступам и
+// скаляры, в кавычках или без. Списков и многострочных значений там нет.
+function toolParseSimpleYaml(text) {
+  const root = {};
+  const stack = [{ indent: -1, obj: root }];
+  const unquote = (v) => {
+    v = v.trim();
+    if (v.startsWith('"')) return JSON.parse(v);
+    if (v.startsWith("'")) return v.slice(1, -1).replace(/''/g, "'");
+    return v.replace(/\s+#.*$/, "");
+  };
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const indent = raw.length - raw.trimStart().length;
+    const m = line.match(/^("[^"]*"|'[^']*'|[^:]+?)\s*:(?:\s+(.*))?$/);
+    if (!m) throw new Error("YAML: не разобрана строка «" + line + "»");
+    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) stack.pop();
+    const parent = stack[stack.length - 1].obj;
+    const key = unquote(m[1]);
+    if (m[2] === undefined || m[2].trim() === "") {
+      const obj = {};
+      parent[key] = obj;
+      stack.push({ indent, obj });
+    } else {
+      parent[key] = unquote(m[2]);
+    }
+  }
+  return root;
+}
+
+// toolVanyaOutlineEndpoint — адрес shadowsocks у Outline: строка host:port,
+// { $type: dial, address } или { $type: websocket, url }.
+function toolVanyaOutlineEndpoint(ep) {
+  if (typeof ep === "string") ep = { $type: "dial", address: ep };
+  if (!ep || typeof ep !== "object") throw new Error("в конфиге нет endpoint");
+  const type = String(ep.$type || "dial");
+  if (type === "dial") {
+    const addr = String(ep.address || "").trim();
+    const m = addr.match(/^\[?([^\]]+?)\]?:(\d+)$/);
+    if (!m) throw new Error("endpoint без host:port: " + addr);
+    return { server: m[1], port: m[2] };
+  }
+  if (type === "websocket") {
+    const u = new URL(String(ep.url || ""));
+    const tls = u.protocol === "wss:";
+    return { server: u.hostname, port: u.port || (tls ? "443" : "80"), ws: { tls, host: u.hostname, path: u.pathname + u.search } };
+  }
+  throw new Error("endpoint $type: " + type + " не поддерживается");
+}
+
+function toolVanyaOutlineToOutputs(cfg) {
+  const t = cfg.transport;
+  const tcp = t.$type === "tcpudp" ? t.tcp : t;
+  const udp = t.$type === "tcpudp" ? t.udp : null;
+  if (!tcp || tcp.$type !== "shadowsocks") {
+    throw new Error("transport.tcp — не shadowsocks ($type: " + String(tcp && tcp.$type) + ")");
+  }
+  const cipher = String(tcp.cipher || "").trim();
+  const secret = String(tcp.secret || "").trim();
+  if (!cipher || !secret) throw new Error("в transport нет cipher/secret");
+  const ep = toolVanyaOutlineEndpoint(tcp.endpoint);
+  const name = ep.server || "VanyaVPN";
+  const notes = [];
+  if (tcp.prefix) notes.push("prefix «" + tcp.prefix + "» в mihomo не задаётся: соединение пойдёт без него");
+  let udpOn = !ep.ws;
+  if (udp && !ep.ws) {
+    try {
+      const u = toolVanyaOutlineEndpoint(udp.endpoint);
+      if (u.server !== ep.server || u.port !== ep.port) {
+        notes.push("UDP у Outline на " + toolHostPort(u.server, u.port) + ", а mihomo шлёт UDP на тот же адрес, что TCP");
+      }
+    } catch (e) { /* UDP без своего адреса — как у TCP */ }
+  }
+  if (ep.ws) notes.push("shadowsocks через WebSocket: в mihomo это v2ray-plugin, UDP через него не идёт");
+  const user = toolUtf8ToBase64(`${cipher}:${secret}`).replace(/=+$/g, "");
+  let query = "";
+  const yaml = [
+    "proxies:",
+    `  - name: ${toolYamlScalar(name)}`,
+    "    type: ss",
+    `    server: ${toolYamlScalar(ep.server)}`,
+    `    port: ${Number(ep.port) || toolYamlScalar(ep.port)}`,
+    `    cipher: ${toolYamlScalar(cipher)}`,
+    `    password: ${toolYamlScalar(secret)}`,
+    `    udp: ${udpOn}`
+  ];
+  if (ep.ws) {
+    const opts = ["v2ray-plugin", "mode=websocket"];
+    if (ep.ws.tls) opts.push("tls");
+    opts.push("host=" + ep.ws.host, "path=" + ep.ws.path);
+    query = "?plugin=" + encodeURIComponent(opts.join(";"));
+    yaml.push(
+      "    plugin: v2ray-plugin",
+      "    plugin-opts:",
+      "      mode: websocket",
+      `      tls: ${ep.ws.tls}`,
+      `      host: ${toolYamlScalar(ep.ws.host)}`,
+      `      path: ${toolYamlScalar(ep.ws.path)}`
+    );
+  }
+  notes.forEach((n) => yaml.push("# " + n));
+  const ss = `ss://${user}@${toolHostPort(ep.server, ep.port)}${query}#${encodeURIComponent(name)}`;
+  return { ss, yaml: yaml.join("\n"), cfg: { tag: name }, notes };
 }
 
 function toolVanyaRenderConfig(text) {
@@ -1684,7 +1801,8 @@ function toolVanyaFetch() {
       const rendered = toolVanyaRenderConfig(text);
       if (rendered) {
         const status = json.status && Number(json.status) > 0 ? `HTTP ${json.status}` : "config получен";
-        toolSetStatus("toolVanyaStatus", `${status}, ${toolVanyaProxyName(rendered.cfg)}`, true);
+        const notes = rendered.notes && rendered.notes.length ? " — " + rendered.notes.join("; ") : "";
+        toolSetStatus("toolVanyaStatus", `${status}, ${toolVanyaProxyName(rendered.cfg)}${notes}`, true);
         toolVanyaPersist();
         return;
       }
