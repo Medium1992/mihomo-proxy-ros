@@ -134,7 +134,6 @@ add name=FWD_update source="# Define global variables\r\
 \n\"netflix\";\r\
 \n\"discord\";\r\
 \n\"rutracker\";\r\
-\n\"torrent\";\r\
 \n\"adguard\";\r\
 \n\"anime\";\r\
 \n\"deepl\";\r\
