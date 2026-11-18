@@ -1971,6 +1971,21 @@ function toolParam(params, key, value) {
   params.set(key, String(value));
 }
 
+// Имя отпечатка Xray в имя mihomo: Xray принимает и имена uTLS
+// («HelloFirefox_120»), mihomo на них пишет «wrong clientFingerprint» и идёт
+// без uTLS. То же, что fpName в xray2mihomo.jq.
+function toolFpName(value) {
+  if (value === undefined || value === null) return "";
+  const f = String(value).trim().toLowerCase();
+  if (f === "hellochrome_120") return "chrome120";
+  if (f === "hellofirefox_120") return "firefox120";
+  if (f === "hellosafari_16_0") return "safari16";
+  if (f === "hellogolang") return "";
+  if (f.startsWith("hellorandomized") || f === "randomizednoalpn") return "randomized";
+  const m = /^hello(chrome|firefox|safari|ios|edge|360|qq|android)_/.exec(f);
+  return m ? m[1] : f;
+}
+
 function toolFirst(obj, keys) {
   for (const k of keys) {
     if (obj && obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
@@ -2108,7 +2123,7 @@ function toolStreamParams(params, stream) {
   const kcp = stream.kcpSettings || {};
   const tcp = stream.tcpSettings || {};
   toolParam(params, "sni", tls.serverName || reality.serverName || (Array.isArray(reality.serverNames) ? reality.serverNames[0] : reality.serverNames));
-  toolParam(params, "fp", tls.fingerprint || reality.fingerprint || realityInner.fingerprint);
+  toolParam(params, "fp", toolFpName(tls.fingerprint || reality.fingerprint || realityInner.fingerprint));
   toolParam(params, "alpn", Array.isArray(tls.alpn) ? tls.alpn.join(",") : tls.alpn);
   toolParam(params, "pbk", reality.publicKey || reality.public_key || reality.password || realityInner.publicKey || realityInner.public_key || realityInner.password);
   toolParam(params, "sid", reality.shortId || reality.short_id || (Array.isArray(reality.shortIds) ? reality.shortIds[0] : reality.shortIds));
@@ -2185,7 +2200,7 @@ function toolBuildVmess(ob) {
     tls: stream.security === "tls" ? "tls" : "",
     sni: tls.serverName || "",
     alpn: Array.isArray(tls.alpn) ? tls.alpn.join(",") : (tls.alpn || ""),
-    fp: tls.fingerprint || ""
+    fp: toolFpName(tls.fingerprint)
   };
   return "vmess://" + toolUtf8ToBase64(JSON.stringify(payload));
 }

@@ -4,6 +4,24 @@
 def tv($x): ($x != null) and ($x != false) and ($x != "");
 def trim: if . == null then "" else (tostring | sub("^[ \t\r\n]+"; "") | sub("[ \t\r\n]+$"; "")) end;
 def lc: ascii_downcase;
+# Xray принимает и имена отпечатков из uTLS («HelloFirefox_120»,
+# «hellochrome_131»), регистр не важен. mihomo знает только свои короткие
+# («firefox», «firefox120») и на чужое пишет «wrong clientFingerprint»,
+# а дальше идёт без uTLS: REALITY с таким узлом не работает, TLS уходит
+# отпечатком Go. Версии, которых в mihomo нет, сводятся к семейству — его
+# текущему отпечатку.
+def fpName:
+  if . == null then null
+  else (trim | lc) as $f
+  | if $f == "" then null
+    elif $f == "hellochrome_120" then "chrome120"
+    elif $f == "hellofirefox_120" then "firefox120"
+    elif $f == "hellosafari_16_0" then "safari16"
+    elif $f == "hellogolang" then null
+    elif ($f | test("^hellorandomized")) or $f == "randomizednoalpn" then "randomized"
+    elif ($f | test("^hello(chrome|firefox|safari|ios|edge|360|qq|android)_")) then ($f | capture("^hello(?<f>[a-z0-9]+)_").f)
+    else $f end
+  end;
 def firstNE($a): ($a | map(trim) | map(select(. != "")) | .[0]) // "";
 
 # encodeURIComponent
@@ -142,7 +160,7 @@ def streamParams($stream):
   | pset("type"; $net)
   | (if ($sec != "" and $sec != "none") then pset("security"; $sec) else . end)
   | pset("sni"; ($tls.serverName // $reality.serverName // (if ($reality.serverNames | type) == "array" then $reality.serverNames[0] else $reality.serverNames end)))
-  | pset("fp"; ($tls.fingerprint // $reality.fingerprint // $ri.fingerprint))
+  | pset("fp"; (($tls.fingerprint // $reality.fingerprint // $ri.fingerprint) | fpName))
   | pset("alpn"; (if ($tls.alpn | type) == "array" then ($tls.alpn | join(",")) else $tls.alpn end))
   | pset("pbk"; ($reality.publicKey // $reality.public_key // $reality.password // $ri.publicKey // $ri.public_key // $ri.password))
   | pset("sid"; ($reality.shortId // $reality.short_id // (if ($reality.shortIds | type) == "array" then $reality.shortIds[0] else $reality.shortIds end)))
@@ -203,7 +221,7 @@ def buildVmess:
           path: ($ws.path // ""), tls: (if $stream.security == "tls" then "tls" else "" end),
           sni: ($tls.serverName // ""),
           alpn: (if ($tls.alpn | type) == "array" then ($tls.alpn | join(",")) else ($tls.alpn // "") end),
-          fp: ($tls.fingerprint // "") }
+          fp: (($tls.fingerprint | fpName) // "") }
       | "vmess://" + (tojson | @base64)
     else null end;
 
@@ -455,7 +473,7 @@ def addTlsDirect($proxy; $stream):
        (. + {tls: true})
        | setIf("servername"; ($tls.serverName // $reality.serverName // (if ($reality.serverNames | type) == "array" then $reality.serverNames[0] else $reality.serverNames end)))
        | setIf("alpn"; asList($tls.alpn))
-       | setIf("client-fingerprint"; ($tls.fingerprint // $reality.fingerprint // $ri.fingerprint))
+       | setIf("client-fingerprint"; (($tls.fingerprint // $reality.fingerprint // $ri.fingerprint) | fpName))
        | (if tv($tls.allowInsecure) then . + {"skip-cert-verify": true} else . end)
      else . end)
   | (if ($sec == "reality") then
@@ -539,7 +557,7 @@ def streamToXhttpDownloadSettings($dsStream):
        | setIf("alpn"; asList($tls.alpn))
        | setIf("skip-cert-verify"; (if tv($tls.allowInsecure) then true else null end))
        | setIf("servername"; ($tls.serverName // $reality.serverName // (if ($reality.serverNames | type) == "array" then $reality.serverNames[0] else $reality.serverNames end)))
-       | setIf("client-fingerprint"; ($tls.fingerprint // $reality.fingerprint))
+       | setIf("client-fingerprint"; (($tls.fingerprint // $reality.fingerprint) | fpName))
      else $o3 end) as $o4
   | (if ($sec == "reality") then
        ({} | setIf("public-key"; ($reality.publicKey // $reality.password))
