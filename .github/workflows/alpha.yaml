@@ -137,6 +137,7 @@ jobs:
     outputs:
       flow: ${{ steps.test.outputs.flow }}
       dial: ${{ steps.dial.outputs.dial }}
+      browser: ${{ steps.browser.outputs.browser }}
 
     steps:
       - uses: actions/checkout@v6
@@ -182,6 +183,38 @@ jobs:
           else
             echo "::warning::XHTTP dial patch does not apply or fails its tests on ${{ needs.alpha-check.outputs.upstream_ref }}; this alpha is built without it"
             echo "dial=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      # REALITY browser mode (core_patches/reality_browser) ложится поверх
+      # uTLS из core_patches/utls и, если регулятор встал, поверх xhttp_flow —
+      # как в сборке. Сломается — альфа собирается без режима.
+      - name: Test the REALITY browser patch on upstream
+        id: browser
+        run: |
+          set -uo pipefail
+          UTLS=$(sed -n 's/^ARG UTLS_OVERRIDE_COMMIT=//p' Dockerfile-release)
+          if docker run --rm -v "$PWD/core_patches:/patches:ro" \
+              -e REF=${{ needs.alpha-check.outputs.upstream_ref }} \
+              -e FLOW=${{ steps.test.outputs.flow }} -e UTLS="$UTLS" \
+              golang:${{ needs.alpha-check.outputs.go_version }}-alpine sh -euc '
+                apk add --no-cache git >/dev/null
+                git clone -q https://github.com/MetaCubeX/mihomo.git /src
+                cd /src
+                git checkout -q --detach "$REF"
+                if [ "$FLOW" = "1" ]; then sh /patches/xhttp_flow/apply.sh; fi
+                git init -q /utls
+                git -C /utls fetch -q --depth=1 https://github.com/MetaCubeX/utls.git "$UTLS"
+                git -C /utls checkout -q FETCH_HEAD
+                (cd /utls && sh /patches/utls/apply.sh)
+                go mod edit -replace github.com/metacubex/utls=/utls
+                sh /patches/reality_browser/apply.sh
+                export GOTOOLCHAIN=local CGO_ENABLED=0
+                go vet ./component/tls/ ./common/convert/ ./adapter/outbound/
+                go test -count=1 -timeout 5m -run "RealityBrowser|FlowBrowser" ./component/tls/ ./common/convert/ ./transport/xhttp/'; then
+            echo "browser=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::REALITY browser patch does not apply or fails its tests on ${{ needs.alpha-check.outputs.upstream_ref }}; this alpha is built without it"
+            echo "browser=0" >> "$GITHUB_OUTPUT"
           fi
 
   alpha-build:
@@ -302,6 +335,7 @@ jobs:
             --build-arg MIHOMO_CUSTOM_PATCHES=${{ env.MIHOMO_CUSTOM_PATCHES }} \
             --build-arg XHTTP_FLOW=${{ needs.alpha-flow.outputs.flow }} \
             --build-arg XHTTP_DIAL=${{ needs.alpha-flow.outputs.dial }} \
+            --build-arg REALITY_BROWSER=${{ needs.alpha-flow.outputs.browser }} \
             --build-arg BUILDTIME="$(date)" \
             --output type=local,dest=out \
             --progress=plain \

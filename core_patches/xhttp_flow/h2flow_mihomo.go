@@ -61,6 +61,15 @@ func h2FlowReceiveWindow(v int, name string) int {
 // mode is touched: HTTP/1.1 and HTTP/3 transports pass through unchanged.
 // A nil receiver means no "h2-flow" block.
 func (o *H2FlowOptions) Wrap(mk func() http.RoundTripper) func() http.RoundTripper {
+	return o.WrapBrowser(mk, false)
+}
+
+// WrapBrowser is Wrap for a proxy whose REALITY runs in browser mode when
+// browser is set (core_patches/reality_browser): the HTTP/2 connection
+// acknowledges the server's SETTINGS in a record of its own, as Chrome does,
+// and the governor's probes wait for the server's first response. This
+// shaping is on with or without the governor.
+func (o *H2FlowOptions) WrapBrowser(mk func() http.RoundTripper, browser bool) func() http.RoundTripper {
 	if mk == nil {
 		return nil
 	}
@@ -85,14 +94,22 @@ func (o *H2FlowOptions) Wrap(mk func() http.RoundTripper) func() http.RoundTripp
 				}
 			}
 		}
-		if o.governed() {
+		if governed := o.governed(); governed || browser {
 			dial := t.DialTLSContext
 			t.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 				c, err := dial(ctx, network, addr)
 				if err != nil {
 					return c, err
 				}
-				return newFlowClientConn(c), nil
+				if browser {
+					c = &ackConn{Conn: c, prefaceLeft: len(h2Preface)}
+				}
+				if !governed {
+					return c, nil
+				}
+				fc := newFlowClientConn(c)
+				fc.shapeStartup = browser
+				return fc, nil
 			}
 		}
 		return rt

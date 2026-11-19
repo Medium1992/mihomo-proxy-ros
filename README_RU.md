@@ -367,6 +367,29 @@ xhttp-opts:
 
 Код лежит в [`core_patches/xhttp_flow`](core_patches/xhttp_flow); в mihomo меняются две строки `adapter/outbound/vless.go` и одна строка `common/convert/v.go`. Убрать регулятор из сборки — аргумент `XHTTP_FLOW=0`. Если патч перестанет ложиться на апстрим, альфа соберётся без него (с предупреждением в прогоне CI), а стабильный релиз не выйдет.
 
+#### REALITY в режиме браузера
+
+Клиентская половина режима `"browser": "auto"` из [Xray-core-fork v26.11.9-h2Flow-7](https://github.com/Medium1992/Xray-core-fork/releases). С ним REALITY-клиент ведёт себя как браузер своего `client-fingerprint`:
+
+- второе и следующие соединения к серверу возобновляют сессию по тикету, который выдал сервер (`pre_shared_key`), как это делают Chrome, Edge и Firefox; на сервер хранится не больше двух тикетов, каждый используется один раз. Firefox шлёт своё хелло возобновления: без `session_ticket`, с увеличенным GREASE ECH;
+- полное рукопожатие ждёт столько, сколько браузер проверяет цепочку сертификатов (Chrome 15–48 мс, Edge 25–50 мс, Firefox 1–5 мс; повторно в течение 30 минут — 1 мс), первые данные Chrome и Edge уходят через 0,25–1,2 мс после Finished;
+- у XHTTP по HTTP/2 подтверждение SETTINGS сервера уходит отдельной TLS-записью, как у Chrome, а пинги регулятора `h2-flow` ждут первого ответа сервера.
+
+Тикеты выдаёт только сервер форка с `"browser": "auto"` в `realitySettings` inbound. Со старым сервером клиент работает, как раньше, полными рукопожатиями; обычный клиент с сервером в режиме браузера — тоже как раньше. `safari`, `ios` и `randomized` не возобновляют, для них режим ничего не меняет. В режиме браузера хелло всегда идёт с X25519MLKEM768, как у браузера, независимо от `support-x25519mlkem768`.
+
+Включается у прокси:
+
+```yaml
+reality-opts:
+  public-key: ...
+  short-id: ...
+  browser: auto        # auto или off (по умолчанию off)
+```
+
+В ссылке `vless://` — параметр `browser=auto`. Из подписок Happ (Xray JSON через конвертер `SUB_LINKxx_CONVERT` и вкладку «xray2mihomo») переносится `realitySettings.browser` сам. Если подписка поля не присылает, его можно включить на всю подписку через `SUB_LINKxx_OVERRIDE_EXPR`: `(select(.["reality-opts"] != null) | .["reality-opts"]["browser"]) = "auto"`.
+
+Код лежит в [`core_patches/reality_browser`](core_patches/reality_browser) (часть для XHTTP — в `core_patches/xhttp_flow`); в mihomo переименовывается `GetRealityConn` и добавляются поле `browser` и его разбор. Патч нужен вместе с uTLS из [`core_patches/utls`](core_patches/utls). Убрать из сборки — аргумент `REALITY_BROWSER=0`. Если патч перестанет ложиться на апстрим, альфа соберётся без него, а стабильный релиз не выйдет.
+
 ### Прокси-группы
 
 `GROUP` объявляет набор групп. Для каждой группы `XXX` (в верхнем регистре) работают префиксные ENV ниже.

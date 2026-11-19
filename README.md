@@ -367,6 +367,29 @@ Measured with the governor on: 30 slow readers over 100 Mbit/s and 50 ms against
 
 The code lives in [`core_patches/xhttp_flow`](core_patches/xhttp_flow); it changes two lines of mihomo's `adapter/outbound/vless.go` and one line of `common/convert/v.go`. Leave the governor out of a build with `XHTTP_FLOW=0`. If the patch stops applying to upstream, the alpha is built without it (with a warning in the CI run) and the stable release is held back.
 
+#### REALITY browser mode
+
+The client half of `"browser": "auto"` from [Xray-core-fork v26.11.9-h2Flow-7](https://github.com/Medium1992/Xray-core-fork/releases). With it the REALITY client behaves like the browser of its `client-fingerprint`:
+
+- the second and later connections to a server resume the session with a ticket the server issued (`pre_shared_key`), as Chrome, Edge and Firefox do; at most two tickets are kept per server and each is used once. Firefox sends its own resumption hello: no `session_ticket`, a longer GREASE ECH;
+- a full handshake waits as long as the browser takes to verify the certificate chain (Chrome 15–48 ms, Edge 25–50 ms, Firefox 1–5 ms; again within 30 minutes, 1 ms), and Chrome and Edge send their first data 0.25–1.2 ms after their Finished;
+- with XHTTP over HTTP/2 the acknowledgement of the server's SETTINGS goes in a TLS record of its own, as Chrome's does, and the `h2-flow` governor's pings wait for the server's first response.
+
+Only a fork server with `"browser": "auto"` in its inbound `realitySettings` issues tickets. With an older server the client works as before, with full handshakes; a stock client with a browser-mode server works as before too. `safari`, `ios` and `randomized` do not resume, so the mode changes nothing for them. In browser mode the hello always carries X25519MLKEM768, as the browser's does, whatever `support-x25519mlkem768` says.
+
+Per proxy:
+
+```yaml
+reality-opts:
+  public-key: ...
+  short-id: ...
+  browser: auto        # auto or off (default off)
+```
+
+In a `vless://` link it is the `browser=auto` parameter. From Happ subscriptions (Xray JSON through the `SUB_LINKxx_CONVERT` converter and the xray2mihomo tool) `realitySettings.browser` is carried over by itself. When a subscription does not send it, turn it on for the whole subscription with `SUB_LINKxx_OVERRIDE_EXPR`: `(select(.["reality-opts"] != null) | .["reality-opts"]["browser"]) = "auto"`.
+
+The code is in [`core_patches/reality_browser`](core_patches/reality_browser) (the XHTTP part in `core_patches/xhttp_flow`); mihomo's `GetRealityConn` is renamed and the `browser` field and its parsing are added. The patch goes together with the uTLS of [`core_patches/utls`](core_patches/utls). To leave it out of a build, pass `REALITY_BROWSER=0`. If it stops applying to upstream, the alpha is built without it and the stable release does not go out.
+
 ### Proxy groups
 
 `GROUP` declares the set of named groups. For each group `XXX` (uppercased), prefix-ENV variants below are honored.

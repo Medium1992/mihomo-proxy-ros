@@ -22,6 +22,9 @@ def fpName:
     elif ($f | test("^hello(chrome|firefox|safari|ios|edge|360|qq|android)_")) then ($f | capture("^hello(?<f>[a-z0-9]+)_").f)
     else $f end
   end;
+# REALITY browser mode ("browser": "auto" в realitySettings Xray-core-fork):
+# в ссылку и в reality-opts идёт только auto, off и пустое — как без поля.
+def realityBrowser: if ((. // "") | trim | lc) == "auto" then "auto" else null end;
 def firstNE($a): ($a | map(trim) | map(select(. != "")) | .[0]) // "";
 
 # encodeURIComponent
@@ -165,6 +168,7 @@ def streamParams($stream):
   | pset("pbk"; ($reality.publicKey // $reality.public_key // $reality.password // $ri.publicKey // $ri.public_key // $ri.password))
   | pset("sid"; ($reality.shortId // $reality.short_id // (if ($reality.shortIds | type) == "array" then $reality.shortIds[0] else $reality.shortIds end)))
   | pset("spx"; $reality.spiderX)
+  | pset("browser"; (($reality.browser // $ri.browser) | realityBrowser))
   | pset("path"; ($ws.path // $http.path // $httpup.path // $xhttp.path))
   | pset("host"; (($ws.headers.Host // $ws.headers.host) // ($httpup.headers.Host // $httpup.headers.host) // ($xhttp.headers.Host // $xhttp.headers.host) // $xhttp.host))
   | pset("mode"; $xhttp.mode)
@@ -478,7 +482,8 @@ def addTlsDirect($proxy; $stream):
      else . end)
   | (if ($sec == "reality") then
        ({} | setIf("public-key"; ($reality.publicKey // $reality.public_key // $reality.password // $ri.publicKey // $ri.public_key // $ri.password))
-           | setIf("short-id"; ($reality.shortId // $reality.short_id // (if ($reality.shortIds | type) == "array" then $reality.shortIds[0] else $reality.shortIds end)))) as $ro
+           | setIf("short-id"; ($reality.shortId // $reality.short_id // (if ($reality.shortIds | type) == "array" then $reality.shortIds[0] else $reality.shortIds end)))
+           | setIf("browser"; (($reality.browser // $ri.browser) | realityBrowser))) as $ro
        | (if ($ro | length) > 0 then . + {"reality-opts": $ro} else . end)
      else . end);
 
@@ -561,7 +566,8 @@ def streamToXhttpDownloadSettings($dsStream):
      else $o3 end) as $o4
   | (if ($sec == "reality") then
        ({} | setIf("public-key"; ($reality.publicKey // $reality.password))
-           | setIf("short-id"; ($reality.shortId // (if ($reality.shortIds | type) == "array" then $reality.shortIds[0] else $reality.shortIds end)))) as $ro
+           | setIf("short-id"; ($reality.shortId // (if ($reality.shortIds | type) == "array" then $reality.shortIds[0] else $reality.shortIds end)))
+           | setIf("browser"; ($reality.browser | realityBrowser))) as $ro
        | (if ($ro | length) > 0 then $o4 + {"reality-opts": $ro} else $o4 end)
      else $o4 end);
 def xhttpScalars($o; $x):

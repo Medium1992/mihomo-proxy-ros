@@ -735,6 +735,10 @@ type flowConn struct {
 	// its reader does, and governing them twice takes no rate. serverReplied
 	// notes the server's first HEADERS.
 	peerGoverned, serverReplied bool
+	// shapeStartup: REALITY browser mode shapes the server's greeting as
+	// its target's, so flow probes wait for the first response, and the
+	// server's tagged PING can come with it.
+	shapeStartup bool
 	// pingTagged says a server has sent its tagged first PING, see flowPingTag.
 	pingTagged bool
 	// resets are streams whose client sent past their window, to be reset.
@@ -1616,7 +1620,7 @@ func (c *flowConn) rebasePing() {
 // connection learns the round trip of the empty path. Once the kernel vouches
 // for that round trip, no more are needed.
 func (c *flowConn) appendPing(now time.Time, out []byte) []byte {
-	if !c.pingReady || (len(c.streams) == 0 && c.rttBase != 0) || c.modelled(now) || now.Sub(c.lastPing) < flowPingInterval ||
+	if !c.pingReady || (c.shapeStartup && !c.serverReplied) || (len(c.streams) == 0 && c.rttBase != 0) || c.modelled(now) || now.Sub(c.lastPing) < flowPingInterval ||
 		(!c.pingSentAt.IsZero() && now.Sub(c.pingSentAt) < flowPingTimeout) {
 		return out
 	}
@@ -2233,8 +2237,9 @@ func (w *flowWriter) control(f h2Frame, header, payload, out []byte) []byte {
 		}
 		// A governed server sends a PING of its own with its first SETTINGS,
 		// before it answers anything, tagged: a stock server's health check can
-		// come early too, and is not one.
-		if c.client && f.flags&h2FlagAck == 0 && !c.serverReplied && !c.peerGoverned && len(payload) == 8 && binary.BigEndian.Uint32(payload) == flowPingTag {
+		// come early too, and is not one. A shaped REALITY server can send the
+		// tag with its first response.
+		if c.client && f.flags&h2FlagAck == 0 && (!c.serverReplied || c.shapeStartup) && !c.peerGoverned && len(payload) == 8 && binary.BigEndian.Uint32(payload) == flowPingTag {
 			c.peerGoverned, c.restock = true, true
 		}
 	case h2GoAway:

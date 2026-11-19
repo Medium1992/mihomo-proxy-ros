@@ -191,6 +191,21 @@ RUN if [ -n "$UTLS_OVERRIDE_COMMIT" ]; then set -eu; \
       echo "Using utls from go.mod as is"; \
     fi
 
+# Патч reality_browser: клиентская роль REALITY "browser": "auto" из
+# Xray-core-fork v26.11.9-h2Flow-7 — reality-opts.browser: auto у прокси или
+# browser=auto в ссылке vless://. Возобновление сессий по тикетам, как у
+# браузера отпечатка, его задержки, и с xhttp_flow — начало HTTP/2 XHTTP как
+# у Chrome. Без поля всё как в апстриме. Нужен uTLS из core_patches/utls,
+# поэтому без подмены utls патч не ставится. Тесты гоняет CI до сборки и в
+# альфе при поломке передаёт сюда REALITY_BROWSER=0.
+ARG REALITY_BROWSER=1
+COPY core_patches/reality_browser /patches/reality_browser
+RUN if [ "$MIHOMO_CUSTOM_PATCHES" = "1" ] && [ "$REALITY_BROWSER" = "1" ] && [ -n "$UTLS_OVERRIDE_COMMIT" ]; then \
+      sh /patches/reality_browser/apply.sh; \
+    else \
+      echo "REALITY browser mode: off"; \
+    fi
+
 # Скретч-буфер записи HTTP/2 в форке github.com/metacubex/http: min(SETTINGS
 # пира, 512 КиБ) на каждый аплинк-стрим. XHTTP с REALITY (auto -> stream-one /
 # stream-up) и gun держат тело запроса открытым всю жизнь соединения, так что

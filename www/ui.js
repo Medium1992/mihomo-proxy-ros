@@ -1974,6 +1974,13 @@ function toolParam(params, key, value) {
 // Имя отпечатка Xray в имя mihomo: Xray принимает и имена uTLS
 // («HelloFirefox_120»), mihomo на них пишет «wrong clientFingerprint» и идёт
 // без uTLS. То же, что fpName в xray2mihomo.jq.
+// REALITY browser mode ("browser": "auto" в realitySettings Xray-core-fork):
+// в ссылку идёт только auto, off и пустое — как без поля.
+function toolRealityBrowser(value) {
+  if (value === undefined || value === null) return "";
+  return String(value).trim().toLowerCase() === "auto" ? "auto" : "";
+}
+
 function toolFpName(value) {
   if (value === undefined || value === null) return "";
   const f = String(value).trim().toLowerCase();
@@ -2128,6 +2135,7 @@ function toolStreamParams(params, stream) {
   toolParam(params, "pbk", reality.publicKey || reality.public_key || reality.password || realityInner.publicKey || realityInner.public_key || realityInner.password);
   toolParam(params, "sid", reality.shortId || reality.short_id || (Array.isArray(reality.shortIds) ? reality.shortIds[0] : reality.shortIds));
   toolParam(params, "spx", reality.spiderX);
+  toolParam(params, "browser", toolRealityBrowser(reality.browser || realityInner.browser));
   toolParam(params, "path", ws.path || http.path || httpup.path || xhttp.path);
   toolParam(params, "host", (ws.headers && (ws.headers.Host || ws.headers.host)) || (httpup.headers && (httpup.headers.Host || httpup.headers.host)) || (xhttp.headers && (xhttp.headers.Host || xhttp.headers.host)) || xhttp.host);
   toolParam(params, "mode", xhttp.mode);
