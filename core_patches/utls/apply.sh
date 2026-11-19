@@ -16,11 +16,20 @@
 #     ECDSA CBC и FFDHE, с session_ticket и psk_key_exchange_modes. Сверен
 #     по захватам Firefox 160: совпадают шифры, порядок и содержимое всех
 #     расширений, кроме случайных, и длина hello;
+#   - отпечаток Edge 157 (он же HelloEdge_Auto, "edge", вместо Edge 85 с
+#     TLS 1.0): hello Chrome 155 без trust_anchors. Сверен по захвату Edge
+#     157.0.4341.60: шифры, набор расширений с содержимым, GREASE первым и
+#     последним;
 #   - равномерная перестановка расширений Chrome. ShuffleChromeTLSExtensions
 #     пропускал обмены с GREASE, и крайние в спецификации расширения
 #     оставались с краю вдвое чаще: SNI первым в 11% hello вместо 6%.
 #     Теперь подвижные расширения переставляются между собой, как в
-#     BoringSSL.
+#     BoringSSL, и каждый обмен берётся из crypto/rand: одно зерно
+#     math/rand давало не больше 2^31-1 из 17! порядков.
+#
+# Это те же правки, что в Medium1992/utls f03e50a, на котором собран
+# Xray-core-fork v26.11.9-h2Flow-7. Тесты форка по захватам Chrome 155,
+# Firefox 156, Edge 157 и Safari проходят и на дереве после патча.
 #
 # В патче только исходники: без тестов, testdata, CI и документации.
 # Когда MetaCubeX сольёт апстрим сам, патч удаляется, а Dockerfile-release
@@ -37,4 +46,6 @@ grep -Fq 'HelloChrome_Auto        = HelloChrome_155' u_common.go \
   || { echo "utls: Chrome 155 is not HelloChrome_Auto after the patch" >&2; exit 1; }
 grep -Fq 'HelloFirefox_Auto = HelloFirefox_156' u_common.go \
   || { echo "utls: Firefox 156 is not HelloFirefox_Auto after the patch" >&2; exit 1; }
+grep -Fq 'HelloEdge_Auto = HelloEdge_157' u_common.go \
+  || { echo "utls: Edge 157 is not HelloEdge_Auto after the patch" >&2; exit 1; }
 echo "utls: refraction-networking/utls a13c59f on top of MetaCubeX 89a07ad"
