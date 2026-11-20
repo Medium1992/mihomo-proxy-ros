@@ -39,6 +39,22 @@ bc_repeat_probe() {
   return 0
 }
 
+# bc_attempts N FUNC ARGS… — проба N раз: 0 все прошли, 1 первая не прошла,
+# 2 первая прошла, а какая-то из следующих нет (нестабильно). Неудачную
+# первую не повторяем — провальные стратегии стоят столько же, сколько с N=1.
+bc_attempts() {
+  local n="$1" i=1 bad=0
+  shift
+  case "$n" in ''|*[!0-9]*) n=1 ;; esac
+  "$@" || return 1
+  while [ "$i" -lt "$n" ]; do
+    "$@" || bad=1
+    i=$((i + 1))
+  done
+  [ "$bad" = 0 ] || return 2
+  return 0
+}
+
 bc_preflight() {
   local missing=""
   for b in nft openssl nc "$BC_NFQWS"; do

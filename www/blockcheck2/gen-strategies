@@ -77,7 +77,7 @@ case $TIER in
      QUIC_REPEATS="6 11 20"
      ;;
   3) # medium
-     FOOLINGS="badsum tcp_ts=-1000 tcp_ack=-66000:tcp_ts_up tcp_seq=-3000 tcp_md5 tcp_nop_del"
+     FOOLINGS="badsum tcp_ts=-1000 tcp_ack=-66000:tcp_ts_up tcp_seq=-3000 tcp_md5 tcp_nop_del ip_autottl=-2,3-20"
      POS_SETS_TLS="1 1,midsld 1,midsld,1220 1,sniext+1 sniext+1,midsld host+1 sld+1 1,sld+1,endsld-2"
      POS_SETS_HTTP="host+1 method+2 method+4 host+5"
      SPLITTERS="multidisorder multisplit fakedsplit fakeddisorder hostfakesplit"
@@ -87,7 +87,7 @@ case $TIER in
      QUIC_REPEATS="6 11 20 30"
      ;;
   4) # extended
-     FOOLINGS="badsum tcp_ts=-1000 tcp_ack=-66000:tcp_ts_up tcp_seq=-3000 tcp_md5 tcp_nop_del ip_id=rnd ip_id=zero badsum:tcp_md5"
+     FOOLINGS="badsum tcp_ts=-1000 tcp_ack=-66000:tcp_ts_up tcp_seq=-3000 tcp_md5 tcp_nop_del ip_autottl=-2,3-20 ip_id=rnd ip_id=zero badsum:tcp_md5"
      POS_SETS_TLS="1 1,midsld 1,midsld,1220 1,sniext+1 sniext+1,midsld host+1 sld+1 1,sld+1,endsld-2 1,sniext+1,host+1,midsld-2,midsld,midsld+2,endhost-1"
      POS_SETS_HTTP="host+1 method+2 method+4 host+5 endhost-1"
      SPLITTERS="multidisorder multisplit fakedsplit fakeddisorder hostfakesplit tcpseg"
@@ -97,7 +97,7 @@ case $TIER in
      QUIC_REPEATS="6 11 20 30 50"
      ;;
   5) # full — всё, включая редкие верхи
-     FOOLINGS="badsum tcp_ts=-1000 tcp_ack=-66000:tcp_ts_up tcp_seq=-3000 tcp_seq=-1000 tcp_md5 tcp_nop_del ip_id=rnd ip_id=zero ip_id=seq badsum:tcp_md5 tcp_ts=-1000:badsum"
+     FOOLINGS="badsum tcp_ts=-1000 tcp_ack=-66000:tcp_ts_up tcp_seq=-3000 tcp_seq=-1000 tcp_md5 tcp_nop_del ip_autottl=-2,3-20 ip_id=rnd ip_id=zero ip_id=seq badsum:tcp_md5 tcp_ts=-1000:badsum"
      POS_SETS_TLS="1 1,midsld 1,midsld,1220 1,sniext+1 sniext+1,midsld midsld host+1 sld+1 1,sld+1,endsld-2 midsld-2 midsld+2 endhost-1 1,sniext+1,host+1,midsld-2,midsld,midsld+2,endhost-1"
      POS_SETS_HTTP="host+1 method+2 method+4 host+5 endhost-1 endhost+1 endhost-2"
      SPLITTERS="multidisorder multisplit fakedsplit fakeddisorder hostfakesplit tcpseg multidisorder_legacy"
@@ -212,6 +212,66 @@ compose_one() {
   args="$args --lua-desync=${sf}:pos=${pos}:${fl}${seqovl_part}"
   emit "$name" "$proto" "$args"
 }
+
+# ---- Диагностический корпус (класс DPI) --------------------------------
+# 34 строки из tspu-class-test v2.5 (saitkul/tspu-class-test, GPL-2.0),
+# номера сохранены: по тому, какие из них прошли, run определяет класс DPI
+# (нарезка без фейков / только с фейком / голый фейк) — см. bc_class в run.
+# Каждая строка проверяет одну механику, поэтому корпус идёт на всех уровнях
+# и первым: даже quick даёт класс и минимальную рабочую строку.
+SHRED="1,sniext+1,host+1,midsld-2,midsld,midsld+2,endhost-1"
+NOISE="blob=fake_default_tls:badsum:nodrop"
+cls() { emit "cls$1_$2" tls "--filter-tcp=0-65535 $3"; }
+if [ "$want_tls" = 1 ]; then
+  P="--payload=tls_client_hello"
+  # 1-6: нарезка без фейков
+  cls 01 multidisorder_midsld "$P --lua-desync=multidisorder:pos=midsld"
+  cls 02 multisplit_midsld    "$P --lua-desync=multisplit:pos=midsld"
+  cls 03 multidisorder_sld    "$P --lua-desync=multidisorder:pos=sld"
+  cls 04 multidisorder_1_midsld "$P --lua-desync=multidisorder:pos=1,midsld"
+  cls 05 multisplit_seqovl5   "$P --lua-desync=multisplit:pos=1,midsld:seqovl=5:seqovl_pattern=0x1603030000"
+  cls 06 multidisorder_seqovl_midsld "$P --lua-desync=multidisorder:pos=midsld:seqovl=midsld-1:seqovl_pattern=0x1603030000"
+  # 7-10: голый фейк, разная «дурка»
+  cls 07 fake_md5             "$P --lua-desync=fake:blob=fake_default_tls:tcp_md5:repeats=6"
+  cls 08 fake_autottl         "$P --lua-desync=fake:blob=fake_default_tls:ip_autottl=-2,3-20:repeats=6"
+  cls 09 fake_badsum          "$P --lua-desync=fake:blob=fake_default_tls:badsum:repeats=6"
+  cls 10 fake_md5_rndsni      "$P --lua-desync=fake:blob=fake_default_tls:tcp_md5:tls_mod=rnd,rndsni,dupsid:repeats=6"
+  # 11-16: фейк вместе с нарезкой
+  cls 11 fake_md5_multisplit  "$P --lua-desync=fake:blob=fake_default_tls:tcp_md5:repeats=6 --lua-desync=multisplit:pos=midsld"
+  cls 12 fake_md5_multidisorder "$P --lua-desync=fake:blob=fake_default_tls:tcp_md5:repeats=6 --lua-desync=multidisorder:pos=midsld"
+  cls 13 fakeddisorder_md5    "$P --lua-desync=fakeddisorder:pos=midsld:tcp_md5"
+  cls 14 fakedsplit_md5       "$P --lua-desync=fakedsplit:pos=midsld:tcp_md5"
+  cls 15 hostfakesplit_md5    "$P --lua-desync=hostfakesplit:tcp_md5"
+  cls 16 fake_badsum_multidisorder "$P --lua-desync=fake:blob=fake_default_tls:badsum:repeats=6 --lua-desync=multidisorder:pos=midsld"
+  # 17: двухпакетный hello, как у браузера с kyber
+  cls 17 multisplit_1         "$P --lua-desync=multisplit:pos=1"
+  # 18-19: разрезы по всем границам SNI
+  cls 18 shred_multisplit     "$P --lua-desync=multisplit:pos=$SHRED"
+  cls 19 shred_multidisorder  "$P --lua-desync=multidisorder:pos=$SHRED"
+  # 20-21: badsum-фейк внутри нарезки + шред
+  cls 20 noise4_shred_multisplit    "$P --lua-desync=multisplit:$NOISE:pos=2:repeats=4 --lua-desync=multisplit:pos=$SHRED"
+  cls 21 noise4_shred_multidisorder "$P --lua-desync=multidisorder:$NOISE:pos=2:repeats=4 --lua-desync=multidisorder:pos=$SHRED"
+  # 22: разрез с seqovl=1
+  cls 22 multisplit_seqovl1   "$P --lua-desync=multisplit:pos=1,midsld:seqovl=1"
+  # 23: payload=all — режется и ответ сервера
+  cls 23 all_shred_multisplit "--payload=all --lua-desync=multisplit:pos=$SHRED"
+  # 24-27: дозы и позиции шума
+  cls 24 noise2_shred_multisplit    "$P --lua-desync=multisplit:$NOISE:pos=2:repeats=2 --lua-desync=multisplit:pos=$SHRED"
+  cls 25 noise6p3_shred_multisplit  "$P --lua-desync=multisplit:$NOISE:pos=3:repeats=6 --lua-desync=multisplit:pos=$SHRED"
+  cls 26 noise2_shred_multidisorder "$P --lua-desync=multidisorder:$NOISE:pos=2:repeats=2 --lua-desync=multidisorder:pos=$SHRED"
+  cls 27 noise6p3_shred_multidisorder "$P --lua-desync=multidisorder:$NOISE:pos=3:repeats=6 --lua-desync=multidisorder:pos=$SHRED"
+  # 28-29: двухсторонняя дробилка (payload=all + шум + шред)
+  cls 28 all_noise4_shred_multisplit    "--payload=all --lua-desync=multisplit:$NOISE:pos=2:repeats=4 --lua-desync=multisplit:pos=$SHRED"
+  cls 29 all_noise4_shred_multidisorder "--payload=all --lua-desync=multidisorder:$NOISE:pos=2:repeats=4 --lua-desync=multidisorder:pos=$SHRED"
+  # 30-31: шум без шреда
+  cls 30 noise6_multisplit    "$P --lua-desync=multisplit:$NOISE:pos=2:repeats=6"
+  cls 31 noise6_multidisorder "$P --lua-desync=multidisorder:$NOISE:pos=2:repeats=6"
+  # 32-33: фейк из клона настоящего ClientHello
+  cls 32 clonefake_md5        "$P --lua-desync=tls_client_hello_clone:blob=clone --lua-desync=fake:blob=clone:tcp_md5:repeats=6"
+  cls 33 clonefake_md5_multidisorder "$P --lua-desync=tls_client_hello_clone:blob=clone --lua-desync=fake:blob=clone:tcp_md5:repeats=6 --lua-desync=multidisorder:pos=midsld"
+  # 34: неизменённые копии hello перед нарезкой
+  cls 34 echo_multidisorder   "$P --lua-desync=send:repeats=2 --lua-desync=multidisorder:pos=midsld"
+fi
 
 # ---- Curated production seeds ------------------------------------------
 # The broad matrix remains below.  These short chains come first because they
@@ -352,6 +412,31 @@ if [ "$want_tls" = 1 ] && [ "$TIER" -ge 2 ]; then
         "--filter-tcp=0-65535 --lua-desync=fake:blob=0x00000000:badsum:repeats=1 --lua-desync=syndata:blob=fake_default_tls --payload=tls_client_hello --lua-desync=multisplit:pos=${pos}:badsum"
     done
   fi
+fi
+
+# ---- Клон-фейк и эхо ---------------------------------------------------
+# Клон-фейк: фейк — копия настоящего ClientHello этого соединения, поэтому
+# по содержимому его не отличить от живого; сервер отбрасывает его по
+# обманке. Эхо: неизменённые копии hello до сервера, перед нарезкой.
+if [ "$want_tls" = 1 ] && [ "$TIER" -ge 2 ]; then
+  CLONE_FOOLINGS="tcp_md5 badsum"
+  [ "$TIER" -ge 3 ] && CLONE_FOOLINGS="$CLONE_FOOLINGS ip_autottl=-2,3-20 tcp_ts=-1000"
+  for fl in $CLONE_FOOLINGS; do
+    fls=$(safe "$fl")
+    for tail in "" "multidisorder:pos=1,midsld" "multisplit:pos=1,midsld:seqovl=1" "multidisorder:pos=$SHRED"; do
+      if [ -z "$tail" ]; then ts=alone; t=""; else ts=$(safe "${tail%%:*}_${tail#*pos=}"); t=" --lua-desync=$tail"; fi
+      case "$tail" in *"$SHRED"*) [ "$TIER" -ge 3 ] || continue; ts=$(safe "${tail%%:*}")_shred ;; esac
+      emit "tls_clonefake_${fls}_${ts}" tls \
+        "--filter-tcp=0-65535 --payload=tls_client_hello --lua-desync=tls_client_hello_clone:blob=clone --lua-desync=fake:blob=clone:${fl}:repeats=6${t}"
+    done
+  done
+  for r in 1 2 4; do
+    for tail in "multidisorder:pos=midsld" "multisplit:pos=1,midsld" "multidisorder:pos=$SHRED"; do
+      case "$tail" in *"$SHRED"*) ts=$(safe "${tail%%:*}")_shred ;; *) ts=$(safe "${tail%%:*}_${tail#*pos=}") ;; esac
+      emit "tls_echo_r${r}_${ts}" tls \
+        "--filter-tcp=0-65535 --payload=tls_client_hello --lua-desync=send:repeats=${r} --lua-desync=${tail}"
+    done
+  done
 fi
 
 # ---- TLS seqovl variants (с patterns) ----------------------------------
@@ -507,17 +592,16 @@ if [ "$TIER" -ge 5 ]; then
         "--filter-tcp=80 --payload=http_req --lua-desync=synhide:ghost=${ghost}:magic=x2"
     done
   fi
-  # tls_client_hello_clone (требует blob)
-  if [ "$want_tls" = 1 ] && [ -n "$TLS_BLOBS" ]; then
-    first_tls=$(printf '%s' "$TLS_BLOBS" | awk '{print $1}')
-    if [ -n "$first_tls" ]; then
-      ts=$(safe "$(basename "${first_tls%.bin}")")
-      for variant in "sni_snt" "sni_del" "sni_first" "sni_last"; do
-        vs=$(safe "$variant")
-        emit "tls_clone_${ts}_${vs}" tls \
-          "--blob=fclone:@${first_tls} --filter-tcp=0-65535 --payload=tls_client_hello --lua-desync=tls_client_hello_clone:blob=fclone:${variant}"
+  # Клон-фейк с правкой имён: фейк — настоящий ClientHello клиента без SNI
+  # или с чужим именем первым. Сам clone ничего не шлёт, шлёт fake из него.
+  if [ "$want_tls" = 1 ]; then
+    for variant in sni_del_ext sni_del sni_first=www.google.com; do
+      vs=$(safe "$variant")
+      for fl in tcp_md5 badsum; do
+        emit "tls_clonefake_${vs}_${fl}" tls \
+          "--filter-tcp=0-65535 --payload=tls_client_hello --lua-desync=tls_client_hello_clone:blob=clone:${variant} --lua-desync=fake:blob=clone:${fl}:repeats=6 --lua-desync=multidisorder:pos=1,midsld"
       done
-    fi
+    done
   fi
   # wsize-манипуляции
   if [ "$want_tls" = 1 ]; then

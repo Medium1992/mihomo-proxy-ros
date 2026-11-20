@@ -15,6 +15,7 @@
 # works whether invoked as `sh /www/blockcheck2/run …` or via a symlink.
 BC_SCRIPT_DIR="${BC_SCRIPT_DIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}"
 . "$BC_SCRIPT_DIR/lib.sh"
+. "$BC_SCRIPT_DIR/report.sh"
 
 JOB=""
 WORKERS=8
@@ -292,9 +293,10 @@ case ",$TESTS," in *,tls13,*) want_tls13=1 ;; esac
 case ",$TESTS," in *,quic,*)  want_quic=1  ;; esac
 
 # ---- Per-strategy probe function (runs in subshell of dispatcher) -------
-# Args: $1=worker_idx  $2=strategy_line  → writes events, never fails the caller.
+# Args: $1=worker_idx  $2=strategy_line  [$3=event type, default strategy;
+# повторная проверка лучших пишет retest] → writes events, never fails the caller.
 run_strategy() {
-  local k="$1" line="$2"
+  local k="$1" line="$2" ev_type="${3:-strategy}"
   local name proto args
   name="${line%%|*}";  line="${line#*|}"
   proto="${line%%|*}"; args="${line#*|}"
@@ -329,11 +331,22 @@ run_strategy() {
   # Brief settle (nfqws hooks into queue).
   sleep 0.05 2>/dev/null || sleep 1
 
-  local pass=0 fail=0 skip=0 detail="" host ip path mode tt want ok reps
-  # Стратегии с rnd-элементами (tls_mod=rnd и т.п.) тестируем N раз —
-  # рандомный ClientHello может проскочить DPI один раз случайно.
-  reps=1
-  case "$args" in *rnd*) reps="${BC_PROBE_RND_REPEATS:-2}" ;; esac
+  local pass=0 fail=0 flaky=0 skip=0 detail="" host ip path mode tt want ok reps rnd_reps
+  # Каждая проба повторяется BC_ATTEMPTS раз (bc_attempts): прошли все —
+  # ok, первая не прошла — fail, прошла не каждая — flaky (нестабильно).
+  # Стратегии с rnd-элементами (tls_mod=rnd и т.п.) — не меньше
+  # BC_PROBE_RND_REPEATS: рандомный ClientHello может проскочить случайно.
+  reps="${BC_ATTEMPTS:-1}"
+  case "$reps" in ''|*[!0-9]*) reps=1 ;; esac
+  [ "$reps" -lt 1 ] && reps=1
+  case "$args" in
+    *rnd*)
+      rnd_reps="${BC_PROBE_RND_REPEATS:-2}"
+      case "$rnd_reps" in ''|*[!0-9]*) rnd_reps=2 ;; esac
+      [ "$rnd_reps" -gt "$reps" ] && reps="$rnd_reps"
+      ;;
+  esac
+  [ "$ev_type" = retest ] && [ "$reps" -lt 3 ] && reps=3
   # Лейблы режима для detail. Подсказывают пользователю что именно
   # тестировалось: handshake-only / body-mode с порогом / throughput.
   hard_kb=$((BC_HARD_MIN_BYTES / 1024))
@@ -347,24 +360,31 @@ run_strategy() {
   while IFS=$(printf '\t') read -r host ip path mode; do
     [ -z "$host" ] && continue
     if [ "$mode" = "youtube_support" ]; then
-      bc_repeat_probe "$reps" bc_probe_tls "$k" "$host" "$ip" tls1_3 || bc_repeat_probe "$reps" bc_probe_tls "$k" "$host" "$ip" tls1_2
+      bc_attempts "$reps" bc_probe_tls "$k" "$host" "$ip" tls1_3
       ok=$?
+      if [ "$ok" = 1 ]; then
+        bc_attempts "$reps" bc_probe_tls "$k" "$host" "$ip" tls1_2
+        ok=$?
+      fi
       case "$ok" in
         0) pass=$((pass + 1)); detail="${detail:+$detail,}$host/youtube-hs=ok" ;;
+        2) flaky=$((flaky + 1)); detail="${detail:+$detail,}$host/youtube-hs=flaky" ;;
         *) fail=$((fail + 1)); detail="${detail:+$detail,}$host/youtube-hs=fail" ;;
       esac
       continue
     fi
     if [ "$mode" = "throughput" ] || [ "$mode" = "youtube_throughput" ]; then
       if [ "$mode" = "youtube_throughput" ]; then
-        BC_THROUGHPUT_BYTES="$youtube_bytes" bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
+        BC_THROUGHPUT_BYTES="$youtube_bytes" bc_attempts "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path"; ok=$?
         thr_tag="youtube-${youtube_quality}-${youtube_kb}k/${tp_sec}s"
       else
-        bc_repeat_probe "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path" && ok=1 || ok=0
+        bc_attempts "$reps" bc_probe_throughput "$k" "$host" "$ip" "$path"; ok=$?
         thr_tag="throughput-${tp_kb}k/${tp_sec}s"
       fi
-      if [ "$ok" = 1 ]; then
+      if [ "$ok" = 0 ]; then
         pass=$((pass + 1)); detail="${detail:+$detail,}$host/$thr_tag=ok"
+      elif [ "$ok" = 2 ]; then
+        flaky=$((flaky + 1)); detail="${detail:+$detail,}$host/$thr_tag=flaky"
       else
         fail=$((fail + 1))
         # 403 = стратегия достучалась до сервера (TLS прошёл), но подписанная
@@ -396,29 +416,30 @@ run_strategy() {
         tt_mode_tag="$mode_tag"
       fi
       case "$proto/$tt" in
-        http/http)         bc_repeat_probe "$reps" bc_probe_http "$k" "$host" "$ip"        && ok=1 || ok=0 ;;
-        tls/tls12)         bc_repeat_probe "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_2 && ok=1 || ok=0 ;;
-        tls/tls13)         bc_repeat_probe "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_3 && ok=1 || ok=0 ;;
-        tls12/tls12)       bc_repeat_probe "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_2 && ok=1 || ok=0 ;;
-        tls13/tls13)       bc_repeat_probe "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_3 && ok=1 || ok=0 ;;
-        combined/http)     bc_repeat_probe "$reps" bc_probe_http "$k" "$host" "$ip"        && ok=1 || ok=0 ;;
-        combined/tls12)    bc_repeat_probe "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_2 && ok=1 || ok=0 ;;
-        combined/tls13)    bc_repeat_probe "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_3 && ok=1 || ok=0 ;;
-        combined/quic)     bc_repeat_probe "$reps" bc_probe_quic "$k" "$host" "$ip"        && ok=1 || ok=0 ;;
-        quic/quic)         bc_repeat_probe "$reps" bc_probe_quic "$k" "$host" "$ip"        && ok=1 || ok=0 ;;
+        http/http)         bc_attempts "$reps" bc_probe_http "$k" "$host" "$ip"; ok=$? ;;
+        tls/tls12)         bc_attempts "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_2; ok=$? ;;
+        tls/tls13)         bc_attempts "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_3; ok=$? ;;
+        tls12/tls12)       bc_attempts "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_2; ok=$? ;;
+        tls13/tls13)       bc_attempts "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_3; ok=$? ;;
+        combined/http)     bc_attempts "$reps" bc_probe_http "$k" "$host" "$ip"; ok=$? ;;
+        combined/tls12)    bc_attempts "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_2; ok=$? ;;
+        combined/tls13)    bc_attempts "$reps" bc_probe_tls  "$k" "$host" "$ip" tls1_3; ok=$? ;;
+        combined/quic)     bc_attempts "$reps" bc_probe_quic "$k" "$host" "$ip"; ok=$? ;;
+        quic/quic)         bc_attempts "$reps" bc_probe_quic "$k" "$host" "$ip"; ok=$? ;;
         *)                 ok=skip ;;
       esac
       # detail items joined by ',' (no spaces) so we can pass it as a single quoted arg.
       case "$ok" in
-        1)    pass=$((pass + 1)); detail="${detail:+$detail,}$host/$tt-$tt_mode_tag=ok" ;;
-        0)    fail=$((fail + 1)); detail="${detail:+$detail,}$host/$tt-$tt_mode_tag=fail" ;;
+        0)    pass=$((pass + 1)); detail="${detail:+$detail,}$host/$tt-$tt_mode_tag=ok" ;;
+        2)    flaky=$((flaky + 1)); detail="${detail:+$detail,}$host/$tt-$tt_mode_tag=flaky" ;;
         skip) skip=$((skip + 1)) ;;
+        *)    fail=$((fail + 1)); detail="${detail:+$detail,}$host/$tt-$tt_mode_tag=fail" ;;
       esac
     done
   done < "$RESOLVED"
 
   bc_nfqws_stop "$pidf"
-  bc_event strategy "name=$name" "proto=$proto" "pass=$pass" "fail=$fail" "skip=$skip" "detail=$detail" "args=$args"
+  bc_event "$ev_type" "name=$name" "proto=$proto" "pass=$pass" "fail=$fail" "flaky=$flaky" "skip=$skip" "detail=$detail" "args=$args"
 }
 
 # ---- Dispatcher (simple polling) ---------------------------------------
@@ -480,69 +501,100 @@ wait 2>/dev/null
 bc_event progress "done=$DONE" "total=$TOTAL"
 
 # ---- Final report -------------------------------------------------------
-# Two-section text report:
-#   1) READY-TO-USE combined line at the very top — first working HTTP +
-#      first working TLS + QUIC fallback, glued by --new. This is what
-#      goes verbatim into ZAPRET2_CMD0 (or N).
-#   2) Full per-strategy table with name | proto | pass/fail/skip | detail
-#      AND the full nfqws args on a continuation line. Без args отчёт
-#      бесполезен — пользователь не может ни скопировать стратегию из
-#      файла, ни понять что именно сработало.
-#
-# We extract working strategies as TSV lines (name <tab> proto <tab> args)
-# via a sed/awk pass against the ndjson log, which is far more robust on
-# busybox than awk-FS-quotes-magic.
-WORK_TSV="$JOB_DIR/.working.tsv"
+# Итог (report.sh):
+#   1) ранжирование: сначала стратегии без единой неудачной/нестабильной
+#      пробы, затем больше прошедших, затем проще (cost) — READY-TO-USE берёт
+#      лучшую по каждому proto, а не первую закончившуюся;
+#   2) повторная проверка трёх лучших TLS сразу после прогона (nfqws2):
+#      адаптивный DPI пропускает первые соединения и режет повторные;
+#   3) класс DPI по диагностическому корпусу cls01..cls34;
+#   4) лестница circular из лучших TLS — сама переключается на следующую
+#      ступень, когда текущая перестаёт работать.
+RANKED="$JOB_DIR/.ranked.tsv"
 bc_event report_building 2>/dev/null || true
-# Один awk-проход вместо 7 sed-форков на строку — на 1296 стратегий было
-# ~9000 subprocess'ов, отчёт строился десятками секунд (статус застревал
-# на «тестирую N/N»).
-awk '
-  /"type":"strategy"/ {
-    name=""; proto=""; pass=""; fail=""; skip=""; detail=""; args=""
-    n = split($0, parts, "\"")
-    for (i=1; i<=n; i++) {
-      key = parts[i]
-      gsub(/^[^a-zA-Z0-9_]+|[^a-zA-Z0-9_]+$/, "", key)
-      if (key == "name")   name   = parts[i+2]
-      else if (key == "proto")  proto  = parts[i+2]
-      else if (key == "pass")   pass   = parts[i+2]
-      else if (key == "fail")   fail   = parts[i+2]
-      else if (key == "skip")   skip   = parts[i+2]
-      else if (key == "detail") detail = parts[i+2]
-      else if (key == "args")   args   = parts[i+2]
-    }
-    if (pass ~ /^[1-9][0-9]*$/) {
-      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", name, proto, pass, fail, skip, detail, args
-    }
-  }
-' "$LOG" > "$WORK_TSV" 2>/dev/null
+bc_ranked "$LOG" > "$RANKED" 2>/dev/null
 
-# Pick first working strategy per proto. QUIC берём из реально найденных
-# рабочих, fallback на дефолтный quic-стек если ни одна quic-стратегия
-# не прошла.
-FIRST_HTTP_ARGS=$(awk -F'\t' '$2=="http" {print $7; exit}'  "$WORK_TSV" 2>/dev/null)
-FIRST_TLS_ARGS=$(awk -F'\t'  '$2=="tls" || $2=="tls12" || $2=="tls13" {print $7; exit}' "$WORK_TSV" 2>/dev/null)
-FIRST_QUIC_ARGS=$(awk -F'\t' '$2=="quic" {print $7; exit}' "$WORK_TSV" 2>/dev/null)
-# Дефолт зависит от движка. BC2 (nfqws2) — lua-синтаксис, BC1 (nfqws v1) —
-# `--dpi-desync=...`. Передаётся через env BC_QUIC_DEFAULT из CGI.
 QUIC_DEFAULT="${BC_QUIC_DEFAULT:---filter-udp=0-65535 --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=20}"
-[ -z "$FIRST_QUIC_ARGS" ] && FIRST_QUIC_ARGS="$QUIC_DEFAULT"
 
-build_combined() {
-  out=""
-  [ -n "$FIRST_HTTP_ARGS" ] && out="$FIRST_HTTP_ARGS"
-  if [ -n "$FIRST_TLS_ARGS" ]; then
-    [ -n "$out" ] && out="$out --new "
-    out="${out}${FIRST_TLS_ARGS}"
+IS_NFQWS2=0
+case "${BC_NFQWS##*/}" in nfqws2) IS_NFQWS2=1 ;; esac
+
+# Повторная проверка. Только full TLS-стратегии: у остальных и так видно,
+# что они не держатся. По одной, на воркере 0, не меньше трёх попыток.
+RETEST_VERDICT=""
+if [ "$IS_NFQWS2" = 1 ] && [ "${BC_RETEST:-1}" = 1 ] && { [ "$want_tls12" = 1 ] || [ "$want_tls13" = 1 ]; }; then
+  CHAMPS="$JOB_DIR/.champs.tsv"
+  awk -F'\t' '$1 == 1 && $5 == "tls" && n < 3 { n++; print $4 "|" $5 "|" $10 }' "$RANKED" > "$CHAMPS"
+  if [ -s "$CHAMPS" ]; then
+    n_ch=$(wc -l < "$CHAMPS" | tr -d ' ')
+    bc_event retest_start "count=$n_ch"
+    while IFS= read -r ch; do
+      run_strategy 0 "$ch" retest
+    done < "$CHAMPS"
+    RETESTED="$JOB_DIR/.retested.tsv"
+    bc_ranked "$LOG" retest > "$RETESTED" 2>/dev/null
+    survived=$(awk -F'\t' '$1 == 1 { printf "%s%s", (n++ ? " " : ""), $4 }' "$RETESTED")
+    died=""
+    while IFS='|' read -r ch_name _ch_rest; do
+      case " $survived " in *" $ch_name "*) ;; *) died="${died:+$died }$ch_name" ;; esac
+    done < "$CHAMPS"
+    if [ -z "$died" ]; then
+      RETEST_VERDICT="stable"
+    elif [ -z "$survived" ]; then
+      RETEST_VERDICT="adaptive"
+    else
+      RETEST_VERDICT="partial"
+    fi
+    bc_event retest_verdict "verdict=$RETEST_VERDICT" "survived=$survived" "died=$died"
+    # Умершие при повторе уходят в конец ранга: повтор надёжнее одного прогона.
+    if [ -n "$died" ]; then
+      awk -F'\t' -v died=" $died " 'BEGIN { OFS = "\t" } index(died, " " $4 " ") { $1 = 0 } { print }' "$RANKED" \
+        | sort -t "$(printf '\t')" -k1,1nr -k2,2nr -k3,3n -k4,4 > "$RANKED.tmp" && mv "$RANKED.tmp" "$RANKED"
+    fi
+    rm -f "$CHAMPS" "$RETESTED"
   fi
-  if [ -n "$FIRST_QUIC_ARGS" ]; then
-    [ -n "$out" ] && out="$out --new "
-    out="${out}${FIRST_QUIC_ARGS}"
-  fi
+fi
+
+BEST_HTTP_ARGS=$(bc_best "$RANKED" http)
+BEST_TLS_ARGS=$(bc_best "$RANKED" tls tls12 tls13)
+BEST_QUIC_ARGS=$(bc_best "$RANKED" quic)
+[ -n "$BEST_HTTP_ARGS" ] && bc_event best "proto=http" "name=$(awk -F'\t' '$5=="http"{print $4; exit}' "$RANKED")" "args=$BEST_HTTP_ARGS"
+[ -n "$BEST_TLS_ARGS" ] && bc_event best "proto=tls" "name=$(awk -F'\t' '$5=="tls"||$5=="tls12"||$5=="tls13"{print $4; exit}' "$RANKED")" "args=$BEST_TLS_ARGS"
+[ -n "$BEST_QUIC_ARGS" ] && bc_event best "proto=quic" "name=$(awk -F'\t' '$5=="quic"{print $4; exit}' "$RANKED")" "args=$BEST_QUIC_ARGS"
+QUIC_PART="$BEST_QUIC_ARGS"
+[ -z "$QUIC_PART" ] && QUIC_PART="$QUIC_DEFAULT"
+
+# join_new A B C → непустые через --new.
+join_new() {
+  local out="" p
+  for p in "$@"; do
+    [ -n "$p" ] || continue
+    out="${out:+$out --new }$p"
+  done
   printf '%s' "$out"
 }
-COMBINED=$(build_combined)
+COMBINED=""
+[ -n "$BEST_HTTP_ARGS$BEST_TLS_ARGS" ] && COMBINED=$(join_new "$BEST_HTTP_ARGS" "$BEST_TLS_ARGS" "$QUIC_PART")
+[ -n "$COMBINED" ] && bc_event ready "args=$COMBINED"
+
+CLASS_TSV="$JOB_DIR/.class.tsv"
+: > "$CLASS_TSV"
+LADDER=""
+LADDER_COMBINED=""
+if [ "$IS_NFQWS2" = 1 ]; then
+  bc_class "$LOG" > "$CLASS_TSV" 2>/dev/null
+  while IFS="$(printf '\t')" read -r c_ver c_class c_text c_rec c_name c_args c_st; do
+    [ "$c_name" = - ] && c_name=""
+    [ "$c_args" = - ] && c_args=""
+    [ "$c_st" = - ] && c_st=""
+    bc_event class "ver=$c_ver" "class=$c_class" "verdict=$c_text" "rec=$c_rec" "name=$c_name" "args=$c_args" "stable=$c_st"
+  done < "$CLASS_TSV"
+  LADDER=$(bc_ladder "$RANKED")
+  if [ -n "$LADDER" ]; then
+    LADDER_COMBINED=$(join_new "$BEST_HTTP_ARGS" "$LADDER" "$QUIC_PART")
+    bc_event ladder "steps=$(printf '%s' "$LADDER" | grep -o ':strategy=[0-9]*' | sort -u | wc -l | tr -d ' ')" "args=$LADDER" "combined=$LADDER_COMBINED"
+  fi
+fi
 
 # Post-run link-health check: если ВСЕ throughput/youtube-пробы вернули 403
 # и ни одной =ok — подписанная видео-ссылка почти наверняка протухла (в т.ч.
@@ -559,27 +611,25 @@ if [ "$link_403" -gt 0 ] && [ "$link_thr_ok" = 0 ]; then
     "msg=Все проверки видеопотока вернули 403 — ссылка устарела (~6ч). Замените googlevideo-ссылку и запустите заново; результаты по видео недостоверны."
 fi
 
-# Все рабочие комбинации http × tls × quic (как в UI «Сборные стратегии
-# из рабочих»). Ограничиваем разумно: top-3 от каждого proto → max 27.
+# Комбинации http × tls × quic из трёх лучших по рангу каждого proto.
 COMBINED_LIST=$(
-  awk -F'\t' '
-    $2=="http" && http_count<3 { http[++http_count] = $7 }
-    ($2=="tls" || $2=="tls12" || $2=="tls13") && tls_count<3 { tls[++tls_count] = $7 }
-    $2=="quic" && quic_count<3 { quic[++quic_count] = $7 }
+  awk -F'\t' -v qdef="$QUIC_DEFAULT" '
+    $5=="http" && hc<3 { h[++hc] = $10 }
+    ($5=="tls" || $5=="tls12" || $5=="tls13") && tc<3 { t[++tc] = $10 }
+    $5=="quic" && qc<3 { q[++qc] = $10 }
     END {
-      if (quic_count==0) { quic[1] = "'"$QUIC_DEFAULT"'"; quic_count=1 }
-      if (http_count==0 && tls_count==0) exit
-      h_lim = http_count>0 ? http_count : 1
-      t_lim = tls_count>0  ? tls_count  : 1
-      for (i=1; i<=h_lim; i++) for (j=1; j<=t_lim; j++) for (k=1; k<=quic_count; k++) {
+      if (qc==0) { q[1] = qdef; qc=1 }
+      if (hc==0 && tc==0) exit
+      hl = hc>0 ? hc : 1; tl = tc>0 ? tc : 1
+      for (i=1; i<=hl; i++) for (j=1; j<=tl; j++) for (k=1; k<=qc; k++) {
         line = ""
-        if (http_count>0) line = http[i]
-        if (tls_count>0)  line = (line ? line " --new " : "") tls[j]
-        if (quic_count>0) line = (line ? line " --new " : "") quic[k]
-        if (line != "") print line
+        if (hc>0) line = h[i]
+        if (tc>0) line = (line ? line " --new " : "") t[j]
+        line = (line ? line " --new " : "") q[k]
+        print line
       }
     }
-  ' "$WORK_TSV" 2>/dev/null
+  ' "$RANKED" 2>/dev/null
 )
 
 {
@@ -593,10 +643,26 @@ COMBINED_LIST=$(
     echo
   fi
   echo "blockcheck2 job: $JOB"
-  echo "workers: $WORKERS  tests: $TESTS"
+  echo "workers: $WORKERS  tests: $TESTS  attempts: ${BC_ATTEMPTS:-1}"
   echo "domains:"
   awk -F'\t' '{ printf "  %s -> %s\n", $1, $2 }' "$RESOLVED"
   echo
+  if [ -s "$CLASS_TSV" ]; then
+    echo "================================================================"
+    echo "Класс DPI (диагностический корпус cls01..cls34):"
+    echo "================================================================"
+    awk -F'\t' '{
+      printf "%s: %s — %s\n", ($1 == "tls12" ? "TLS 1.2" : "TLS 1.3"), $2, $3
+      printf "  стабильно прошли строки: %s\n", ($7 == "-" ? "нет" : $7)
+      if ($4 > 0) printf "  минимальная рабочая: %s\n  %s\n", $5, $6
+    }' "$CLASS_TSV"
+    echo
+  fi
+  case "$RETEST_VERDICT" in
+    stable)   echo "Повторная проверка: лучшие TLS-стратегии пережили повтор — признаков адаптивного DPI нет."; echo ;;
+    partial)  echo "Повторная проверка: часть лучших TLS-стратегий не пережила повтор — DPI, похоже, адаптивный; они опущены в конец списка."; echo ;;
+    adaptive) echo "Повторная проверка: ни одна из лучших TLS-стратегий не пережила повтор — DPI адаптивный. Берите лестницу ниже или туннель."; echo ;;
+  esac
   echo "================================================================"
   echo "READY-TO-USE  (paste into ZAPRET2_CMD0):"
   echo "================================================================"
@@ -606,6 +672,13 @@ COMBINED_LIST=$(
     echo "(no working strategies found — DPI блокирует все варианты, либо стоит увеличить уровень / включить fakebin)"
   fi
   echo
+  if [ -n "$LADDER_COMBINED" ]; then
+    echo "================================================================"
+    echo "Лестница (circular): TLS сам переходит на следующую рабочую стратегию,"
+    echo "когда текущая перестаёт работать:"
+    echo "================================================================"
+    printf '%s\n\n' "$LADDER_COMBINED"
+  fi
   if [ -n "$COMBINED_LIST" ]; then
     echo "================================================================"
     echo "Combined strategies (top-3 per proto, max 27 combinations):"
@@ -614,20 +687,20 @@ COMBINED_LIST=$(
     echo
   fi
   echo "================================================================"
-  echo "Working strategies (with full nfqws args):"
+  echo "Working strategies, лучшие сверху (with full nfqws args):"
   echo "================================================================"
-  if [ -s "$WORK_TSV" ]; then
+  if [ -s "$RANKED" ]; then
     awk -F'\t' '{
-      printf "[%s] %s  pass=%s fail=%s skip=%s\n  detail: %s\n  args:   %s\n\n",
-        $2, $1, $3, $4, $5, $6, $7
-    }' "$WORK_TSV"
+      printf "[%s] %s  pass=%s fail=%s flaky=%s skip=%s%s\n  detail: %s\n  args:   %s\n\n",
+        $5, $4, $2, $6, $7, $8, ($1 == 1 ? "" : "  (не все пробы)"), $9, $10
+    }' "$RANKED"
   else
     echo "(пусто)"
   fi
   echo "================================================================"
   echo "Full event log: $LOG"
 } > "$RESULT"
-rm -f "$WORK_TSV"
+rm -f "$RANKED" "$CLASS_TSV"
 
 BC_FINAL_STATUS=done
 printf 'done\n' > "$STATUS"

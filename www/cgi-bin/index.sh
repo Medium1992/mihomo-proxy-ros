@@ -1829,23 +1829,28 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
     </label>
     <label class="field"><span><b>Уровень</b><em>сколько стратегий перебрать</em></span>
       <select id="bcLevel">
-        <option value="quick">quick (~20)</option>
-        <option value="basic" selected>basic (~410, рекомендуется)</option>
-        <option value="medium">medium (~1390)</option>
-        <option value="extended">extended (~2900)</option>
-        <option value="full">full (~6200)</option>
+        <option value="quick">quick (~60)</option>
+        <option value="basic" selected>basic (~470, рекомендуется)</option>
+        <option value="medium">medium (~1670)</option>
+        <option value="extended">extended (~3660)</option>
+        <option value="full">full (~7640)</option>
       </select>
+    </label>
+    <label class="field" title="Каждая проба повторяется N раз. Прошли все — ok; первая не прошла — fail (без повторов, время на провальные не растёт); прошли не все — «нестаб.»: такая стратегия не считается рабочей. 2 — рекомендовано, 3 — для капризного DPI."><span><b>Попыток на пробу</b><em>1-5. Рабочая — только если прошли все N; иначе «нестаб.»</em></span>
+      <input id="bcAttempts" type="number" min="1" max="5" value="2">
     </label>
   </div>
   <details class="bc-tier-info">
     <summary>Что добавляется в каждом уровне</summary>
     <div class="bc-tier-info-body">
-      <p><b>Во всех уровнях сначала идут seed-цепочки</b> — короткие Lua-сценарии по логике штатного BlockCheck2: соблюдается порядок <code>wssize → syndata</code> и <code>send → drop</code>. Затем запускается обычная матрица выбранного уровня.</p>
+      <p><b>Во всех уровнях первым идёт диагностический корпус</b> <code>cls01…cls34</code> (из <a class="doc-link" href="https://github.com/saitkul/tspu-class-test" target="_blank" rel="noopener">tspu-class-test</a>): каждая строка проверяет одну механику — нарезку без фейков, голый фейк, фейк с нарезкой, двухпакетный hello, разрезы по всем границам SNI, badsum-шум внутри нарезки, <code>payload=all</code>, клон-фейк, эхо. По тому, какие прошли, итог показывает <b>класс DPI</b> и минимальную рабочую строку.</p>
+      <p><b>Затем seed-цепочки</b> — короткие Lua-сценарии по логике штатного BlockCheck2: соблюдается порядок <code>wssize → syndata</code> и <code>send → drop</code>. Затем запускается обычная матрица выбранного уровня.</p>
       <p><b>quick</b> — sanity-check инфраструктуры. 2 сплиттера (<code>multidisorder</code>, <code>multisplit</code>), 2 fooling (<code>badsum</code>, <code>tcp_ts=-1000</code>), <code>tls_mod=rnd,dupsid</code>, без pre-fake.</p>
       <p><b>basic</b> (+к quick) — типичный рабочий набор. Сплиттеры <code>fakedsplit</code>, <code>fakeddisorder</code>; <b>pre-fake on</b> (fake-цепочка перед split); <b>lua-цепочки</b> <code>syndata/oob → multisplit/multidisorder</code>; foolings <code>tcp_ack=-66000:tcp_ts_up</code>, <code>tcp_md5</code>; tls_mod <code>rnd</code>; seqovl <code>1, -1, 681</code>; позиции <code>1,midsld,1220</code>, <code>host+1</code>, <code>sld+1</code>.</p>
       <p><b>medium</b> (+к basic) — расширение. Сплиттер <code>hostfakesplit</code>; <b>TLS цепочки</b> <code>tcpseg → drop</code> и <code>fake → syndata → multisplit</code>; QUIC <code>send:ipfrag → drop</code> и <code>fake → ipfrag → drop</code>; foolings <code>tcp_seq=-3000</code>, <code>tcp_nop_del</code>; tls_mod <code>dupsid</code>; seqovl <code>652, 726</code>; позиции <code>1,sniext+1</code>, <code>sniext+1,midsld</code>, <code>1,sld+1,endsld-2</code>.</p>
       <p><b>extended</b> (+к medium) — глубокий поиск. Сплиттер <code>tcpseg</code>; foolings <code>ip_id=rnd</code>, <code>ip_id=zero</code>, композит <code>badsum:tcp_md5</code>; tls_mod <code>rndsni</code>; seqovl <code>-2, 1200</code>; супер-цепочка позиций TLS; HTTP <code>endhost-1</code>; больше длинных lua-комбинаций.</p>
-      <p><b>full</b> (+к extended) — всё, включая редкие. Сплиттер <code>multidisorder_legacy</code>; foolings <code>tcp_seq=-1000</code>, <code>ip_id=seq</code>, композит <code>tcp_ts=-1000:badsum</code>; seqovl <code>1500</code>; ещё позиции TLS/HTTP; <b>специальные lua-функции</b>: <code>synhide</code> (скрытие SYN), <code>wsize</code>/<code>wssize</code> (window-манипуляция), <code>tls_client_hello_clone</code>, <code>synack_split</code>, QUIC <code>udplen</code>.</p>
+      <p><b>full</b> (+к extended) — всё, включая редкие. Сплиттер <code>multidisorder_legacy</code>; foolings <code>tcp_seq=-1000</code>, <code>ip_id=seq</code>, композит <code>tcp_ts=-1000:badsum</code>; seqovl <code>1500</code>; ещё позиции TLS/HTTP; <b>специальные lua-функции</b>: <code>synhide</code> (скрытие SYN), <code>wsize</code>/<code>wssize</code> (window-манипуляция), клон-фейк без SNI или с чужим именем, <code>synack_split</code>, QUIC <code>udplen</code>.</p>
+      <p><b>Клон-фейк и эхо</b> (с basic): фейк — копия настоящего ClientHello соединения (<code>tls_client_hello_clone</code>), по содержимому его не отличить; эхо — неизменённые копии hello перед нарезкой. С medium к обманкам добавлен <code>ip_autottl</code>.</p>
     </div>
   </details>
   <div class="socks-toggles bc-tests" aria-label="Типы тестов">
@@ -1909,10 +1914,14 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
     <span class="bc-count-skip" id="bcCountSkip">0 пропущено</span>
     <label class="socks-toggle bc-filter-toggle" title="Скрыть строки которые не пробили DPI"><input type="checkbox" id="bcFilterOk" checked><span>только рабочие</span></label>
   </div>
+  <details class="bc-combined bc-summary" id="bcSummaryBox" open hidden>
+    <summary><b>Итог подбора</b> <span id="bcSummaryHead"></span></summary>
+    <div class="bc-combined-body" id="bcSummaryBody"></div>
+  </details>
   <details class="bc-combined" id="bcCombinedBox" hidden>
     <summary><b>Сборные стратегии из рабочих</b> <span id="bcCombinedSummary"></span><button type="button" class="bc-copy-all" title="Скопировать все сборные стратегии (по одной на строку)" onclick="event.preventDefault(); event.stopPropagation(); bcCopyAllCombined(event)">⧉</button></summary>
     <div class="bc-combined-body">
-      <p class="bc-combined-hint">Кросс-произведение всех рабочих <code>http</code> × <code>tls</code> × <code>quic</code> стратегий, склеенных через <code>--new</code>. Каждый вариант можно скопировать или применить в <code>ZAPRET2_CMD</code>.</p>
+      <p class="bc-combined-hint">По одной строке на каждую рабочую TLS-стратегию, лучшие сверху (сначала без единой неудачной или нестабильной пробы, затем больше прошедших, затем проще); к ней — HTTP и QUIC, склеенные через <code>--new</code>. Каждый вариант можно скопировать или применить в <code>ZAPRET2_CMD</code>.</p>
       <div id="bcCombinedList" class="bc-combined-list"></div>
     </div>
   </details>
@@ -1925,6 +1934,7 @@ https://rutracker.org/forum/index.php # проверка 16-20 КБ
           <th title="Тип теста: http (порт 80), tls12 / tls13 (TLS 1.2 / 1.3)">Proto</th>
           <th title="Сколько комбинаций (домен × тип) пробились наружу">Pass</th>
           <th title="Сколько не пробились (timeout, RST, или сервер просто ничего не вернул)">Fail</th>
+          <th title="Сколько проб прошли не во всех попытках (поле «Попыток на пробу»). Нестабильная проба не засчитывается в Pass">Нестаб.</th>
           <th title="Сколько пар не тестировались, потому что proto стратегии не совпадает с типом теста">Skip ⓘ</th>
           <th>Детали</th>
           <th></th>

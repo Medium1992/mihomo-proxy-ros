@@ -7534,9 +7534,14 @@ const BC = {
   pollInFlight: false,
   offset: 0,
   results: [],
-  counts: { ok: 0, fail: 0, skip: 0 },
+  counts: { ok: 0, fail: 0, skip: 0, flaky: 0 },
   seenStrategies: new Set(),  // защита от двойного учёта event'а на UI
+  summary: null,              // итог подбора: класс, лучшие, повтор, лестница
 };
+function bcSummaryReset() {
+  BC.summary = { cls: {}, ready: "", ladder: null, retest: [], verdict: null, died: new Set(), retesting: 0 };
+}
+bcSummaryReset();
 const BC_JOB_KEY = "mihomo-bc-job";
 
 function initBlockcheck() {
@@ -7564,7 +7569,7 @@ function initBlockcheck() {
   // Используется и в draftCollect (см. DRAFT_KEYS_RE), чтобы значения уезжали
   // на сервер вместе с остальным черновиком и переживали F5 / переоткрытие.
   const bcPersistFields = [
-    "bcWorkers", "bcLevel", "bcHardMinKb", "bcRndRepeats", "bcYoutubeQuality",
+    "bcWorkers", "bcLevel", "bcAttempts", "bcHardMinKb", "bcRndRepeats", "bcYoutubeQuality",
     "bcTestHttp", "bcTestTls12", "bcTestTls13", "bcTestQuic",
     "bcUseFakebin",
     "bcCustomArgs",
@@ -7641,7 +7646,8 @@ function bcAppendLog(text) {
 function bcUpdateCounts() {
   document.getElementById("bcCounts").hidden = false;
   document.getElementById("bcCountOk").textContent   = BC.counts.ok   + " рабочих";
-  document.getElementById("bcCountFail").textContent = BC.counts.fail + " не сработали";
+  document.getElementById("bcCountFail").textContent = BC.counts.fail + " не сработали" +
+    (BC.counts.flaky ? " (" + BC.counts.flaky + " нестабильно)" : "");
   document.getElementById("bcCountSkip").textContent = BC.counts.skip + " пропущено";
 }
 
@@ -7721,9 +7727,9 @@ function bcHandleEvent(ev) {
       BC.seenStrategies.add(sig);
       const pass = parseInt(ev.pass, 10) || 0;
       const fail = parseInt(ev.fail, 10) || 0;
-      const skip = parseInt(ev.skip, 10) || 0;
+      const flaky = parseInt(ev.flaky, 10) || 0;
       if (pass > 0) BC.counts.ok++;
-      else if (fail > 0) BC.counts.fail++;
+      else if (fail > 0 || flaky > 0) { BC.counts.fail++; if (flaky > 0) BC.counts.flaky++; }
       else BC.counts.skip++;
       BC.results.push(ev);
       bcRenderResultsRow(ev);
@@ -7756,6 +7762,39 @@ function bcHandleEvent(ev) {
       bcUpdateCounts();
       break;
     }
+    case "retest_start": {
+      BC.summary.retesting = parseInt(ev.count, 10) || 0;
+      bcSetStatus("повторная проверка лучших (" + BC.summary.retesting + ")…", true);
+      bcSummaryRender();
+      break;
+    }
+    case "retest": {
+      BC.summary.retest.push(ev);
+      bcSummaryRender();
+      break;
+    }
+    case "retest_verdict": {
+      BC.summary.verdict = ev;
+      BC.summary.died = new Set((ev.died || "").split(" ").filter(Boolean));
+      bcSummaryRender();
+      try { bcCombinedRefresh(); } catch (e) {}
+      break;
+    }
+    case "class": {
+      BC.summary.cls[ev.ver || "?"] = ev;
+      bcSummaryRender();
+      break;
+    }
+    case "ready": {
+      BC.summary.ready = ev.args || "";
+      bcSummaryRender();
+      break;
+    }
+    case "ladder": {
+      BC.summary.ladder = ev;
+      bcSummaryRender();
+      break;
+    }
     case "warn":
     case "error":
       bcAppendLog("[" + ev.type + "] " + (ev.msg || "") + "\n");
@@ -7772,6 +7811,110 @@ function bcHandleEvent(ev) {
       try { bcCombinedRefresh(); } catch (e) {}
       break;
     }
+  }
+}
+
+// Ранг стратегии — как bc_ranked в blockcheck2/report.sh: сначала без единой
+// неудачной и нестабильной пробы (и не умершие при повторной проверке),
+// затем больше прошедших проб, затем дешевле (bcCost).
+function bcCost(args) {
+  let c = 0;
+  for (const t of String(args || "").split(/\s+/)) {
+    if (t.startsWith("--lua-desync=")) {
+      c += 10;
+      for (const v of t.split(":")) {
+        if (/^repeats=\d+$/.test(v)) c += parseInt(v.slice(8), 10);
+        else if (v.startsWith("seqovl=")) c += 2;
+        else if (v.startsWith("pos=")) c += (v.match(/,/g) || []).length;
+      }
+      if (/fake|blob=/.test(t)) c += 3;
+    } else if (t === "--payload=all") c += 8;
+    else if (t.startsWith("--blob=")) c += 2;
+  }
+  return c;
+}
+function bcRank(ev) {
+  const pass = parseInt(ev.pass, 10) || 0;
+  const full = pass > 0 && !(parseInt(ev.fail, 10) || 0) && !(parseInt(ev.flaky, 10) || 0) &&
+    !(BC.summary && BC.summary.died.has(ev.name)) ? 1 : 0;
+  return full * 1e7 + pass * 1e4 + (9999 - Math.min(bcCost(ev.args), 9999));
+}
+function bcRankSort(arr) {
+  return arr.slice().sort((a, b) => bcRank(b) - bcRank(a) || String(a.name).localeCompare(String(b.name)));
+}
+function bcVerLabel(v) {
+  return v === "tls12" ? "TLS 1.2" : v === "tls13" ? "TLS 1.3" : (v || "?");
+}
+function bcRetestText(v) {
+  if (v === "stable") return "лучшие TLS-стратегии пережили повтор — признаков адаптивного DPI нет";
+  if (v === "partial") return "часть лучших не пережила повтор — DPI, похоже, адаптивный; они опущены вниз";
+  if (v === "adaptive") return "ни одна из лучших не пережила повтор — DPI адаптивный: берите лестницу или туннель";
+  return v || "";
+}
+const BC_CLASS_HINT = {
+  "L0-": "Хватит простой нарезки — начните с минимальной строки.",
+  "L0": "Нужен обратный порядок (multidisorder) — прямой разрез DPI собирает.",
+  "anomaly": "Опирайтесь на прямой разрез: multisplit или seqovl.",
+  "L2": "Нарезка работает только вместе с фейком — берите строки с fake/fakeddisorder.",
+  "fake": "DPI верит фейку, но режет нарезку — берите голый фейк.",
+  "new": "Сработали только клон-фейк или эхо — корпусный класс для них не определён.",
+  "sld": "Работает только разрез на границе SLD (pos=sld).",
+  "none": "Корпус не пробил DPI — смотрите остальные строки, поднимите уровень или включите ×fakebin.",
+};
+function bcArgsBlock(args, name) {
+  const a = escapeAttr(args || "");
+  return `<textarea class="bc-combined-args" readonly rows="2">${a}</textarea>` +
+    `<div class="bc-combined-row-actions">` +
+      `<button type="button" class="primary" title="Добавить новую строку ZAPRET2_CMD с этими аргументами (затем сохранить и применить команды MikroTik)" data-args="${a}" data-name="${escapeAttr(name || "strategy")}" onclick="bcApplyStrategy(this)">→ ZAPRET2_CMD</button>` +
+      `<button type="button" data-args="${a}" onclick="bcCombinedCopyOne(this)">⧉</button>` +
+    `</div>`;
+}
+// «Итог подбора»: класс DPI, повторная проверка, готовая строка, лестница.
+function bcSummaryRender() {
+  const box = document.getElementById("bcSummaryBox");
+  const body = document.getElementById("bcSummaryBody");
+  if (!box || !body || !BC.summary) return;
+  const S = BC.summary;
+  const parts = [];
+  const vers = Object.keys(S.cls).sort();
+  if (vers.length) {
+    let h = `<div class="bc-combined-row"><div class="bc-combined-tag">Класс DPI — по диагностическому корпусу cls01…cls34</div>`;
+    for (const v of vers) {
+      const c = S.cls[v];
+      h += `<div class="bc-summary-line"><b>${bcVerLabel(v)}: ${escapeAttr(c["class"] || "?")}</b> — ${escapeAttr(c.verdict || "")}. ` +
+        `${escapeAttr(BC_CLASS_HINT[c["class"]] || "")}<br><small>стабильно прошли строки: ${escapeAttr(c.stable || "нет")}</small></div>`;
+    }
+    const recs = [...new Set(vers.map(v => S.cls[v].args).filter(Boolean))];
+    if (recs.length) {
+      h += `<div class="bc-combined-tag">Минимальная рабочая строка корпуса${recs.length > 1 ? " (у TLS 1.2 и 1.3 разные)" : ""}</div>`;
+      for (const a of recs) h += bcArgsBlock(a, "class-min");
+    }
+    parts.push(h + `</div>`);
+  }
+  if (S.retesting || S.verdict) {
+    let h = `<div class="bc-combined-row"><div class="bc-combined-tag">Повторная проверка лучших TLS-стратегий сразу после прогона</div>`;
+    for (const r of S.retest) {
+      const ok = (parseInt(r.pass, 10) || 0) > 0 && !(parseInt(r.fail, 10) || 0) && !(parseInt(r.flaky, 10) || 0);
+      h += `<div class="bc-summary-line">${ok ? "✓" : "✗"} <code>${escapeAttr(r.name || "")}</code> <small>${escapeAttr(r.detail || "")}</small></div>`;
+    }
+    h += `<div class="bc-summary-line">${S.verdict ? "<b>" + escapeAttr(bcRetestText(S.verdict.verdict)) + "</b>" : "идёт…"}</div>`;
+    parts.push(h + `</div>`);
+  }
+  if (S.ready) {
+    parts.push(`<div class="bc-combined-row"><div class="bc-combined-tag">Готовая строка: лучшая HTTP + лучшая TLS + QUIC</div>${bcArgsBlock(S.ready, "best")}</div>`);
+  }
+  if (S.ladder && S.ladder.combined) {
+    parts.push(`<div class="bc-combined-row"><div class="bc-combined-tag">Лестница: ${escapeAttr(S.ladder.steps || "?")} ступеней TLS через circular — ` +
+      `когда текущая стратегия перестаёт работать (RST, повторы), сама переходит к следующей. Для адаптивного или нестабильного DPI.</div>` +
+      bcArgsBlock(S.ladder.combined, "ladder") + `</div>`);
+  }
+  if (!parts.length) { box.hidden = true; return; }
+  body.innerHTML = parts.join("");
+  box.hidden = false;
+  const head = document.getElementById("bcSummaryHead");
+  if (head) {
+    const c = vers.map(v => bcVerLabel(v) + " " + (S.cls[v]["class"] || "?")).join(", ");
+    head.textContent = c ? "— класс " + c : "";
   }
 }
 
@@ -7815,7 +7958,7 @@ function bcCombinedRefresh() {
   const box  = document.getElementById("bcCombinedBox");
   const list = document.getElementById("bcCombinedList");
   if (!box || !list) return;
-  const wins = BC.results.filter(r => (parseInt(r.pass, 10) || 0) > 0);
+  const wins = BC.results.filter(r => (parseInt(r.pass, 10) || 0) > 0 && !String(r.name || "").startsWith("custom_"));
   const https = wins.filter(r => r.proto === "http");
   const tlss  = wins.filter(r => r.proto === "tls" || r.proto === "tls12" || r.proto === "tls13");
   // De-dupe by args (in case the same args got reported twice).
@@ -7828,9 +7971,9 @@ function bcCombinedRefresh() {
   const T = dedup(tlss);
   const realQ = dedup(wins.filter(r => r.proto === "quic"));
   if (!H.length && !T.length) { box.hidden = true; return; }
-  const HH = bcSpreadOptions(H, "bc-http");
-  const TT = bcSpreadOptions(T, "bc-tls");
-  const QQ = bcSpreadOptions(realQ, "bc-quic");
+  const HH = bcRankSort(H);
+  const TT = bcRankSort(T);
+  const QQ = bcRankSort(realQ);
   const base = TT.length ? TT : (HH.length ? HH : QQ);
   const variants = [];
   for (let i = 0; i < base.length; i++) {
@@ -7898,8 +8041,9 @@ function bcRenderResultsRow(ev) {
   const tbody = table.querySelector("tbody");
   const tr = document.createElement("tr");
   const pass = parseInt(ev.pass, 10) || 0;
+  const flaky = parseInt(ev.flaky, 10) || 0;
   if (pass > 0) tr.classList.add("bc-row-ok");
-  else if ((parseInt(ev.fail, 10) || 0) > 0) tr.classList.add("bc-row-fail");
+  else if ((parseInt(ev.fail, 10) || 0) > 0 || flaky > 0) tr.classList.add("bc-row-fail");
   const args = ev.args || "";
   // Every row gets a copy button so users can grab strategies that didn't
   // pass too (sometimes they want to compare or tweak). Apply button only
@@ -7913,16 +8057,19 @@ function bcRenderResultsRow(ev) {
     `<td>${escapeAttr(ev.proto || "")}</td>` +
     `<td>${pass}</td>` +
     `<td>${ev.fail || 0}</td>` +
+    `<td>${flaky}</td>` +
     `<td>${ev.skip || 0}</td>` +
     `<td><small>${escapeAttr(ev.detail || "")}</small></td>` +
     `<td class="bc-row-actions">${copyBtn}${applyBtn}</td>`;
+  const rank = bcRank(ev);
   tr.dataset.pass = String(pass);
-  // Insert in sorted position (PASS DESC). Linear walk; fine even at 1000+ rows.
+  tr.dataset.rank = String(rank);
+  // Insert in sorted position (rank DESC, см. bcRank). Linear walk; fine even at 1000+ rows.
   const tbody2 = tbody;
   let inserted = false;
   for (const existing of tbody2.children) {
-    const ep = parseInt(existing.dataset.pass || "0", 10);
-    if (pass > ep) {
+    const ep = parseFloat(existing.dataset.rank || "0");
+    if (rank > ep) {
       tbody2.insertBefore(tr, existing);
       inserted = true;
       break;
@@ -8060,6 +8207,7 @@ function bcFormValues() {
     // here applies to all such domains in this run.
     hard_min_kb: parseInt(document.getElementById("bcHardMinKb").value, 10) || 16,
     rnd_repeats: parseInt(document.getElementById("bcRndRepeats").value, 10) || 2,
+    attempts:    parseInt((document.getElementById("bcAttempts") || {}).value, 10) || 2,
     youtube_quality: document.getElementById("bcYoutubeQuality").value,
     tests:       tests,
   };
@@ -8118,6 +8266,7 @@ function blockcheck2Custom() {
   body.set("level",          v.level);
   body.set("hard_min_kb",    String(v.hard_min_kb));
   body.set("rnd_repeats",    String(v.rnd_repeats));
+  body.set("attempts",       String(v.attempts));
   body.set("youtube_quality", v.youtube_quality);
 
   fetch("/cgi-bin/blockcheck2", {
@@ -8157,8 +8306,11 @@ function blockcheck2Start() {
   BC.pollInFlight = false;
   BC.results = [];
   BC.offset = 0;
-  BC.counts = { ok: 0, fail: 0, skip: 0 };
+  BC.counts = { ok: 0, fail: 0, skip: 0, flaky: 0 };
   BC.seenStrategies = new Set();
+  bcSummaryReset();
+  const sb = document.getElementById("bcSummaryBox");
+  if (sb) sb.hidden = true;
   document.getElementById("bcLog").textContent = "";
   document.getElementById("bcTable").querySelector("tbody").innerHTML = "";
   const _tbox = document.getElementById("bcTableBox");
@@ -8179,6 +8331,7 @@ function blockcheck2Start() {
   body.set("fakebin",     v.fakebin);
   body.set("hard_min_kb", String(v.hard_min_kb));
   body.set("rnd_repeats", String(v.rnd_repeats));
+  body.set("attempts",    String(v.attempts));
   body.set("youtube_quality", v.youtube_quality);
 
   fetch("/cgi-bin/blockcheck2", {
@@ -8277,7 +8430,24 @@ function blockcheck2Poll() {
             case "strategy_skip":
             case "link_preflight":
             case "link_expired":
-              // silent here — surfaced by bcHandleEvent above
+            case "best":
+            case "ready":
+            case "ladder":
+              // silent here — surfaced by bcHandleEvent / «Итог подбора»
+              return;
+            case "retest_start":
+              bcAppendLog("повторная проверка лучших TLS-стратегий: " + (ev.count || "?") + "\n");
+              return;
+            case "retest": {
+              const ok = (parseInt(ev.pass, 10) || 0) > 0 && !(parseInt(ev.fail, 10) || 0) && !(parseInt(ev.flaky, 10) || 0);
+              bcAppendLog("[повтор " + (ok ? "OK" : "FAIL") + "] " + ev.name + " — " + (ev.detail || "") + "\n");
+              return;
+            }
+            case "retest_verdict":
+              bcAppendLog("повторная проверка: " + bcRetestText(ev.verdict) + "\n");
+              return;
+            case "class":
+              bcAppendLog("класс DPI (" + bcVerLabel(ev.ver) + "): " + (ev["class"] || "?") + " — " + (ev.verdict || "") + "\n");
               return;
             case "report_building":
               bcSetStatus("формирую отчёт…", true);
@@ -8529,7 +8699,7 @@ function bc1HandleEvent(ev) {
       const fail = parseInt(ev.fail, 10) || 0;
       const skip = parseInt(ev.skip, 10) || 0;
       if (pass > 0) BC1.counts.ok++;
-      else if (fail > 0) BC1.counts.fail++;
+      else if (fail > 0 || (parseInt(ev.flaky, 10) || 0) > 0) BC1.counts.fail++;
       else BC1.counts.skip++;
       BC1.results.push(ev);
       bc1RenderResultsRow(ev);
@@ -8684,7 +8854,7 @@ function bc1RenderResultsRow(ev) {
   const tr = document.createElement("tr");
   const pass = parseInt(ev.pass, 10) || 0;
   if (pass > 0) tr.classList.add("bc-row-ok");
-  else if ((parseInt(ev.fail, 10) || 0) > 0) tr.classList.add("bc-row-fail");
+  else if ((parseInt(ev.fail, 10) || 0) > 0 || (parseInt(ev.flaky, 10) || 0) > 0) tr.classList.add("bc-row-fail");
   const args = ev.args || "";
   // Every row gets a copy button so users can grab strategies that didn't
   // pass too (sometimes they want to compare or tweak). Apply button only
@@ -9056,6 +9226,8 @@ function blockcheck1Poll() {
               bc1AppendLog("[" + ev.type + "] " + (ev.msg || "") + "\n");
               return;
             case "teardown":
+            case "best":
+            case "ready":
             case "strategy_skip":
             case "link_preflight":
             case "link_expired":
@@ -9513,11 +9685,12 @@ function bcCopyAllTable(ev) {
     const proto = (tds[1]?.textContent || '').trim();
     const pass = (tds[2]?.textContent || '').trim();
     const fail = (tds[3]?.textContent || '').trim();
-    const skip = (tds[4]?.textContent || '').trim();
-    const det = (tds[5]?.textContent || '').trim();
-    const argsBtn = tds[6]?.querySelector('button[data-args]');
+    const flaky = (tds[4]?.textContent || '').trim();
+    const skip = (tds[5]?.textContent || '').trim();
+    const det = (tds[6]?.textContent || '').trim();
+    const argsBtn = tds[7]?.querySelector('button[data-args]');
     const args = argsBtn ? argsBtn.dataset.args : '';
-    return `[${proto}] ${name}\n  pass=${pass} fail=${fail} skip=${skip}\n  detail: ${det}\n  args:   ${args}`;
+    return `[${proto}] ${name}\n  pass=${pass} fail=${fail} flaky=${flaky} skip=${skip}\n  detail: ${det}\n  args:   ${args}`;
   });
   _bcCopyAllText(lines.join('\n\n'), btn);
 }
